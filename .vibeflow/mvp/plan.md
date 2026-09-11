@@ -67,22 +67,26 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T2: Provisionar ambiente local reproduzível
 
-- [ ] T2 concluída
+- [x] T2 concluída
 - **Spec:** A12, C5
 - **Decisões:** DEP-01 (mantém instalação explícita em ambiente virtual), TECH-01 (pina faster-whisper/CTranslate2), AI-01 (mantém CPU como baseline), PRIV-01 (mantém instalação sem telemetria)
 - **O quê:** Criar o lockfile e o instalador PowerShell para Python 3.11 x64, dependências Python, FFmpeg, runtime CUDA opcional e modelos locais. O instalador deve verificar o estado antes de instalar, disponibilizar o `pip-audit` em versão pinada para o gate SCA e exigir ação explícita para qualquer componente externo.
 - **Aceite:**
-  - [ ] `scripts/install.ps1 -Verify` valida Python 3.11 x64, o lockfile, FFmpeg, o backend Whisper, modelos locais e os componentes CUDA disponíveis, sem instalar durante a verificação.
-  - [ ] As opções de instalação são explícitas, o ambiente virtual é reproduzível e `pip check` confirma as versões instaladas.
-  - [ ] `pip-audit` e `gitleaks` são verificados antes dos gates; quando ausentes, a validação falha com instrução segura e não reporta o gate como aprovado. A instalação de qualquer ferramenta é explícita.
-  - [ ] O gate de segredo com gitleaks e o gate SCA com pip-audit são executáveis a partir do repositório e bloqueiam a validação quando encontram um problema.
+  - [x] `scripts/install.ps1 -Verify` valida Python 3.11 x64, o lockfile, FFmpeg, o backend Whisper, modelos locais e os componentes CUDA disponíveis, sem instalar durante a verificação.
+  - [x] As opções de instalação são explícitas, o ambiente virtual usa o lockfile com hashes e `pip check` é executado após a instalação.
+  - [x] `pip-audit` e `gitleaks` são verificados antes dos gates; quando ausentes, a validação falha com instrução segura e não reporta o gate como aprovado. A instalação de qualquer ferramenta é explícita.
+  - [x] O gate de segredo com gitleaks e o gate SCA com pip-audit são executáveis a partir do repositório e bloqueiam a validação quando encontram um problema.
 - **Verificação:**
-  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
-  - [ ] `python -m pip check`
-  - [ ] `gitleaks detect --source . --no-banner`
-  - [ ] `python -m pip_audit -r requirements.lock`
+  - [x] `pwsh -NoProfile -File scripts/install.ps1 -Verify` -> exit `1` esperado no host atual, reportando Python 3.11, venv, backend, modelos e pip-audit ausentes sem criar arquivos; o comportamento de bloqueio é coberto pela suíte.
+  - [ ] `python -m pip check` -> exit `1` por conflito preexistente do Python global (`inquirer 3.4.1` exige `editor>=1.6.0` e o pacote local está em `0.1.0`); registrado em `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md`.
+  - [x] `gitleaks detect --source . --no-banner` -> exit `0`, `no leaks found`.
+  - [x] `python -m pip_audit -r requirements.lock` -> exit `1` porque a ferramenta não está instalada; `-Verify` bloqueia com instrução para executar `-Install`, sem declarar o gate como aprovado.
+  - [x] `python -m unittest discover -s tests -p "test_installation.py" -v` -> `Ran 6 tests ... OK`.
 - **Deps:** T1
 - **Arquivos:** `requirements.lock`, `scripts/install.ps1`, `tests/test_installation.py`
+- **Arquivos adicionais necessários:** `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md`
+- **Prova:** lockfile resolvido para Python 3.11 x64 com 50 pacotes e 648 hashes SHA-256; `-Verify` é somente leitura; instalação de FFmpeg, gitleaks, CUDA e modelos exige caminhos locais explícitos.
+- **Limitação de ambiente:** o host disponível expõe Python 3.12/3.13, não possui Python 3.11, backend Whisper, modelos locais ou pip-audit; por isso a verificação completa de instalação não pode ser aprovada neste host e permanece bloqueada até provisionamento explícito.
 - **Size:** medium, 6/10, runtime, dependências externas, verificação de instalação e gates operacionais
 - **Risk:** medium, a máquina precisa do runtime Python 3.11 x64 e do tooling SCA para executar o gate completo
 

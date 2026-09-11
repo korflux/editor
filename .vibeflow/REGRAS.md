@@ -16,8 +16,8 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 <!-- evidência: contexto fornecido pelo usuário; o diretório técnico atual é `editor` -->
 
 ## Ambiente
-**MVP.** O núcleo inicial é uma CLI Python local, instalável em modo editável, sem dependências de runtime nesta fatia. O objetivo desta etapa é validar o contrato essencial com integridade básica, sem tratar o projeto como homologação ou produção.
-<!-- evidência: pyproject.toml e src/editor criados na T1 em 2026-09-10; mídia e dependências externas entram nas tasks seguintes -->
+**MVP.** O núcleo inicial é uma CLI Python local, instalável em modo editável, com dependências pinadas e provisionamento explícito no Windows. O objetivo desta etapa é validar o contrato essencial com integridade básica, sem tratar o projeto como homologação ou produção.
+<!-- evidência: pyproject.toml e src/editor criados na T1; requirements.lock e scripts/install.ps1 definidos na T2 em 2026-09-10 -->
 
 ## Versão (semver)
 - **Major:** quebra contrato (API, schema, comportamento que caller já usa).
@@ -46,20 +46,24 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 ## Estrutura
 
 - `pyproject.toml`: metadados do pacote Python e entry point `editor`.
+- `requirements.lock`: resolução pinada para Python 3.11 x64 no Windows, com hashes dos artefatos Python.
+- `scripts/install.ps1`: verificação e instalação explícita do venv, dependências, ferramentas locais, modelos e CUDA opcional.
 - `src/editor/`: pacote da CLI.
   - `__main__.py`: execução por `python -m editor`.
   - `cli.py`: parser, ajuda, despacho inicial e conversão central de erros.
   - `contracts.py`: schema de envelopes, exit codes e erro de domínio público.
 - `tests/test_cli_contract.py`: smoke test dos dois pontos de entrada e dos envelopes JSON.
+- `tests/test_installation.py`: testes do lockfile, do modo somente leitura, dos gates e da cópia de modelos locais.
 - `.vibeflow/`: fonte de governança e Documento Vivo de regras.
 - `.vibeflow/mvp/`: entrevista, spec, plan, analyze e implement do MVP.
 - `.vibeflow/phases/`: artefatos de entrevista, especificação, plano, análise, implementação e revisão por fase.
 - `.gitignore`: proteção mínima para segredos locais e backups gerados.
 - `AGENTS.md`: ponteiro para `.vibeflow/REGRAS.md`, usado por agentes compatíveis com AGENTS.
 - `CLAUDE.md`: ponteiro para `.vibeflow/REGRAS.md`, usado por agentes compatíveis com CLAUDE.
+- `.erros-encontrados/`: registros de problemas fora do escopo encontrados durante as verificações.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
-- Stack técnica: Python >= 3.11, biblioteca padrão na T1, com setuptools como backend de empacotamento. O alvo operacional Python 3.11 x64 e as dependências de mídia/IA serão definidos e verificados na T2.
-<!-- evidência: pyproject.toml, src/editor/__main__.py, src/editor/cli.py e src/editor/contracts.py implementados na T1 em 2026-09-10 -->
+- Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
+<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10 -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -67,6 +71,8 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - Ferramentas destinadas a agentes devem ter comportamento determinístico, mensagens de erro seguras e um formato de saída estável. Preferir resultado estruturado em `stdout` e diagnósticos em `stderr`, para não misturar dados de máquina com logs humanos.
 - Argumentos, stdin, headers, arquivos e URLs recebidos pela CLI são não confiáveis. Validar allowlists, tamanho, formato, diretórios permitidos, timeouts e limites de processamento antes de executar operações de mídia.
 - Qualquer processo externo deve ser executado com argumentos estruturados, sem shell intermediário e sem comandos montados a partir de entrada externa.
+- O instalador só cria ou atualiza o ambiente quando uma opção `-Install*` é informada; `-Verify` é somente leitura e não baixa componentes.
+- Dependências Python são instaladas somente de `requirements.lock` com hashes obrigatórios; FFmpeg, gitleaks, CUDA e modelos devem ser fornecidos localmente por ação explícita.
 - A stack, a organização dos módulos e os pontos de entrada reais devem ser registrados neste arquivo assim que a primeira implementação for criada. Não antecipar framework, linguagem ou serviço sem necessidade concreta.
 - Ao adicionar uma nova ferramenta, registrar seu propósito, contrato de entrada e saída, dependências, limitações conhecidas e estratégia mínima de verificação.
 - Sempre que uma fase adicionar módulos, serviços ou convenções, atualizar o mapa de estrutura e estas regras para manter o Documento Vivo sincronizado.
@@ -81,3 +87,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** Python >= 3.11 e biblioteca padrão; não faz rede nem executa processos externos.
 - **Limitação conhecida:** os subcomandos de mídia ainda não existem; `ponytail: adicionar cada operação somente na task correspondente, mantendo a fundação sem dispatcher especulativo`.
 - **Verificação:** `python -m pip install --no-deps -e .`, `python -m editor --help`, `editor --help` e `python -m unittest discover -s tests -p "test_cli_contract.py" -v`.
+
+### Instalador local, T2
+
+- **Propósito:** provisionar e verificar o ambiente local reproduzível necessário para análise e edição, sem download implícito durante a operação.
+- **Entrada:** `-Verify`, `-Install`, `-InstallFfmpeg`, `-InstallGitleaks`, `-InstallModels`, `-InstallCuda`, caminhos locais correspondentes, `-SecurityGates`, `-VenvPath`, `-ModelDir` e `-PythonPath`.
+- **Saída:** diagnóstico humano por item, exit code não zero quando um requisito obrigatório está ausente ou divergente, e nenhum estado de gate aprovado quando pip-audit ou gitleaks não estão disponíveis.
+- **Dependências:** Python 3.11 x64, `requirements.lock`, PowerShell 7, FFmpeg/ffprobe e gitleaks 8.30.1 quando instalados; CUDA é opcional; os modelos Whisper devem ser diretórios CTranslate2 locais.
+- **Limitação conhecida:** o instalador não baixa FFmpeg, CUDA, gitleaks ou pesos Whisper e exige suas origens locais; `ponytail: usar um catálogo assinado de artefatos quando o provisionamento precisar ser automatizado fora da máquina local`.
+- **Verificação:** `pwsh -NoProfile -File scripts/install.ps1 -Verify`, `python -m pip check`, `gitleaks detect --source . --no-banner`, `python -m pip_audit -r requirements.lock` e `python -m unittest discover -s tests -p "test_installation.py" -v`.
