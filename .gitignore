@@ -1,0 +1,9 @@
+# Segredos locais nunca devem entrar no repositório.
+.env
+.env.*
+!.env.example
+
+# Backups gerados localmente não fazem parte da fonte versionada.
+*.bak
+*.backup
+*.orig
