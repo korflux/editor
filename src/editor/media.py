@@ -22,11 +22,11 @@ SUPPORTED_SOURCE_EXTENSIONS = {".mp4", ".mp3", ".wav"}
 
 @dataclass(frozen=True)
 class MediaMetadata:
-    """Metadados validados necessários para analisar o áudio sem ambiguidade."""
+    """Metadados validados necessários para operações locais de mídia."""
 
     path: Path
     container: str
-    audio_codec: str
+    audio_codec: str | None
     video_codec: str | None
     duration_seconds: float
     size_bytes: int
@@ -75,8 +75,11 @@ def _validate_probe_payload(
     path: Path,
     size_bytes: int,
     payload: dict[str, Any],
+    *,
+    require_audio: bool,
+    require_video: bool,
 ) -> MediaMetadata:
-    """Valida contêiner, streams, codecs, duração e limites antes de qualquer análise."""
+    """Valida contêiner, streams, codecs, duração e limites antes de qualquer operação."""
 
     format_data = payload.get("format")
     streams = payload.get("streams")
@@ -106,17 +109,25 @@ def _validate_probe_payload(
 
     audio_streams = [stream for stream in typed_streams if stream.get("codec_type") == "audio"]
     video_streams = [stream for stream in typed_streams if stream.get("codec_type") == "video"]
-    if len(audio_streams) != 1:
+    if not audio_streams and not video_streams:
+        raise _error("MEDIA_UNSUPPORTED", "A fonte não contém streams de mídia suportados.")
+    if require_audio and len(audio_streams) != 1:
         raise _error("MEDIA_UNSUPPORTED", "A fonte deve conter exatamente um stream de áudio.")
+    if len(audio_streams) > 1:
+        raise _error("MEDIA_UNSUPPORTED", "A fonte deve conter no máximo um stream de áudio.")
+    if require_video and len(video_streams) != 1:
+        raise _error("MEDIA_UNSUPPORTED", "A fonte deve conter exatamente um stream de vídeo.")
 
-    audio_codec = str(audio_streams[0].get("codec_name", "")).lower()
+    audio_codec: str | None = None
     allowed_audio_codecs = {
         ".mp4": {"aac"},
         ".mp3": {"mp3"},
         ".wav": {"pcm_s16le"},
     }
-    if audio_codec not in allowed_audio_codecs[extension]:
-        raise _error("MEDIA_UNSUPPORTED", "O codec de áudio da fonte não é aceito.")
+    if audio_streams:
+        audio_codec = str(audio_streams[0].get("codec_name", "")).lower()
+        if audio_codec not in allowed_audio_codecs[extension]:
+            raise _error("MEDIA_UNSUPPORTED", "O codec de áudio da fonte não é aceito.")
 
     video_codec: str | None = None
     if video_streams:
@@ -126,7 +137,12 @@ def _validate_probe_payload(
         if video_codec != "h264":
             raise _error("MEDIA_UNSUPPORTED", "O codec de vídeo da fonte não é aceito.")
 
-    duration = _parse_duration(format_data.get("duration")) or _stream_duration(audio_streams[0])
+    duration = _parse_duration(format_data.get("duration"))
+    if duration is None:
+        for stream in (*audio_streams, *video_streams):
+            duration = _stream_duration(stream)
+            if duration is not None:
+                break
     if duration is None:
         raise _error("MEDIA_UNSUPPORTED", "A duração da fonte não pôde ser determinada.")
     if size_bytes > MAX_SOURCE_SIZE_BYTES or duration > MAX_SOURCE_DURATION_SECONDS:
@@ -135,14 +151,17 @@ def _validate_probe_payload(
             "A fonte excede o limite de tamanho ou duração permitido.",
         )
 
-    try:
-        sample_rate = int(audio_streams[0].get("sample_rate"))
-    except (TypeError, ValueError):
-        sample_rate = None
-    try:
-        channels = int(audio_streams[0].get("channels"))
-    except (TypeError, ValueError):
-        channels = None
+    sample_rate = None
+    channels = None
+    if audio_streams:
+        try:
+            sample_rate = int(audio_streams[0].get("sample_rate"))
+        except (TypeError, ValueError):
+            sample_rate = None
+        try:
+            channels = int(audio_streams[0].get("channels"))
+        except (TypeError, ValueError):
+            channels = None
     return MediaMetadata(
         path=path,
         container=expected_format,
@@ -155,8 +174,13 @@ def _validate_probe_payload(
     )
 
 
-def inspect_source(input_path: str | Path) -> MediaMetadata:
-    """Inspeciona uma fonte local com ffprobe antes de iniciar o processamento de áudio."""
+def inspect_source(
+    input_path: str | Path,
+    *,
+    require_audio: bool = True,
+    require_video: bool = False,
+) -> MediaMetadata:
+    """Inspeciona uma fonte local com FFprobe antes de iniciar uma operação de mídia."""
 
     path = resolve_source_path(input_path)
     if path.suffix.lower() not in SUPPORTED_SOURCE_EXTENSIONS:
@@ -189,7 +213,13 @@ def inspect_source(input_path: str | Path) -> MediaMetadata:
         raise _error("MEDIA_PROBE_FAILED", "Os metadados da fonte são inválidos.") from error
     if not isinstance(payload, dict):
         raise _error("MEDIA_PROBE_FAILED", "Os metadados da fonte são inválidos.")
-    return _validate_probe_payload(path, size_bytes, payload)
+    return _validate_probe_payload(
+        path,
+        size_bytes,
+        payload,
+        require_audio=require_audio,
+        require_video=require_video,
+    )
 
 
 def sha256_file(path: Path) -> str:

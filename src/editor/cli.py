@@ -7,6 +7,7 @@ import sys
 from typing import Sequence
 
 from .analysis.audio import analyze_audio
+from .analysis.frames import extract_frames
 from .analysis.transcription import analyze_transcription
 from .capabilities import collect_capabilities
 from .contracts import (
@@ -150,6 +151,52 @@ def build_parser() -> CliArgumentParser:
         default=argparse.SUPPRESS,
         help="retorna o resultado estruturado em JSON pelo stdout",
     )
+    extract_parser = subparsers.add_parser(
+        "extract",
+        help="extrai evidências visuais de fontes locais",
+        description="extrai frames de vídeo sem alterar a fonte original",
+    )
+    extract_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
+    extract_subparsers = extract_parser.add_subparsers(
+        dest="extract_command",
+        title="extrações",
+        metavar="EXTRACTION",
+    )
+    frames_parser = extract_subparsers.add_parser(
+        "frames",
+        help="extrai PNGs por timestamps explícitos ou intervalo regular",
+        description="extrai frames de vídeo e publica um manifesto temporal",
+    )
+    frames_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    frames_parser.add_argument("--source-id", required=True, help="identificador seguro da fonte")
+    frames_parser.add_argument("--input", required=True, help="arquivo local MP4 com vídeo H.264")
+    selection = frames_parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument(
+        "--timestamps",
+        help="timestamps em segundos separados por vírgula",
+    )
+    selection.add_argument(
+        "--interval-s",
+        help="intervalo regular em segundos",
+    )
+    frames_parser.add_argument("--start-s", help="início do intervalo, padrão: 0")
+    frames_parser.add_argument(
+        "--end-s",
+        help="fim exclusivo do intervalo, padrão: duração da fonte",
+    )
+    frames_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
     return parser
 
 
@@ -222,6 +269,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 device=args.device,
             )
             write_json(success_envelope("analyze transcribe", result))
+            return 0
+
+        if args.command == "extract" and args.extract_command == "frames":
+            result = extract_frames(
+                workdir=args.workdir,
+                source_id=args.source_id,
+                input_path=args.input,
+                timestamps=args.timestamps,
+                interval_seconds=args.interval_s,
+                start_seconds=args.start_s,
+                end_seconds=args.end_s,
+            )
+            write_json(success_envelope("extract frames", result))
             return 0
 
         if args.command is None:

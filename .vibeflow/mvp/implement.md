@@ -7,7 +7,7 @@
 
 - **ROUTE:** max
 - **Modo:** A
-- **Fila:** T5 concluída; T6 e T7 são elegíveis; T8 a T11 continuam bloqueadas pelas dependências do plano
+- **Fila:** T6 concluída; T7 é elegível; T8 a T11 continuam bloqueadas pelas dependências do plano
 - **Analyze:** `analyze.md` aprovado, veredito `limpo`
 - **Pergunta da T2:** o ambiente local pode ser instalado e verificado de forma reproduzível, com dependências pinadas e nenhum componente externo instalado sem ação explícita?
 
@@ -195,6 +195,43 @@
 - **Arquivos:** `.gitignore`, `.vibeflow/REGRAS.md`, `.vibeflow/mvp/implement.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `requirements.lock`, `src/editor/cli.py`, `src/editor/capabilities.py`, `src/editor/dependencies.py`, `src/editor/workdir.py`, `src/editor/whisper_backend.py`, `src/editor/analysis/transcription.py`, `tests/test_installation.py`, `tests/test_transcription.py`.
 - **Commit:** `task(T5): add local transcription` (hash registrado no resultado da execução).
 
+## T6: Extrair frames com manifesto temporal
+
+### Reconhecer
+
+- T4 já centralizava a validação de caminho, source ID, allowlist de mídia, duração, hash da fonte, FFprobe e execução de processos sem shell.
+- O mapa de capacidades já expunha `extract_frames`, mas ainda não existiam parser, operação, layout de `frames/<source-id>` ou teste de integração.
+- A T6 precisava registrar o frame efetivo porque um timestamp solicitado pode cair entre dois frames ou depois do último frame disponível, sem alterar a fonte nem publicar estado parcial.
+
+### Codar
+
+- `src/editor/cli.py` registra `extract frames`, exige exatamente `--timestamps` ou `--interval-s` e preserva o envelope JSON centralizado.
+- `src/editor/analysis/frames.py` valida timestamps, duplicação, intervalo, início/fim, duração e limite de seleção; consulta timestamps de vídeo via FFprobe, extrai PNGs com argumentos estruturados do FFmpeg e cria manifesto canônico com timestamp solicitado, efetivo e caminho relativo.
+- `src/editor/media.py` permite que operações visuais exijam vídeo sem exigir áudio, preservando a exigência de áudio para análise e transcrição.
+- `src/editor/workdir.py` adiciona o layout de frames e troca a pasta completa por staging somente depois que todos os PNGs e o manifesto estão íntegros, preservando a versão anterior em caso de falha.
+- `tests/test_frame_extraction.py` cobre os dois modos, ausência/ambiguidade de seleção, duplicação, timestamp fora da duração, PNGs reais, fonte intacta e falha de FFmpeg sem publicação parcial.
+- `.vibeflow/REGRAS.md` foi sincronizado com o novo módulo, contrato, limitação e estratégia de verificação.
+
+### Testar
+
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_frame_extraction.py" -v` -> `Ran 9 tests ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 35 tests ... OK`.
+- `.venv\Scripts\python.exe -B -m editor extract frames --workdir A:\Projetos\editor\tmp-t6-run --source-id main --input tests/fixtures/media/main.mp4 --interval-s 5 --json` -> exit code `0`, um PNG e `frames/main/manifest.json` publicados; o workdir foi removido após a prova.
+
+### Simplificar e re-testar
+
+- A primeira execução revelou que `tempfile.mkdtemp()` produzia staging com ACL incompatível com o processo FFmpeg no Windows gerenciado. O staging passou a usar `Path.mkdir()` com nome UUID, mantendo isolamento e validação, e a suíte foi executada novamente com sucesso.
+- A publicação usa uma troca de diretório única, por isso uma falha intermediária não deixa manifesto incompleto publicado; o temporário é removido e a versão anterior é preservada.
+- A extração mantém a allowlist MP4/H.264 e aceita áudio AAC quando presente; não adiciona codecs, rede ou dependências novas. Análise e transcrição continuam exigindo áudio.
+
+### Registro
+
+- **Plan:** T6 marcada como concluída.
+- **Spec comprovada nesta fatia:** A4. A9, A10, A11, C2 e C4 permanecem critérios globais para a revisão do MVP.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `src/editor/analysis/frames.py`, `src/editor/cli.py`, `src/editor/media.py`, `src/editor/workdir.py`, `tests/test_frame_extraction.py`.
+- **Decisões:** MEDIA-01, DATA-01, PRIV-01 e CONTRACT-01 implementadas para extração de frames.
+- **Mensagem de commit:** `task(T6): add temporal frame extraction`
+
 ## Handoff
 
-Fila após T5: T6 e T7 continuam elegíveis; T8 a T11 continuam bloqueadas pelas dependências do plano. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.
+Fila após T6: T7 continua elegível; T8 a T11 continuam bloqueadas pelas dependências do plano. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from .contracts import CliError, EXIT_CODES
 from .dependencies import is_regular_path
@@ -22,6 +24,16 @@ class WorkdirLayout:
     root: Path
     temporary: Path
     analysis: Path
+    destination: Path
+
+
+@dataclass(frozen=True)
+class FramesLayout:
+    """Representa a pasta de frames e o temporário usado na publicação conjunta."""
+
+    root: Path
+    temporary: Path
+    frames: Path
     destination: Path
 
 
@@ -171,10 +183,122 @@ def prepare_layout(
     )
 
 
-def relative_artifact_path(layout: WorkdirLayout) -> str:
+def prepare_frames_layout(workdir: str | Path, source_id: str) -> FramesLayout:
+    """Prepara `frames/<source-id>` sem permitir publicação fora do trabalho."""
+
+    root = validate_workdir(workdir)
+    safe_source_id = validate_source_id(source_id)
+    temporary = root / ".tmp"
+    frames_root = root / "frames"
+    frames = frames_root / safe_source_id
+    destination = frames / "manifest.json"
+
+    _ensure_directory(temporary)
+    _ensure_directory(frames_root)
+    if _lexists(frames):
+        if not is_regular_path(frames, directory=True) or _has_reparse_ancestor(frames.parent):
+            raise _error(
+                "OUTPUT_INVALID",
+                "O destino dos frames deve ser uma pasta regular dentro do trabalho.",
+                EXIT_CODES["STATE"],
+            )
+        if _lexists(destination) and (
+            not is_regular_path(destination) or _has_reparse_ancestor(destination.parent)
+        ):
+            raise _error(
+                "OUTPUT_INVALID",
+                "O manifesto de frames deve ser um arquivo regular dentro do trabalho.",
+                EXIT_CODES["STATE"],
+            )
+    return FramesLayout(
+        root=root,
+        temporary=temporary,
+        frames=frames,
+        destination=destination,
+    )
+
+
+def relative_artifact_path(layout: WorkdirLayout | FramesLayout) -> str:
     """Retorna o caminho do artefato relativo ao trabalho para respostas estáveis."""
 
     return layout.destination.relative_to(layout.root).as_posix()
+
+
+def _remove_regular_tree(path: Path) -> None:
+    """Remove somente uma árvore regular já validada, sem seguir links ou reparse points."""
+
+    if not _lexists(path):
+        return
+    if not is_regular_path(path, directory=True):
+        raise OSError("árvore de frames não regular")
+    for current, directories, files in os.walk(path, topdown=True, followlinks=False):
+        current_path = Path(current)
+        for name in (*directories, *files):
+            child = current_path / name
+            if not is_regular_path(child, directory=name in directories):
+                raise OSError("árvore de frames contém link ou reparse point")
+    shutil.rmtree(path)
+
+
+def publish_frames_atomic(layout: FramesLayout, staging: Path) -> None:
+    """Troca a pasta completa de frames só depois que PNGs e manifesto estão prontos."""
+
+    if not is_regular_path(staging, directory=True) or _has_reparse_ancestor(staging.parent):
+        raise _error(
+            "OUTPUT_PUBLISH_FAILED",
+            "A pasta temporária de frames não pôde ser validada.",
+            EXIT_CODES["OPERATION"],
+        )
+
+    backup: Path | None = None
+    try:
+        _ensure_directory(layout.frames.parent)
+        if _lexists(layout.frames):
+            if not is_regular_path(layout.frames, directory=True) or _has_reparse_ancestor(
+                layout.frames.parent
+            ):
+                raise _error(
+                    "OUTPUT_INVALID",
+                    "O destino dos frames deve ser uma pasta regular dentro do trabalho.",
+                    EXIT_CODES["STATE"],
+                )
+            backup = layout.temporary / f".{layout.frames.name}-backup-{uuid4().hex}"
+            os.replace(layout.frames, backup)
+
+        os.replace(staging, layout.frames)
+    except CliError:
+        if backup is not None and _lexists(backup) and not _lexists(layout.frames):
+            try:
+                os.replace(backup, layout.frames)
+            except OSError:
+                pass
+        raise
+    except OSError as error:
+        if backup is not None and _lexists(backup):
+            try:
+                if _lexists(layout.frames):
+                    _remove_regular_tree(layout.frames)
+                os.replace(backup, layout.frames)
+            except OSError:
+                pass
+        raise _error(
+            "OUTPUT_PUBLISH_FAILED",
+            "Não foi possível publicar os frames completos.",
+            EXIT_CODES["OPERATION"],
+        ) from error
+    finally:
+        if _lexists(staging):
+            try:
+                _remove_regular_tree(staging)
+            except OSError:
+                pass
+
+    if backup is not None and _lexists(backup):
+        try:
+            _remove_regular_tree(backup)
+        except OSError:
+            # A saída nova já está íntegra; o temporário antigo permanece isolado.
+            pass
 
 
 def publish_atomic(layout: WorkdirLayout, payload: bytes) -> None:

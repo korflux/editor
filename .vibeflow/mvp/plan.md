@@ -151,19 +151,19 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T6: Extrair frames com manifesto temporal
 
-- [ ] T6 concluída
+- [x] T6 concluída
 - **Spec:** A4, A9, A10, A11, C2, C4
 - **Decisões:** MEDIA-01 (aceita somente vídeo compatível e limita a fonte), DATA-01 (grava em `frames/<source-id>`), PRIV-01 (não altera o original), CONTRACT-01 (retorna erros estruturados)
 - **O quê:** Implementar `extract frames` com exatamente um modo de seleção, timestamps explícitos ou intervalo regular. Validar faixa, duplicação, início/fim e duração, gerar PNGs deterministicamente numerados e manifestar timestamp solicitado, efetivo e caminho.
 - **Aceite:**
-  - [ ] Timestamps explícitos e intervalos válidos produzem PNGs e `frames/<source-id>/manifest.json` com associação temporal determinística.
-  - [ ] Usar os dois modos, nenhum modo, timestamps duplicados ou fora da duração falha antes do FFmpeg com `ARGUMENT_INVALID` ou `MEDIA_LIMIT_EXCEEDED` apropriado.
-  - [ ] A fonte original permanece inalterada e falhas no meio da extração não publicam um manifesto incompleto.
+  - [x] Timestamps explícitos e intervalos válidos produzem PNGs e `frames/<source-id>/manifest.json` com associação temporal determinística.
+  - [x] Usar os dois modos, nenhum modo, timestamps duplicados ou fora da duração falha antes do FFmpeg com `ARGUMENT_INVALID` ou `MEDIA_LIMIT_EXCEEDED` apropriado.
+  - [x] A fonte original permanece inalterada e falhas no meio da extração não publicam um manifesto incompleto.
 - **Verificação:**
-  - [ ] `python -m editor extract frames --workdir tests/fixtures/workflow --source-id main --input tests/fixtures/media/main.mp4 --interval-s 5 --json`
-  - [ ] `python -m unittest discover -s tests -p "test_frame_extraction.py" -v`
+  - [x] `.venv\Scripts\python.exe -B -m editor extract frames --workdir <workdir-isolado> --source-id main --input tests/fixtures/media/main.mp4 --interval-s 5 --json` -> exit `0`, um PNG e manifesto publicados.
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_frame_extraction.py" -v` -> `Ran 9 tests ... OK`.
 - **Deps:** T4
-- **Arquivos:** `src/editor/analysis/frames.py`, `tests/test_frame_extraction.py`, `tests/fixtures/media/`
+- **Arquivos:** `.vibeflow/REGRAS.md`, `src/editor/analysis/frames.py`, `src/editor/cli.py`, `src/editor/media.py`, `src/editor/workdir.py`, `tests/test_frame_extraction.py`, `tests/fixtures/media/`
 - **Size:** medium, 6/10, validação temporal, FFmpeg, múltiplos PNGs, manifesto e teste de integração
 - **Risk:** medium, timestamps efetivos podem variar conforme keyframes e precisam ser registrados
 
