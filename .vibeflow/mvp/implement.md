@@ -380,6 +380,45 @@
 - **Decisões:** STATE-01, RENDER-01 e PRIV-01 implementadas para a full.
 - **Mensagem de commit:** `task(T10): render approved full`
 
+## T11: Validar jornada local completa do MVP
+
+### Reconhecer
+
+- T3 já expunha capacidades locais, mas os estados de `plan_validate`, `render_preview`, `approve` e `render_full` ainda diziam `unsupported` mesmo com os comandos implementados nas tasks seguintes.
+- T4 a T10 já forneciam os comandos e artefatos isolados; faltava uma prova em processo separado que os encadeasse com as mesmas fontes, o modelo local e o estado aprovado.
+- A jornada foi isolada em `tests/fixtures/e2e/` para não usar nem modificar os artefatos versionados de `tests/fixtures/workflow/`. O teste força o backend Whisper a operar offline e usa somente o modelo CTranslate2 `base` local.
+
+### Codar
+
+- `src/editor/capabilities.py` passou a derivar os estados das operações implementadas a partir das dependências reais: `ffprobe` para plano/aprovação e FFmpeg/FFprobe para renders.
+- `tests/e2e/test_mvp_flow.py` executa `capabilities`, análise de áudio, transcrição CPU, extração de frames, validação do plano, preview, aprovação e full por subprocessos reais, conferindo envelopes JSON de uma linha, stderr vazio e ausência de prompts.
+- A mesma prova confere a existência dos artefatos, a duração/timeline de `2.0 s`, a igualdade do hash do plano entre aprovação e full, hashes das fontes e limpeza de `.tmp`.
+- Depois da full aprovada, a fixture de trabalho sofre uma mutação controlada em uma fonte. O novo `render full` precisa retornar `APPROVAL_STALE` e preservar a full e o approval anteriores.
+- `tests/fixtures/e2e/plan.json` e as fontes curtas `main.mp4`, `broll.mp4` e `music.mp3` materializam o cenário de vlog com b-roll, música e lettering `Paraty`.
+- `.vibeflow/REGRAS.md` foi sincronizado com a fixture E2E, o teste, a capacidade corrigida, as dependências locais, os limites e a estratégia de verificação.
+
+### Testar
+
+- `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v` -> `Ran 1 test in 13.626s ... OK`; todos os oito comandos da jornada publicaram os artefatos esperados e a mutação retornou `APPROVAL_STALE` sem alterar a full vigente.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 54 tests in 81.267s ... OK`.
+- `gitleaks detect --source . --no-banner` -> exit `0`, `no leaks found`.
+- `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` -> `No known vulnerabilities found`, com acesso direto autorizado à base do PyPI porque o proxy padrão foi recusado.
+
+### Simplificar e re-testar
+
+- A prova reutiliza os subprocessos e os envelopes existentes, sem criar um segundo executor de comandos ou uma camada de fixture compartilhada; o único estado novo é o trabalho temporário do próprio teste.
+- A correção de capacidades ficou no ponto de origem, evitando que cada agente precise inferir disponibilidade a partir de mensagens de erro posteriores.
+- A revisão do plano também marcou como concluídos os aceites de T4 e T9 que já tinham prova verde documentada, mantendo as marcações de ambiente realmente bloqueadas sem alterá-las.
+- A suíte E2E e a suíte completa foram executadas novamente após a revisão, mantendo respectivamente `1` e `54` testes verdes.
+
+### Registro
+
+- **Plan:** T11 marcada como concluída.
+- **Spec comprovada nesta fatia:** A1 a A12 e C1 a C5 pela jornada integrada, incluindo stdout JSON, processamento local, preservação de fontes, timeline aprovada e bloqueio de estado obsoleto.
+- **Arquivos:** `src/editor/capabilities.py`, `tests/e2e/test_mvp_flow.py`, `tests/fixtures/e2e/`, `.vibeflow/REGRAS.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/implement.md`.
+- **Decisões:** PROD-01, SCOPE-01, OPS-01, PRIV-01 e CONTRACT-01 comprovadas no fluxo completo.
+- **Mensagem de commit:** `task(T11): validate local mvp journey`
+
 ## Handoff
 
-Fila após T10: T11 é a próxima T elegível. Handoff para a próxima T ou para `vibe-review` quando a fila da fase for encerrada.
+Fila após T11: nenhuma T elegível. Handoff para `vibe-review`.

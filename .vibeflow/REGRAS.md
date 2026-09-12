@@ -81,6 +81,8 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `tests/test_cli_contract.py`: smoke test dos dois pontos de entrada e dos envelopes JSON.
 - `tests/test_installation.py`: testes do lockfile, do modo somente leitura, dos gates e da cópia de modelos locais.
 - `tests/test_capabilities.py`: teste de processo do inventário e da recomendação determinística.
+- `tests/e2e/test_mvp_flow.py`: jornada E2E dos comandos locais, artefatos publicados, saída JSON e bloqueio por aprovação obsoleta.
+- `tests/fixtures/e2e/`: plano curto de vlog, b-roll, música e lettering usado pela prova ponta a ponta.
 - `.vibeflow/`: fonte de governança e Documento Vivo de regras.
 - `.vibeflow/mvp/`: entrevista, spec, plan, analyze e implement do MVP.
 - `.vibeflow/phases/`: artefatos de entrevista, especificação, plano, análise, implementação e revisão por fase.
@@ -90,7 +92,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `.erros-encontrados/`: registros de problemas fora do escopo encontrados durante as verificações.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5, extração de frames na T6, validação de plano na T7, renderização de preview na T8, aprovação por hashes na T9 e renderização final na T10 em 2026-09-12 -->
+<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5, extração de frames na T6, validação de plano na T7, renderização de preview na T8, aprovação por hashes na T9, renderização final na T10 e jornada E2E na T11 em 2026-09-12 -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -195,3 +197,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** biblioteca padrão, FFmpeg/FFprobe locais com encoders `libx264` e `aac`; usa a mesma timeline, grafo de filtros e processamento de áudio da preview, sem rede.
 - **Limitação conhecida:** a full usa a largura do primeiro vídeo e canvas 16:9, com codificação H.264 `libx264` e preset `veryfast`; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.
 - **Verificação:** `python -m editor render full --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_full_render.py" -v`.
+
+### Jornada E2E local do MVP, T11
+
+- **Propósito:** comprovar a jornada completa de inventário, análise, plano, preview, aprovação e full usando somente fontes e modelo locais.
+- **Entrada:** `python -m unittest tests.e2e.test_mvp_flow -v`; a prova usa `tests/fixtures/e2e/` e um diretório de trabalho descartável dentro do workspace.
+- **Saída:** artefatos de áudio, transcrição, frames, preview, aprovação e full; a full é comparada à timeline e aos hashes da aprovação vigente.
+- **Dependências:** Python 3.11 x64, FFmpeg/FFprobe com `libx264` e `aac`, `faster-whisper==1.2.1`, `ctranslate2==4.8.0` e modelo `base` CTranslate2 local. O backend é executado em modo offline e não baixa pesos.
+- **Limitação conhecida:** a fixture é curta e usa o cenário linear atual, sem testar transições, múltiplos operadores ou fontes fora da allowlist; `ponytail: ampliar a jornada somente quando o schema ou uma operação real do MVP ganhar esses comportamentos`.
+- **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v`, `gitleaks detect --source . --no-banner` e `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`.

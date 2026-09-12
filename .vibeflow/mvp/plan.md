@@ -116,9 +116,9 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 - **Decisões:** MEDIA-01 (restringe formatos, duração e tamanho), DATA-01 (usa diretório local por trabalho), OPS-01 (processa um trabalho por vez), PRIV-01 (preserva originais e mantém processamento local), CONTRACT-01 (mapeia falhas para códigos estáveis)
 - **O quê:** Implementar a validação comum de caminho, diretório de trabalho, arquivo regular, tamanho, duração, codec, streams, temporários e publicação atômica dentro de `analyze audio`. Gerar a análise de loudness, picos, média por janela e intervalos de silêncio por amplitude, sem classificá-los como fala ou ruído.
 - **Aceite:**
-  - [ ] Uma fonte MP4, MP3 ou WAV válida gera `analysis/audio/<source-id>.json` com SHA-256, loudness integrado, pico verdadeiro, média e pico por janela e silêncio com limiar de `-45 dBFS` por no mínimo `0,3 s`.
-  - [ ] Caminho inválido, diretório de trabalho ou destino com reparse point, formato, codec, stream, tamanho acima de 4 GiB ou duração acima de 3.600 s falham antes do processamento, com envelope seguro e exit code estável.
-  - [ ] Uma falha simulada do FFmpeg preserva originais, plano, análises existentes e destino publicado, removendo temporários sem deixar saída parcial.
+  - [x] Uma fonte MP4, MP3 ou WAV válida gera `analysis/audio/<source-id>.json` com SHA-256, loudness integrado, pico verdadeiro, média e pico por janela e silêncio com limiar de `-45 dBFS` por no mínimo `0,3 s`.
+  - [x] Caminho inválido, diretório de trabalho ou destino com reparse point, formato, codec, stream, tamanho acima de 4 GiB ou duração acima de 3.600 s falham antes do processamento, com envelope seguro e exit code estável.
+  - [x] Uma falha simulada do FFmpeg preserva originais, plano, análises existentes e destino publicado, removendo temporários sem deixar saída parcial.
 - **Verificação:**
   - [x] `python -m editor analyze audio --workdir A:\Projetos\editor\tmp-t4-run --source-id main --input tests/fixtures/media/main.mp4 --window-s 0.5 --json` -> exit `0`, envelope `analyze audio` e `analysis/audio/main.json` publicados.
   - [x] `python -m unittest discover -s tests -p "test_audio_analysis.py" -v` -> `Ran 4 tests ... OK`.
@@ -215,9 +215,9 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 - **Decisões:** STATE-01 (registra plano, preview e fontes), RENDER-01 (aprovação refere a preview vigente), DATA-01 (grava `approval.json` no trabalho), CONTRACT-01 (falha sem aprovação válida usa código estável)
 - **O quê:** Implementar `approve` após validação do plano e existência da preview publicada. Calcular o hash SHA-256 do plano canônico, da preview e de cada fonte referenciada, preservando a lista ordenada de fontes e o instante UTC.
 - **Aceite:**
-  - [ ] `approval.json` contém `schema_version`, `approved_at`, `plan_sha256`, `preview_sha256` e `{source_id, sha256}` ordenados.
-  - [ ] Plano inválido, preview ausente ou saída não publicada impedem a aprovação sem substituir um registro válido por estado incompleto.
-  - [ ] Alterações somente de formatação em `plan.json` não mudam `plan_sha256`; qualquer alteração semântica muda o hash.
+  - [x] `approval.json` contém `schema_version`, `approved_at`, `plan_sha256`, `preview_sha256` e `{source_id, sha256}` ordenados.
+  - [x] Plano inválido, preview ausente ou saída não publicada impedem a aprovação sem substituir um registro válido por estado incompleto.
+  - [x] Alterações somente de formatação em `plan.json` não mudam `plan_sha256`; qualquer alteração semântica muda o hash.
 - **Verificação:**
   - [x] `python -m editor approve --workdir A:\Projetos\editor\tests\fixtures\workflow --json`
   - [x] `python -m unittest discover -s tests -p "test_approval.py" -v` -> `Ran 3 tests ... OK`.
@@ -250,20 +250,21 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T11: Validar jornada local completa do MVP
 
-- [ ] T11 concluída
+- [x] T11 concluída
 - **Spec:** A1 a A12, C1 a C5
-- **Decisões:** PROD-01 (aceita vlog de viagens em 16:9), SCOPE-01 (fecha análise e edição linear ponta a ponta), OPS-01 (mantém um trabalho por vez), PRIV-01 (mantém execução local sem telemetria)
+- **Decisões:** PROD-01 (aceita vlog de viagens em 16:9), SCOPE-01 (fecha análise e edição linear ponta a ponta), OPS-01 (mantém um trabalho por vez), PRIV-01 (mantém execução local sem telemetria), CONTRACT-01 (confirma envelopes JSON puros e estados de operação coerentes)
 - **O quê:** Consolidar fixtures curtas de vlog, b-roll, música e lettering para executar a jornada completa `capabilities` → análise → plano → preview → aprovação explícita → full. A task também registra no Documento Vivo a stack, os pontos de entrada e os módulos realmente criados, além das limitações verificadas.
 - **Aceite:**
-  - [ ] O cenário E2E percorre todos os comandos do contrato, produz os artefatos esperados e confirma que a full usa a mesma timeline aprovada.
-  - [ ] A prova confirma `stdout` JSON, diagnósticos técnicos somente em `stderr`, ausência de prompts, ausência de rede, originais intactos e ausência de publicação parcial nos cenários de falha.
-  - [ ] `REGRAS.md` fica sincronizado com a stack, estrutura, ferramentas, contratos, limitações conhecidas e estratégia de verificação implementados.
+  - [x] O cenário E2E percorre todos os comandos do contrato, produz os artefatos esperados e confirma que a full usa a mesma timeline aprovada.
+  - [x] A prova confirma `stdout` JSON, diagnósticos técnicos somente em `stderr`, ausência de prompts, execução offline com modelo local, originais intactos e ausência de publicação parcial no bloqueio por mutação de fonte.
+  - [x] `REGRAS.md` fica sincronizado com a stack, estrutura, ferramentas, contratos, limitações conhecidas e estratégia de verificação implementados.
 - **Verificação:**
-  - [ ] `python -m unittest tests.e2e.test_mvp_flow -v`
-  - [ ] `gitleaks detect --source . --no-banner`
-  - [ ] `python -m pip_audit -r requirements.lock`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v` -> `Ran 1 test in 13.626s ... OK`; a jornada publicou áudio, transcrição, frames, preview, `approval.json` e `full.mp4`, e a mutação da fonte retornou `APPROVAL_STALE` sem alterar a full vigente.
+  - [x] `gitleaks detect --source . --no-banner` -> exit `0`, nenhum segredo encontrado.
+  - [x] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` -> `No known vulnerabilities found`; a execução usou acesso direto autorizado à base do PyPI porque o proxy padrão do ambiente recusou a conexão.
+- **Prova:** a capacidade local passou a refletir os comandos implementados, o E2E executou oito operações com stdout de uma linha JSON e stderr vazio, preservou os hashes das fontes versionadas e limpou `.tmp` após a falha de aprovação obsoleta.
 - **Deps:** T3, T5, T6, T7, T8, T9, T10
-- **Arquivos:** `tests/e2e/test_mvp_flow.py`, `tests/fixtures/e2e/`, `.vibeflow/REGRAS.md`
+- **Arquivos:** `src/editor/capabilities.py`, `tests/e2e/test_mvp_flow.py`, `tests/fixtures/e2e/`, `.vibeflow/REGRAS.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/implement.md`
 - **Size:** high, 8/10, jornada E2E, dependências locais, verificação de falhas, gates de segurança e sincronização de governança
 - **Risk:** medium, a prova depende de fixtures de mídia e de modelo local compatíveis com o runtime alvo
 

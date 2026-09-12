@@ -110,6 +110,10 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
     models = dependencies.discover_models(model_dir or default_model_root())
     recommendation = choose_recommendation(models, cuda["status"])
 
+    # A capacidade reportada precisa refletir os comandos existentes, mas sem
+    # declarar operações que ainda não têm a dependência externa necessária.
+    ffprobe_status = ffmpeg["tools"]["ffprobe"]["status"]
+
     transcribe_status = _combine_statuses(whisper["status"], models["status"])
     operations = {
         "capabilities": _operation("available", [], "consulta local sem efeitos colaterais"),
@@ -129,24 +133,24 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "FFmpeg e FFprobe são necessários para extrair frames",
         ),
         "plan_validate": _operation(
-            "unsupported",
-            [],
-            "validação de plano será implementada em uma task posterior",
+            ffprobe_status,
+            ["ffprobe"],
+            "validação local de plan.json e das fontes declaradas",
         ),
         "render_preview": _operation(
-            "unsupported",
-            [],
-            "renderização será implementada em uma task posterior",
+            ffmpeg["status"],
+            ["ffmpeg", "ffprobe", "libx264", "aac"],
+            "renderização linear da preview com publicação atômica",
         ),
         "approve": _operation(
-            "unsupported",
-            [],
-            "aprovação será implementada em uma task posterior",
+            ffprobe_status,
+            ["ffprobe"],
+            "aprovação local vinculada aos hashes do plano, preview e fontes",
         ),
         "render_full": _operation(
-            "unsupported",
-            [],
-            "renderização será implementada em uma task posterior",
+            ffmpeg["status"],
+            ["ffmpeg", "ffprobe", "libx264", "aac"],
+            "renderização final condicionada à aprovação vigente",
         ),
     }
 
