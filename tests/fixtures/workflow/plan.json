@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "profile": {
+    "aspect_ratio": "16:9"
+  },
+  "sources": [
+    {
+      "id": "main",
+      "kind": "video",
+      "path": "sources/main.mp4"
+    },
+    {
+      "id": "broll-01",
+      "kind": "video",
+      "path": "sources/broll.mp4"
+    },
+    {
+      "id": "music-01",
+      "kind": "audio",
+      "path": "sources/music.mp3"
+    }
+  ],
+  "segments": [
+    {
+      "video": {
+        "source_id": "main",
+        "in_s": 0,
+        "out_s": 0.75,
+        "fit": "preserve"
+      },
+      "audio": {
+        "mode": "keep",
+        "tracks": [
+          {
+            "source_id": "main",
+            "in_s": 0,
+            "out_s": 0.75,
+            "gain_db": 0
+          }
+        ]
+      }
+    },
+    {
+      "video": {
+        "source_id": "broll-01",
+        "in_s": 0,
+        "out_s": 0.5,
+        "fit": "preserve"
+      },
+      "audio": {
+        "mode": "replace",
+        "tracks": [
+          {
+            "source_id": "main",
+            "in_s": 0.75,
+            "out_s": 1.25,
+            "gain_db": -1
+          }
+        ]
+      }
+    },
+    {
+      "video": {
+        "source_id": "main",
+        "in_s": 0.5,
+        "out_s": 1.25,
+        "fit": "preserve"
+      },
+      "audio": {
+        "mode": "mix",
+        "tracks": [
+          {
+            "source_id": "main",
+            "in_s": 0.5,
+            "out_s": 1.25,
+            "gain_db": 0
+          },
+          {
+            "source_id": "music-01",
+            "in_s": 0,
+            "out_s": 0.75,
+            "gain_db": -12,
+            "loop": true
+          }
+        ]
+      }
+    }
+  ],
+  "overlays": [
+    {
+      "text": "Paraty",
+      "start_s": 0.5,
+      "end_s": 1.25,
+      "position": "bottom-right",
+      "font": "Arial",
+      "size_px": 32,
+      "color": "#FFFFFF",
+      "align": "right",
+      "wrap": true
+    }
+  ],
+  "audio_processing": {
+    "normalize_loudness": true,
+    "target_lufs": -16,
+    "limiter": {
+      "enabled": true,
+      "ceiling_dbfs": -1
+    },
+    "ducking": false
+  }
+}

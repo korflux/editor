@@ -169,19 +169,22 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T7: Validar plano linear com schema estrito
 
-- [ ] T7 concluída
+- [x] T7 concluída
 - **Spec:** A5, A6, A10, A11, C2, C3
 - **Decisões:** DATA-01 (mantém `plan.json` como estado explícito), MEDIA-01 (valida fontes e duração), AUDIO-01 (mantém trilhas, ganhos, loudness e limiter explícitos), TEXT-01 (mantém lettering estático nomeado), CONTRACT-01 (rejeita campos fora da allowlist)
 - **O quê:** Implementar `plan validate` para ler exclusivamente `plan.json`, validar schema versão 1, IDs, caminhos, formatos, intervalos, duração de áudio, timeline, b-roll, `fit`, overlays, perfil 16:9 e processamento de áudio. A forma canônica do JSON deve ficar disponível para hashing posterior.
 - **Aceite:**
-  - [ ] O plano de cenário com corte, junção, b-roll em tela cheia mantendo áudio de A, música mixada, ganhos explícitos, normalização, limiter e lettering passa e retorna a timeline linear calculada.
-  - [ ] JSON inválido, campo desconhecido, ID duplicado, caminho fora do trabalho, intervalo fora da fonte, áudio incompatível, overlay inválido, perfil de saída diferente de 16:9 ou fonte de proporção diferente sem `fit: contain|crop` retorna `PLAN_INVALID` sem renderizar.
-  - [ ] A serialização canônica ordena chaves, usa UTF-8 sem espaços e mantém o mesmo hash para alterações apenas de formatação.
+  - [x] O plano de cenário com corte, junção, b-roll em tela cheia mantendo áudio de A, música mixada, ganhos explícitos, normalização, limiter e lettering passa e retorna a timeline linear calculada.
+  - [x] JSON inválido, campo desconhecido, ID duplicado, caminho fora do trabalho, intervalo fora da fonte, áudio incompatível, overlay inválido, perfil de saída diferente de 16:9 ou fonte de proporção diferente sem `fit: contain|crop` retorna `PLAN_INVALID` sem renderizar.
+  - [x] A serialização canônica ordena chaves, usa UTF-8 sem espaços e mantém o mesmo hash para alterações apenas de formatação.
 - **Verificação:**
-  - [ ] `python -m editor plan validate --workdir tests/fixtures/workflow --json`
-  - [ ] `python -m unittest discover -s tests -p "test_plan_validation.py" -v`
+  - [x] `.venv\Scripts\python.exe -B -m editor plan validate --workdir A:\Projetos\editor\tests\fixtures\workflow --json` -> exit `0`, três fontes validadas e timeline de `2.0 s` retornada.
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_plan_validation.py" -v` -> `Ran 7 tests ... OK`.
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 42 tests ... OK`.
 - **Deps:** T4
-- **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/plan/canonical.py`, `tests/test_plan_validation.py`, `tests/fixtures/workflow/plan.json`
+- **Prova:** o fixture real validou corte, junção, b-roll com áudio de `main`, mixagem com `music-01`, ganhos explícitos, normalização, limiter, lettering, proporção 16:9 e hash canônico; campos desconhecidos e intervalos inválidos falharam com `PLAN_INVALID` antes do processamento externo.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `src/editor/cli.py`, `src/editor/media.py`, `src/editor/plan/__init__.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/plan/canonical.py`, `tests/test_plan_validation.py`, `tests/fixtures/workflow/plan.json`, `tests/fixtures/workflow/sources/main.mp4`, `tests/fixtures/workflow/sources/broll.mp4`, `tests/fixtures/workflow/sources/music.mp3`
+- **Decisões:** DATA-01, MEDIA-01, AUDIO-01, TEXT-01 e CONTRACT-01 implementadas para validação do plano.
 - **Size:** high, 7/10, schema estrito, metadados de mídia, regras de áudio/texto, hash canônico e integração de contrato
 - **Risk:** medium, erros de fronteira na timeline podem alterar a duração ou a segurança da renderização
 

@@ -7,9 +7,9 @@
 
 - **ROUTE:** max
 - **Modo:** A
-- **Fila:** T6 concluída; T7 é elegível; T8 a T11 continuam bloqueadas pelas dependências do plano
+- **Fila:** T7 implementada e em fechamento; T8 é a próxima elegível; T9 e T10 dependem da cadeia de renderização, e T11 permanece bloqueada
 - **Analyze:** `analyze.md` aprovado, veredito `limpo`
-- **Pergunta da T2:** o ambiente local pode ser instalado e verificado de forma reproduzível, com dependências pinadas e nenhum componente externo instalado sem ação explícita?
+- **Pergunta da T7:** um plano explícito de vlog passa por schema estrito, validação de mídia e timeline linear sem renderizar nem alterar fontes?
 
 ## T1: Criar CLI instalável com smoke test
 
@@ -232,6 +232,43 @@
 - **Decisões:** MEDIA-01, DATA-01, PRIV-01 e CONTRACT-01 implementadas para extração de frames.
 - **Mensagem de commit:** `task(T6): add temporal frame extraction`
 
+## T7: Validar plano linear com schema estrito
+
+### Reconhecer
+
+- T4 já centralizava workdir, fontes locais, limites de mídia e inspeção FFprobe, mas ainda não havia parser para `plan.json` nem regra de timeline.
+- A spec exige allowlist recursiva, fontes de vídeo/áudio compatíveis, intervalos `[início, fim)`, áudio explícito por segmento, b-roll com narração de A, overlays nomeados, perfil 16:9 e nenhum ducking.
+- A T7 precisa expor a forma JSON canônica e seu SHA-256 sem criar artefato ou iniciar FFmpeg de renderização.
+
+### Codar
+
+- `src/editor/plan/schema.py` concentra as allowlists, enums e validações estruturais comuns do schema v1.
+- `src/editor/plan/validation.py` lê somente `plan.json`, consulta metadados das fontes uma vez por caminho, valida formatos, proporções, cortes, trilhas, ganhos, loops, overlays e processamento de áudio, e calcula a timeline concatenada.
+- `src/editor/plan/canonical.py` serializa UTF-8 com chaves ordenadas, sem espaços e sem constantes não finitas, calculando o SHA-256 consumido pelas próximas tasks.
+- `src/editor/cli.py` registra `plan validate` com o mesmo envelope JSON da CLI; `src/editor/media.py` passa a expor dimensões e taxa de quadros do vídeo para validação de `fit`.
+- `tests/test_plan_validation.py` cobre o cenário real de vlog, hash invariável por formatação, rejeição precoce de campos desconhecidos, regra de b-roll e erros de overlay/JSON.
+- `tests/fixtures/workflow/plan.json` e suas fontes MP4/MP3 exercitam corte, junção, b-roll, música, ganhos, normalização, limiter e lettering.
+
+### Testar
+
+- `.venv\Scripts\python.exe -B -m editor plan validate --workdir A:\Projetos\editor\tests\fixtures\workflow --json` -> exit code `0`, três fontes validadas, três segmentos concatenados e duração de `2.0 s`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_plan_validation.py" -v` -> `Ran 7 tests ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 42 tests ... OK`.
+
+### Simplificar e re-testar
+
+- A validação reutiliza `media.inspect_source`, `resolve_source_path`, `validate_workdir` e os envelopes existentes, sem criar um segundo caminho de segurança ou uma camada de renderização especulativa.
+- A rejeição de `NaN`/infinito foi mantida no parser antes da canonicalização; campos desconhecidos falham antes do FFprobe, e fontes originais permanecem somente leitura.
+- A suíte específica, a suíte completa e o comando real da task foram executados novamente após a revisão e permaneceram verdes.
+
+### Registro
+
+- **Plan:** T7 marcada como concluída.
+- **Spec comprovada nesta fatia:** A5. A6, A10, A11, C2 e C3 permanecem critérios globais ou dependem da renderização e aprovação seguintes.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `src/editor/cli.py`, `src/editor/media.py`, `src/editor/plan/__init__.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/plan/canonical.py`, `tests/test_plan_validation.py`, `tests/fixtures/workflow/plan.json`, `tests/fixtures/workflow/sources/main.mp4`, `tests/fixtures/workflow/sources/broll.mp4`, `tests/fixtures/workflow/sources/music.mp3`.
+- **Decisões:** DATA-01, MEDIA-01, AUDIO-01, TEXT-01 e CONTRACT-01 implementadas para validação do plano.
+- **Mensagem de commit:** `task(T7): validate linear editing plan`
+
 ## Handoff
 
-Fila após T6: T7 continua elegível; T8 a T11 continuam bloqueadas pelas dependências do plano. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.
+Fila após T7: T8 continua elegível; T9 e T10 dependem da cadeia de renderização, e T11 permanece bloqueada pelas dependências do plano. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.

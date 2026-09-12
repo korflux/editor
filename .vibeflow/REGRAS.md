@@ -60,11 +60,16 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `src/editor/analysis/audio.py`: análise de loudness, pico verdadeiro, níveis por janela e silêncio por amplitude.
 - `src/editor/analysis/frames.py`: seleção temporal, extração de PNGs e manifesto de frames efetivos.
 - `src/editor/analysis/transcription.py`: validação da resposta do Whisper e publicação de transcrição com timestamps por palavra.
+- `src/editor/plan/schema.py`: allowlist estrutural e opções suportadas do schema v1 do plano.
+- `src/editor/plan/validation.py`: validação de fontes, segmentos, áudio, overlays e timeline linear.
+- `src/editor/plan/canonical.py`: serialização UTF-8 canônica e SHA-256 do plano.
 - `src/editor/whisper_backend.py`: seleção local de modelo/dispositivo e ponte lazy com faster-whisper sem download.
 - `tests/test_audio_analysis.py`: processo real da CLI, validação precoce e preservação em falha de FFmpeg.
 - `tests/test_frame_extraction.py`: seleção explícita/regular, timestamps efetivos, PNGs e preservação em falha de FFmpeg.
+- `tests/test_plan_validation.py`: schema estrito, timeline do cenário de vlog, regras de áudio, overlays e hash canônico.
 - `tests/test_transcription.py`: contrato canônico, seleção CPU/CUDA, timestamps obrigatórios e erros seguros da transcrição.
 - `tests/fixtures/media/main.mp4`: fixture curta H.264/AAC com trechos silenciosos para o contrato de áudio.
+- `tests/fixtures/workflow/`: plan.json e fontes locais do cenário de validação do MVP.
 - `tests/test_cli_contract.py`: smoke test dos dois pontos de entrada e dos envelopes JSON.
 - `tests/test_installation.py`: testes do lockfile, do modo somente leitura, dos gates e da cópia de modelos locais.
 - `tests/test_capabilities.py`: teste de processo do inventário e da recomendação determinística.
@@ -77,7 +82,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `.erros-encontrados/`: registros de problemas fora do escopo encontrados durante as verificações.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5 e extração de frames na T6 em 2026-09-12 -->
+<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5, extração de frames na T6 e validação de plano na T7 em 2026-09-12 -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -146,3 +151,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** Python 3.11 x64, FFmpeg e FFprobe locais; processamento sem rede, sem shell intermediário e sem alteração da fonte original.
 - **Limitação conhecida:** a operação reutiliza a allowlist de mídia e exige MP4/H.264, aceitando no máximo um stream AAC quando houver áudio; o timestamp efetivo é o primeiro frame disponível a partir do solicitado, ou o último frame quando o pedido fica entre o último frame e a duração reportada; `ponytail: ampliar a allowlist de vídeo e otimizar a extração em lote somente quando uma fonte real do MVP exigir outro codec ou volume maior`.
 - **Verificação:** `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_frame_extraction.py" -v`, `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` e `python -m editor extract frames --workdir <caminho-absoluto> --source-id main --input tests/fixtures/media/main.mp4 --interval-s 5 --json`.
+
+### Validação de plano linear, T7
+
+- **Propósito:** validar o único `plan.json` do trabalho antes de qualquer renderização, garantindo schema estrito, metadados de mídia, timeline linear, áudio explícito, overlays e perfil 16:9.
+- **Entrada:** `editor plan validate --workdir <caminho-absoluto> --json`; fontes relativas são resolvidas no trabalho e fontes absolutas locais continuam permitidas como originais de entrada.
+- **Saída:** envelope JSON em `stdout` com metadados das fontes, timeline concatenada, processamento de áudio, JSON canônico e SHA-256; nenhum arquivo de saída é criado ou renderizado.
+- **Dependências:** Python 3.11 x64, biblioteca padrão e FFprobe local para validar contêiner, codecs, duração e proporção.
+- **Limitação conhecida:** a timeline é linear, sem transições, camadas visuais simultâneas ou decisão editorial automática; `ponytail: ampliar o schema somente quando uma operação real do MVP exigir composição fora da timeline explícita`.
+- **Verificação:** `.venv\Scripts\python.exe -B -m editor plan validate --workdir <caminho-absoluto> --json`, `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_plan_validation.py" -v` e `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`.

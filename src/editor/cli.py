@@ -18,6 +18,7 @@ from .contracts import (
     serialize_envelope,
     success_envelope,
 )
+from .plan.validation import validate_plan
 
 
 class HelpRequested(Exception):
@@ -197,6 +198,36 @@ def build_parser() -> CliArgumentParser:
         default=argparse.SUPPRESS,
         help="retorna o resultado estruturado em JSON pelo stdout",
     )
+    plan_parser = subparsers.add_parser(
+        "plan",
+        help="valida o plano linear do trabalho sem renderizar",
+        description="valida plan.json e calcula a timeline linear sem renderizar",
+    )
+    plan_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
+    plan_subparsers = plan_parser.add_subparsers(
+        dest="plan_command",
+        title="operações de plano",
+        metavar="OPERATION",
+    )
+    validate_parser = plan_subparsers.add_parser(
+        "validate",
+        help="valida exclusivamente plan.json no diretório de trabalho",
+        description="valida exclusivamente plan.json no diretório de trabalho",
+    )
+    validate_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    validate_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
     return parser
 
 
@@ -282,6 +313,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 end_seconds=args.end_s,
             )
             write_json(success_envelope("extract frames", result))
+            return 0
+
+        if args.command == "plan" and args.plan_command == "validate":
+            result = validate_plan(args.workdir)
+            write_json(success_envelope("plan validate", result))
             return 0
 
         if args.command is None:

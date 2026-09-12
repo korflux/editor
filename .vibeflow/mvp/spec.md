@@ -175,7 +175,7 @@ editor render full --workdir <dir> --json
 - [x] A2: A transcrição de uma fonte aceita gera JSON com idioma, texto, segmentos e timestamps por palavra, preservando a fonte e seu hash.
 - [x] A3: A análise de áudio gera loudness, picos, média e silêncio por intervalos, sem declarar classificação de fala ou ruído.
 - [x] A4: A extração por timestamps e por intervalo gera PNGs e manifesto com a associação temporal correta, rejeitando entradas ambíguas ou fora da duração.
-- [ ] A5: Um plano com fonte principal, corte, junção, b-roll em tela cheia, áudio da fonte principal, música mixada e lettering passa na validação e gera uma timeline linear.
+- [x] A5: Um plano com fonte principal, corte, junção, b-roll em tela cheia, áudio da fonte principal, música mixada e lettering passa na validação e gera uma timeline linear.
 - [ ] A6: A mixagem respeita ganhos explícitos, normalização de loudness e limiter, sem ducking automático; o áudio de B não aparece quando B é usado como b-roll sobre A.
 - [ ] A7: `render preview` publica exatamente `preview.mp4` em até 720 pixels na maior dimensão e substitui a preview anterior apenas após sucesso.
 - [ ] A8: `approve` registra hashes do plano, preview e fontes; `render full` bloqueia plano, preview ou fonte alterados e libera a full quando todos coincidem.

@@ -32,6 +32,9 @@ class MediaMetadata:
     size_bytes: int
     sample_rate: int | None
     channels: int | None
+    video_width: int | None = None
+    video_height: int | None = None
+    video_frame_rate: float | None = None
 
 
 def _error(code: str, message: str, exit_code: int = EXIT_CODES["MEDIA"]) -> CliError:
@@ -54,6 +57,27 @@ def _stream_duration(stream: dict[str, Any]) -> float | None:
     """Obtém a duração do stream como fallback quando o contêiner não a informa."""
 
     return _parse_duration(stream.get("duration"))
+
+
+def _parse_positive_int(value: Any) -> int | None:
+    """Converte uma dimensão FFprobe positiva sem transformar metadado inválido em zero."""
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _parse_frame_rate(value: Any) -> float | None:
+    """Converte uma razão de frames do FFprobe para um número finito positivo."""
+
+    try:
+        numerator, denominator = str(value).split("/", 1)
+        rate = float(numerator) / float(denominator)
+    except (AttributeError, ValueError, ZeroDivisionError):
+        return None
+    return rate if math.isfinite(rate) and rate > 0 else None
 
 
 def _map_process_error(error: process.ProcessExecutionError) -> CliError:
@@ -162,6 +186,16 @@ def _validate_probe_payload(
             channels = int(audio_streams[0].get("channels"))
         except (TypeError, ValueError):
             channels = None
+    video_width = None
+    video_height = None
+    video_frame_rate = None
+    if video_streams:
+        video_width = _parse_positive_int(video_streams[0].get("width"))
+        video_height = _parse_positive_int(video_streams[0].get("height"))
+        video_frame_rate = _parse_frame_rate(
+            video_streams[0].get("avg_frame_rate")
+            or video_streams[0].get("r_frame_rate")
+        )
     return MediaMetadata(
         path=path,
         container=expected_format,
@@ -171,6 +205,9 @@ def _validate_probe_payload(
         size_bytes=size_bytes,
         sample_rate=sample_rate,
         channels=channels,
+        video_width=video_width,
+        video_height=video_height,
+        video_frame_rate=video_frame_rate,
     )
 
 
