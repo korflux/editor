@@ -7,9 +7,9 @@
 
 - **ROUTE:** max
 - **Modo:** A
-- **Fila:** T8 implementada; T9 é a próxima elegível, T10 depende de T9 e T11 depende de T8, T9 e T10
+- **Fila:** T9 implementada; T10 é a próxima elegível e T11 depende de T9 e T10
 - **Analyze:** `analyze.md` aprovado, veredito `limpo`
-- **Pergunta da T8:** um plano validado gera uma única preview linear completa, com áudio e lettering declarados, sem publicar estado parcial?
+- **Pergunta da T9:** um plano validado e uma preview publicada podem ser aprovados por hashes, sem substituir o estado vigente em falha?
 
 ## T1: Criar CLI instalável com smoke test
 
@@ -307,6 +307,43 @@
 - **Decisões:** RENDER-01, AUDIO-01, TEXT-01, MEDIA-01 e PRIV-01 implementadas para a preview.
 - **Mensagem de commit:** `task(T8): render validated preview`
 
+## T9: Registrar aprovação vinculada a hashes
+
+### Reconhecer
+
+- T7 já expunha o hash canônico do plano e T8 publicava uma única `preview.mp4` atomicamente, mas ainda não havia um estado explícito que vinculasse plano, preview e fontes.
+- A aprovação precisa revalidar o plano antes de calcular hashes, exigir uma preview regular já publicada e preservar o `approval.json` anterior se qualquer pré-condição falhar.
+- O hashing de fontes foi centralizado em `src/editor/integrity/hashes.py`; `media.sha256_file` passou a reutilizar o mesmo helper para não duplicar a leitura em blocos.
+
+### Codar
+
+- `src/editor/integrity/approval.py` valida o plano, exige `preview.mp4`, calcula o hash canônico já produzido pela validação, calcula o hash da preview e registra as fontes na ordem declarada pelo plano.
+- `src/editor/workdir.py` adiciona layout e publicação atômica de `approval.json` dentro de `.tmp`, com rejeição de destinos não regulares ou linkados.
+- `src/editor/cli.py` registra `approve --workdir <caminho-absoluto> --json` e mantém o envelope centralizado.
+- `tests/test_approval.py` cobre o processo real, o schema, a ordenação dos hashes, a invariância de formatação, mudança semântica e preservação da aprovação vigente em ausência da preview.
+- `tests/fixtures/workflow/preview.mp4` e `approval.json` registram um estado completo do cenário usado na prova do comando real.
+
+### Testar
+
+- `python -m editor render preview --workdir A:\Projetos\editor\tests\fixtures\workflow --json` -> exit code `0`, preview H.264/AAC, `320x180` e `2.0 s`.
+- `python -m editor approve --workdir A:\Projetos\editor\tests\fixtures\workflow --json` -> exit code `0`, `approval.json` publicado com três fontes ordenadas.
+- `python -m unittest discover -s tests -p "test_approval.py" -v` -> `Ran 3 tests in 13.264s ... OK`.
+- A primeira tentativa com caminho relativo falhou com `WORKDIR_INVALID`, conforme o contrato de caminho absoluto; a prova foi refeita com o caminho absoluto exigido pela CLI.
+
+### Simplificar e re-testar
+
+- O hash de arquivos reutiliza um único helper em blocos; o hash semântico do plano continua no módulo canônico existente.
+- A aprovação só monta o documento depois de concluir todas as validações e hashes, então uma falha anterior à publicação não substitui o registro vigente.
+- A suíte específica permaneceu verde após a revisão e o fluxo completo existente continuou verde com `Ran 46 tests ... OK`.
+
+### Registro
+
+- **Plan:** T9 marcada como concluída.
+- **Spec comprovada nesta fatia:** a parte de aprovação por hashes de A8, além de C2 e C4 no caminho de aprovação; a validação da full permanece na T10.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/implement.md`, `.vibeflow/mvp/plan.md`, `src/editor/cli.py`, `src/editor/media.py`, `src/editor/workdir.py`, `src/editor/integrity/__init__.py`, `src/editor/integrity/hashes.py`, `src/editor/integrity/approval.py`, `tests/test_approval.py`, `tests/fixtures/workflow/approval.json`, `tests/fixtures/workflow/preview.mp4`.
+- **Decisões:** STATE-01, DATA-01, RENDER-01 e CONTRACT-01 implementadas para a aprovação; `render full` permanece fora da T9.
+- **Mensagem de commit:** `task(T9): record hash-bound approval`
+
 ## Handoff
 
-Fila após T8: T9 é a próxima T elegível; T10 depende de T9 e T11 depende de T8, T9 e T10. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.
+Fila após T9: T10 é a próxima T elegível; T11 depende de T10. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.

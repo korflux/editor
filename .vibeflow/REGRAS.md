@@ -63,6 +63,8 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `src/editor/plan/schema.py`: allowlist estrutural e opções suportadas do schema v1 do plano.
 - `src/editor/plan/validation.py`: validação de fontes, segmentos, áudio, overlays e timeline linear.
 - `src/editor/plan/canonical.py`: serialização UTF-8 canônica e SHA-256 do plano.
+- `src/editor/integrity/hashes.py`: hashing em blocos de artefatos locais para registros de integridade.
+- `src/editor/integrity/approval.py`: validação do plano, cálculo de hashes e publicação atômica de `approval.json`.
 - `src/editor/render/ffmpeg_graph.py`: composição determinística de filtros de vídeo, áudio e lettering para a preview.
 - `src/editor/render/preview.py`: renderização, validação de metadados e publicação atômica da única `preview.mp4`.
 - `src/editor/whisper_backend.py`: seleção local de modelo/dispositivo e ponte lazy com faster-whisper sem download.
@@ -70,9 +72,10 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `tests/test_frame_extraction.py`: seleção explícita/regular, timestamps efetivos, PNGs e preservação em falha de FFmpeg.
 - `tests/test_plan_validation.py`: schema estrito, timeline do cenário de vlog, regras de áudio, overlays e hash canônico.
 - `tests/test_preview_render.py`: composição real da preview, áudio explícito do b-roll, perfil, mute e preservação em falha.
+- `tests/test_approval.py`: aprovação real por hashes, ordenação das fontes, invariância de formatação e preservação do estado vigente.
 - `tests/test_transcription.py`: contrato canônico, seleção CPU/CUDA, timestamps obrigatórios e erros seguros da transcrição.
 - `tests/fixtures/media/main.mp4`: fixture curta H.264/AAC com trechos silenciosos para o contrato de áudio.
-- `tests/fixtures/workflow/`: plan.json e fontes locais do cenário de validação do MVP.
+- `tests/fixtures/workflow/`: plan.json, fontes locais, preview e aprovação do cenário de validação do MVP.
 - `tests/test_cli_contract.py`: smoke test dos dois pontos de entrada e dos envelopes JSON.
 - `tests/test_installation.py`: testes do lockfile, do modo somente leitura, dos gates e da cópia de modelos locais.
 - `tests/test_capabilities.py`: teste de processo do inventário e da recomendação determinística.
@@ -85,7 +88,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `.erros-encontrados/`: registros de problemas fora do escopo encontrados durante as verificações.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5, extração de frames na T6, validação de plano na T7 e renderização de preview na T8 em 2026-09-12 -->
+<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5, extração de frames na T6, validação de plano na T7, renderização de preview na T8 e aprovação por hashes na T9 em 2026-09-12 -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -172,3 +175,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** Python 3.11 x64, FFmpeg/FFprobe locais com encoders `libx264` e `aac`; nenhum processo usa shell intermediário ou rede.
 - **Limitação conhecida:** a preview usa um único canvas 16:9 derivado da largura do primeiro vídeo e codificação H.264 `libx264` com preset `veryfast`; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.
 - **Verificação:** `python -m editor render preview --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_preview_render.py" -v`.
+
+### Aprovação por hashes, T9
+
+- **Propósito:** registrar a aprovação explícita do plano e da preview vigente, vinculando também todas as fontes referenciadas por SHA-256.
+- **Entrada:** `editor approve --workdir <caminho-absoluto> --json`; o comando valida `plan.json` e exige `preview.mp4` regular já publicada.
+- **Saída:** envelope JSON em `stdout` e `<workdir>/approval.json`, contendo `schema_version`, instante UTC, hash canônico do plano, hash da preview e lista ordenada de hashes das fontes. O registro é publicado por arquivo temporário dentro de `.tmp` e substituição atômica.
+- **Dependências:** biblioteca padrão, FFprobe para a validação do plano e fontes locais já declaradas; não faz rede nem altera originais.
+- **Limitação conhecida:** a CLI registra a aprovação fornecida pelo operador e não decide se a preview foi editorialmente aceita; `ponytail: exigir assinatura ou identidade de aprovação somente quando o MVP tiver autenticação ou múltiplos operadores`.
+- **Verificação:** `python -m editor approve --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_approval.py" -v`.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -12,6 +11,7 @@ from typing import Any
 
 from . import process
 from .contracts import CliError, EXIT_CODES
+from .integrity.hashes import sha256_file as _sha256_file
 from .workdir import resolve_source_path
 
 
@@ -262,11 +262,7 @@ def inspect_source(
 def sha256_file(path: Path) -> str:
     """Calcula o hash da fonte em blocos para registrar a origem analisada."""
 
-    digest = hashlib.sha256()
     try:
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
+        return _sha256_file(path)
     except OSError as error:
         raise _error("SOURCE_INVALID", "Não foi possível ler a fonte de mídia.") from error
-    return digest.hexdigest()

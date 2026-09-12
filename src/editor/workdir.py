@@ -46,6 +46,15 @@ class PreviewLayout:
     destination: Path
 
 
+@dataclass(frozen=True)
+class ApprovalLayout:
+    """Representa o destino do registro de aprovação e o temporário do trabalho."""
+
+    root: Path
+    temporary: Path
+    destination: Path
+
+
 def _error(code: str, message: str, exit_code: int) -> CliError:
     """Cria um erro público seguro para falhas de caminho e de estado local."""
 
@@ -245,7 +254,27 @@ def prepare_preview_layout(workdir: str | Path) -> PreviewLayout:
     return PreviewLayout(root=root, temporary=temporary, destination=destination)
 
 
-def relative_artifact_path(layout: WorkdirLayout | FramesLayout | PreviewLayout) -> str:
+def prepare_approval_layout(workdir: str | Path) -> ApprovalLayout:
+    """Prepara `approval.json` e rejeita um destino linkado antes de calcular estado."""
+
+    root = validate_workdir(workdir)
+    temporary = root / ".tmp"
+    destination = root / "approval.json"
+    _ensure_directory(temporary)
+    if _lexists(destination) and (
+        not is_regular_path(destination) or _has_reparse_ancestor(destination.parent)
+    ):
+        raise _error(
+            "OUTPUT_INVALID",
+            "O destino da aprovação deve ser um arquivo regular dentro do trabalho.",
+            EXIT_CODES["STATE"],
+        )
+    return ApprovalLayout(root=root, temporary=temporary, destination=destination)
+
+
+def relative_artifact_path(
+    layout: WorkdirLayout | FramesLayout | PreviewLayout | ApprovalLayout,
+) -> str:
     """Retorna o caminho do artefato relativo ao trabalho para respostas estáveis."""
 
     return layout.destination.relative_to(layout.root).as_posix()
@@ -413,5 +442,56 @@ def publish_preview_atomic(layout: PreviewLayout, staging: Path) -> None:
         if _lexists(staging):
             try:
                 staging.unlink()
+            except OSError:
+                pass
+
+
+def publish_approval_atomic(layout: ApprovalLayout, payload: bytes) -> None:
+    """Publica o registro completo sem substituir uma aprovação por estado parcial."""
+
+    temporary_path: Path | None = None
+    try:
+        _ensure_directory(layout.temporary)
+        if _lexists(layout.destination) and (
+            not is_regular_path(layout.destination)
+            or _has_reparse_ancestor(layout.destination.parent)
+        ):
+            raise _error(
+                "OUTPUT_PUBLISH_FAILED",
+                "O destino da aprovação mudou para um estado não seguro.",
+                EXIT_CODES["OPERATION"],
+            )
+
+        descriptor, raw_temporary_path = tempfile.mkstemp(
+            prefix=".approval-",
+            suffix=".tmp",
+            dir=layout.temporary,
+        )
+        temporary_path = Path(raw_temporary_path)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        if not is_regular_path(temporary_path):
+            raise _error(
+                "OUTPUT_PUBLISH_FAILED",
+                "O arquivo temporário da aprovação não pôde ser validado.",
+                EXIT_CODES["OPERATION"],
+            )
+        os.replace(temporary_path, layout.destination)
+        temporary_path = None
+    except CliError:
+        raise
+    except OSError as error:
+        raise _error(
+            "OUTPUT_PUBLISH_FAILED",
+            "Não foi possível publicar a aprovação completa.",
+            EXIT_CODES["OPERATION"],
+        ) from error
+    finally:
+        if temporary_path is not None and _lexists(temporary_path):
+            try:
+                temporary_path.unlink()
             except OSError:
                 pass

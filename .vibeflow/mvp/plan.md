@@ -210,7 +210,7 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T9: Registrar aprovação vinculada a hashes
 
-- [ ] T9 concluída
+- [x] T9 concluída
 - **Spec:** A8, A11, C2, C3, C4
 - **Decisões:** STATE-01 (registra plano, preview e fontes), RENDER-01 (aprovação refere a preview vigente), DATA-01 (grava `approval.json` no trabalho), CONTRACT-01 (falha sem aprovação válida usa código estável)
 - **O quê:** Implementar `approve` após validação do plano e existência da preview publicada. Calcular o hash SHA-256 do plano canônico, da preview e de cada fonte referenciada, preservando a lista ordenada de fontes e o instante UTC.
@@ -219,10 +219,12 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
   - [ ] Plano inválido, preview ausente ou saída não publicada impedem a aprovação sem substituir um registro válido por estado incompleto.
   - [ ] Alterações somente de formatação em `plan.json` não mudam `plan_sha256`; qualquer alteração semântica muda o hash.
 - **Verificação:**
-  - [ ] `python -m editor approve --workdir tests/fixtures/workflow --json`
-  - [ ] `python -m unittest discover -s tests -p "test_approval.py" -v`
+  - [x] `python -m editor approve --workdir A:\Projetos\editor\tests\fixtures\workflow --json`
+  - [x] `python -m unittest discover -s tests -p "test_approval.py" -v` -> `Ran 3 tests ... OK`.
 - **Deps:** T7, T8
-- **Arquivos:** `src/editor/integrity/hashes.py`, `src/editor/integrity/approval.py`, `tests/test_approval.py`, `tests/fixtures/workflow/approval.json`
+- **Prova:** o comando real publicou `approval.json` com schema v1, instante UTC, hash canônico do plano, hash da preview H.264/AAC e três hashes de fonte na ordem `main`, `broll-01`, `music-01`; tentativas sem preview preservaram a aprovação vigente; formatação não alterou o hash e ganho semântico alterou.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/implement.md`, `.vibeflow/mvp/plan.md`, `src/editor/cli.py`, `src/editor/media.py`, `src/editor/workdir.py`, `src/editor/integrity/__init__.py`, `src/editor/integrity/hashes.py`, `src/editor/integrity/approval.py`, `tests/test_approval.py`, `tests/fixtures/workflow/approval.json`, `tests/fixtures/workflow/preview.mp4`
+- **Decisões:** STATE-01, DATA-01, RENDER-01 e CONTRACT-01 implementadas para o registro de aprovação; `render full` ainda depende da T10.
 - **Size:** medium, 6/10, estado persistente, hashing de múltiplos artefatos, contrato de aprovação e integração com preview
 - **Risk:** medium, a aprovação inválida precisa ser impossível de confundir com autorização vigente
 

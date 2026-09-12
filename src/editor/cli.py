@@ -18,6 +18,7 @@ from .contracts import (
     serialize_envelope,
     success_envelope,
 )
+from .integrity.approval import approve_workdir
 from .plan.validation import validate_plan
 from .render.preview import render_preview
 
@@ -229,6 +230,19 @@ def build_parser() -> CliArgumentParser:
         default=argparse.SUPPRESS,
         help="retorna o resultado estruturado em JSON pelo stdout",
     )
+    approve_parser = subparsers.add_parser(
+        "approve",
+        help="registra aprovação do plano e da preview por hash",
+        description="valida o plano e publica approval.json com hashes locais",
+    )
+    approve_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    approve_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
     render_parser = subparsers.add_parser(
         "render",
         help="renderiza artefatos locais a partir do plano validado",
@@ -349,6 +363,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "plan" and args.plan_command == "validate":
             result = validate_plan(args.workdir)
             write_json(success_envelope("plan validate", result))
+            return 0
+
+        if args.command == "approve":
+            result = approve_workdir(args.workdir)
+            write_json(success_envelope("approve", result))
             return 0
 
         if args.command == "render" and args.render_command == "preview":
