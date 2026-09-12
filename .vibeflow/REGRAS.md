@@ -52,8 +52,11 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
   - `__main__.py`: execução por `python -m editor`.
   - `cli.py`: parser, ajuda, despacho inicial e conversão central de erros.
   - `contracts.py`: schema de envelopes, exit codes e erro de domínio público.
+- `src/editor/capabilities.py`: contrato de inventário local, limites, operações e recomendação.
+- `src/editor/dependencies.py`: sondagem segura de ferramentas, hardware, backend e modelos locais.
 - `tests/test_cli_contract.py`: smoke test dos dois pontos de entrada e dos envelopes JSON.
 - `tests/test_installation.py`: testes do lockfile, do modo somente leitura, dos gates e da cópia de modelos locais.
+- `tests/test_capabilities.py`: teste de processo do inventário e da recomendação determinística.
 - `.vibeflow/`: fonte de governança e Documento Vivo de regras.
 - `.vibeflow/mvp/`: entrevista, spec, plan, analyze e implement do MVP.
 - `.vibeflow/phases/`: artefatos de entrevista, especificação, plano, análise, implementação e revisão por fase.
@@ -63,7 +66,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `.erros-encontrados/`: registros de problemas fora do escopo encontrados durante as verificações.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10 -->
+<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3 em 2026-09-12 -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -96,3 +99,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** Python 3.11 x64, `requirements.lock`, PowerShell 7, FFmpeg/ffprobe e gitleaks 8.30.1 quando instalados; CUDA é opcional; os modelos Whisper devem ser diretórios CTranslate2 locais.
 - **Limitação conhecida:** o instalador não baixa FFmpeg, CUDA, gitleaks ou pesos Whisper e exige suas origens locais; `ponytail: usar um catálogo assinado de artefatos quando o provisionamento precisar ser automatizado fora da máquina local`.
 - **Verificação:** `pwsh -NoProfile -File scripts/install.ps1 -Verify`, `python -m pip check`, `gitleaks detect --source . --no-banner`, `python -m pip_audit -r requirements.lock` e `python -m unittest discover -s tests -p "test_installation.py" -v`.
+
+### Capacidades locais, T3
+
+- **Propósito:** expor o inventário local consumível por agentes antes de iniciar análise ou edição.
+- **Entrada:** `editor capabilities --json`; o comando também preserva a saída estruturada quando `--json` é omitido.
+- **Saída:** envelope JSON com sistema, CPU, memória, GPU/VRAM, FFmpeg/FFprobe, backend Whisper, modelos locais, dispositivos, formatos, limites, operações e recomendação.
+- **Dependências:** biblioteca padrão; FFmpeg/FFprobe, `nvidia-smi`, faster-whisper, CTranslate2 e modelos são sondados somente quando fornecidos localmente.
+- **Limitação conhecida:** GPU é detectada via `nvidia-smi` e a recomendação só usa modelos `tiny`, `base` ou `small` com os arquivos CTranslate2 mínimos; `ponytail: adicionar adaptadores para outros fornecedores de GPU ou catálogos de modelos somente quando houver necessidade real`.
+- **Verificação:** `python -m editor capabilities --json` e `python -m unittest discover -s tests -p "test_capabilities.py" -v`.

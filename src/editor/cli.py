@@ -6,6 +6,7 @@ import argparse
 import sys
 from typing import Sequence
 
+from .capabilities import collect_capabilities
 from .contracts import (
     CLI_VERSION,
     EXIT_CODES,
@@ -42,7 +43,7 @@ class CliArgumentParser(argparse.ArgumentParser):
 
 
 def build_parser() -> CliArgumentParser:
-    """Cria o parser raiz sem registrar operações antes de suas tasks próprias."""
+    """Cria o parser raiz e registra somente o comando de capacidades já implementado."""
 
     parser = CliArgumentParser(
         prog="editor",
@@ -60,10 +61,24 @@ def build_parser() -> CliArgumentParser:
         action="store_true",
         help="exibe a versão da CLI",
     )
-    parser.add_subparsers(
+    subparsers = parser.add_subparsers(
         dest="command",
         title="comandos",
         metavar="COMMAND",
+    )
+    capabilities_parser = subparsers.add_parser(
+        "capabilities",
+        help="consulta capacidades locais sem editar arquivos ou fazer rede",
+        description="consulta capacidades locais sem editar arquivos ou fazer rede",
+    )
+    # Permite o contrato documentado `editor capabilities --json` sem sobrescrever
+    # um `--json` informado antes do subcomando na raiz do parser.
+    capabilities_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o inventário estruturado em JSON pelo stdout",
     )
     return parser
 
@@ -85,7 +100,7 @@ def handle_error(error: CliError, json_output: bool) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Executa a borda da CLI e mantém exceções internas fora da resposta pública."""
+    """Executa a borda da CLI, despacha capacidades e mantém exceções internas fora da resposta pública."""
 
     raw_args = list(sys.argv[1:] if argv is None else argv)
     json_requested = "--json" in raw_args
@@ -97,6 +112,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 write_json(success_envelope("version", {"version": CLI_VERSION}))
             else:
                 sys.stdout.write(f"editor {CLI_VERSION}\n")
+            return 0
+
+        if args.command == "capabilities":
+            # O inventário é sempre estruturado para que agentes não dependam de
+            # texto humano, mesmo quando o operador omite o sinalizador `--json`.
+            write_json(success_envelope("capabilities", collect_capabilities()))
             return 0
 
         if args.command is None:

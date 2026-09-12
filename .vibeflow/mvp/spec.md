@@ -171,7 +171,7 @@ editor render full --workdir <dir> --json
 
 ### Aceite
 
-- [ ] A1: `capabilities --json` retorna um envelope válido, informa capacidades detectadas e recomendação local, e não envia dados para a rede.
+- [x] A1: `capabilities --json` retorna um envelope válido, informa capacidades detectadas e recomendação local, e não envia dados para a rede.
 - [ ] A2: A transcrição de uma fonte aceita gera JSON com idioma, texto, segmentos e timestamps por palavra, preservando a fonte e seu hash.
 - [ ] A3: A análise de áudio gera loudness, picos, média e silêncio por intervalos, sem declarar classificação de fala ou ruído.
 - [ ] A4: A extração por timestamps e por intervalo gera PNGs e manifesto com a associação temporal correta, rejeitando entradas ambíguas ou fora da duração.

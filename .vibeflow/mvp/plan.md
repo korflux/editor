@@ -92,17 +92,18 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T3: Detectar capacidades locais com recomendação determinística
 
-- [ ] T3 concluída
+- [x] T3 concluída
 - **Spec:** A1, A10, A11, C2, C5
 - **Decisões:** TECH-01 (usa faster-whisper/CTranslate2), AI-01 (mantém CPU baseline e CUDA opcional), AI-02 (recomendação `base`/`small`/`tiny` somente entre modelos locais), PRIV-01 (não envia inventário para fora)
 - **O quê:** Implementar `capabilities --json` com detecção de sistema, arquitetura, CPU, memória, GPU/VRAM, FFmpeg, backend Whisper, modelos e dispositivos. A resposta deve distinguir `available`, `missing`, `unsupported` e `recommended`, sem executar edição nem fazer rede.
 - **Aceite:**
-  - [ ] A saída é um envelope JSON estável com versão da CLI, capacidades detectadas, formatos, limites, operações e recomendação de dispositivo/modelo.
-  - [ ] A ausência de FFmpeg, CUDA ou modelo não impede a consulta; apenas operações dependentes ficam marcadas como indisponíveis, sem fallback remoto ou download.
-  - [ ] A recomendação escolhe `base` no CPU quando instalado, `small` no CUDA quando instalado e `tiny` como fallback local determinístico; override indisponível fica explícito.
+  - [x] A saída é um envelope JSON estável com versão da CLI, capacidades detectadas, formatos, limites, operações e recomendação de dispositivo/modelo.
+  - [x] A ausência de FFmpeg, CUDA ou modelo não impede a consulta; apenas operações dependentes ficam marcadas como indisponíveis, sem fallback remoto ou download.
+  - [x] A recomendação escolhe `base` no CPU quando instalado, `small` no CUDA quando instalado e `tiny` como fallback local determinístico; override indisponível fica explícito.
 - **Verificação:**
-  - [ ] `python -m editor capabilities --json`
-  - [ ] `python -m unittest discover -s tests -p "test_capabilities.py" -v`
+  - [x] `python -m editor capabilities --json` -> exit `0`, envelope `capabilities` válido; no host atual FFmpeg/FFprobe e GPU foram detectados, enquanto backend Whisper e modelos ficaram explicitamente como ausentes.
+  - [x] `python -m unittest discover -s tests -p "test_capabilities.py" -v` -> `Ran 4 tests ... OK`.
+- **Prova:** a descoberta usa somente APIs locais e subprocessos estruturados com `shell=False`, e o fixture de modelos confirmou `base` disponível e `tiny` incompleto como `unsupported`.
 - **Deps:** T1, T2
 - **Arquivos:** `src/editor/capabilities.py`, `src/editor/dependencies.py`, `tests/test_capabilities.py`
 - **Size:** medium, 5/10, descoberta local, subprocesso de FFmpeg, estados de dependência e teste de contrato
