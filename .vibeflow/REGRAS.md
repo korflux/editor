@@ -67,12 +67,14 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `src/editor/integrity/approval.py`: validação do plano, cálculo de hashes e publicação atômica de `approval.json`.
 - `src/editor/render/ffmpeg_graph.py`: composição determinística de filtros de vídeo, áudio e lettering para a preview.
 - `src/editor/render/preview.py`: renderização, validação de metadados e publicação atômica da única `preview.mp4`.
+- `src/editor/render/full.py`: revalidação da aprovação e renderização final da única `full.mp4`.
 - `src/editor/whisper_backend.py`: seleção local de modelo/dispositivo e ponte lazy com faster-whisper sem download.
 - `tests/test_audio_analysis.py`: processo real da CLI, validação precoce e preservação em falha de FFmpeg.
 - `tests/test_frame_extraction.py`: seleção explícita/regular, timestamps efetivos, PNGs e preservação em falha de FFmpeg.
 - `tests/test_plan_validation.py`: schema estrito, timeline do cenário de vlog, regras de áudio, overlays e hash canônico.
 - `tests/test_preview_render.py`: composição real da preview, áudio explícito do b-roll, perfil, mute e preservação em falha.
 - `tests/test_approval.py`: aprovação real por hashes, ordenação das fontes, invariância de formatação e preservação do estado vigente.
+- `tests/test_full_render.py`: full real com aprovação vigente, bloqueio por mutação, aprovação inválida e preservação em falha de FFmpeg.
 - `tests/test_transcription.py`: contrato canônico, seleção CPU/CUDA, timestamps obrigatórios e erros seguros da transcrição.
 - `tests/fixtures/media/main.mp4`: fixture curta H.264/AAC com trechos silenciosos para o contrato de áudio.
 - `tests/fixtures/workflow/`: plan.json, fontes locais, preview e aprovação do cenário de validação do MVP.
@@ -88,7 +90,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `.erros-encontrados/`: registros de problemas fora do escopo encontrados durante as verificações.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5, extração de frames na T6, validação de plano na T7, renderização de preview na T8 e aprovação por hashes na T9 em 2026-09-12 -->
+<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5, extração de frames na T6, validação de plano na T7, renderização de preview na T8, aprovação por hashes na T9 e renderização final na T10 em 2026-09-12 -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -184,3 +186,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** biblioteca padrão, FFprobe para a validação do plano e fontes locais já declaradas; não faz rede nem altera originais.
 - **Limitação conhecida:** a CLI registra a aprovação fornecida pelo operador e não decide se a preview foi editorialmente aceita; `ponytail: exigir assinatura ou identidade de aprovação somente quando o MVP tiver autenticação ou múltiplos operadores`.
 - **Verificação:** `python -m editor approve --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_approval.py" -v`.
+
+### Renderização final com aprovação, T10
+
+- **Propósito:** transformar a timeline aprovada em uma única full linear, sem reinterpretar o plano ou o conteúdo.
+- **Entrada:** `editor render full --workdir <caminho-absoluto> --json`; exige `plan.json`, `preview.mp4`, `approval.json` e todas as fontes locais declaradas.
+- **Saída:** envelope JSON em `stdout` e `<workdir>/full.mp4`, publicado somente depois de a aprovação, o plano, a preview e as fontes coincidirem por SHA-256 e o MP4 final passar pela inspeção de mídia.
+- **Dependências:** biblioteca padrão, FFmpeg/FFprobe locais com encoders `libx264` e `aac`; usa a mesma timeline, grafo de filtros e processamento de áudio da preview, sem rede.
+- **Limitação conhecida:** a full usa a largura do primeiro vídeo e canvas 16:9, com codificação H.264 `libx264` e preset `veryfast`; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.
+- **Verificação:** `python -m editor render full --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_full_render.py" -v`.

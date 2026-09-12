@@ -178,7 +178,7 @@ editor render full --workdir <dir> --json
 - [x] A5: Um plano com fonte principal, corte, junção, b-roll em tela cheia, áudio da fonte principal, música mixada e lettering passa na validação e gera uma timeline linear.
 - [x] A6: A mixagem respeita ganhos explícitos, normalização de loudness e limiter, sem ducking automático; o áudio de B não aparece quando B é usado como b-roll sobre A.
 - [x] A7: `render preview` publica exatamente `preview.mp4` em até 720 pixels na maior dimensão e substitui a preview anterior apenas após sucesso.
-- [ ] A8: `approve` registra hashes do plano, preview e fontes; `render full` bloqueia plano, preview ou fonte alterados e libera a full quando todos coincidem.
+- [x] A8: `approve` registra hashes do plano, preview e fontes; `render full` bloqueia plano, preview ou fonte alterados e libera a full quando todos coincidem.
 - [x] A9: Falhas de análise e renderização preservam originais, plano e análises, não publicam saída parcial e retornam erro JSON com exit code não zero.
 - [ ] A10: Entradas não suportadas, acima de 60 minutos, acima de 4 GiB, com caminho inválido ou dependência ausente são rejeitadas antes do processamento correspondente; diretório de trabalho ou destino com reparse point também é rejeitado.
 - [ ] A11: A CLI não interage por prompts, não executa shell intermediário e não usa rede durante análise, validação, aprovação ou renderização.
@@ -188,8 +188,8 @@ editor render full --workdir <dir> --json
 
 - [ ] C1: O cenário de vlog de viagens percorre `capabilities`, entrevista na conversa, análise, plano, preview, aprovação e full com uma única timeline.
 - [ ] C2: Um agente consegue consumir todos os resultados de máquina por `stdout` JSON sem interpretar mensagens humanas ou stack traces.
-- [ ] C3: A full aprovada é renderizada a partir do mesmo plano e das mesmas fontes verificadas, sem nova decisão editorial dentro da CLI.
-- [ ] C4: Nenhuma execução altera ou remove as fontes originais, e nenhuma saída parcial é confundível com uma saída publicada.
+- [x] C3: A full aprovada é renderizada a partir do mesmo plano e das mesmas fontes verificadas, sem nova decisão editorial dentro da CLI.
+- [x] C4: Nenhuma execução altera ou remove as fontes originais, e nenhuma saída parcial é confundível com uma saída publicada.
 - [ ] C5: A execução continua local quando as dependências e o modelo estão instalados, sem upload, telemetria ou fallback silencioso para serviço externo.
 
 ## Implementação

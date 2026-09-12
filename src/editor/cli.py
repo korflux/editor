@@ -20,6 +20,7 @@ from .contracts import (
 )
 from .integrity.approval import approve_workdir
 from .plan.validation import validate_plan
+from .render.full import render_full
 from .render.preview import render_preview
 
 
@@ -273,6 +274,19 @@ def build_parser() -> CliArgumentParser:
         default=argparse.SUPPRESS,
         help="retorna o resultado estruturado em JSON pelo stdout",
     )
+    full_parser = render_subparsers.add_parser(
+        "full",
+        help="gera ou substitui a full.mp4 após validar a aprovação vigente",
+        description="valida aprovação, fontes e plano antes de gerar full.mp4",
+    )
+    full_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    full_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
     return parser
 
 
@@ -373,6 +387,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "render" and args.render_command == "preview":
             result = render_preview(args.workdir)
             write_json(success_envelope("render preview", result))
+            return 0
+
+        if args.command == "render" and args.render_command == "full":
+            result = render_full(args.workdir)
+            write_json(success_envelope("render full", result))
             return 0
 
         if args.command is None:

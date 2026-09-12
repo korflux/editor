@@ -230,19 +230,21 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T10: Renderizar full com aprovação vigente
 
-- [ ] T10 concluída
+- [x] T10 concluída
 - **Spec:** A8, A9, A11, C1, C3, C4, C5
 - **Decisões:** STATE-01 (recalcula todos os hashes antes da full), RENDER-01 (usa a mesma timeline aprovada), PRIV-01 (publica full somente após sucesso)
 - **O quê:** Implementar `render full` para revalidar plano, approval, preview e todas as fontes antes de chamar o FFmpeg. A renderização deve usar exatamente a timeline aprovada, sem reanálise ou decisão editorial, e publicar `full.mp4` no perfil final definido pelo primeiro vídeo.
 - **Aceite:**
-  - [ ] Com hashes coincidentes, a full é publicada no perfil final do plano e corresponde à timeline aprovada, sem nova interpretação do conteúdo.
-  - [ ] Alterar separadamente plano, preview ou qualquer fonte retorna `APPROVAL_STALE` antes da renderização e não altera uma full existente.
-  - [ ] Falha no FFmpeg ou na publicação preserva plano, análises, approval e full anterior, sem saída parcial.
+  - [x] Com hashes coincidentes, a full é publicada no perfil final do plano e corresponde à timeline aprovada, sem nova interpretação do conteúdo.
+  - [x] Alterar separadamente plano, preview ou qualquer fonte retorna `APPROVAL_STALE` antes da renderização e não altera uma full existente.
+  - [x] Falha no FFmpeg ou na publicação preserva plano, análises, approval e full anterior, sem saída parcial.
 - **Verificação:**
-  - [ ] `python -m editor render full --workdir tests/fixtures/workflow --json`
-  - [ ] `python -m unittest discover -s tests -p "test_full_render.py" -v`
+  - [x] `python -m editor render full --workdir A:\Projetos\editor\tests\fixtures\workflow --json`
+  - [x] `python -m unittest discover -s tests -p "test_full_render.py" -v` -> `Ran 5 tests in 33.461s ... OK`.
 - **Deps:** T9
-- **Arquivos:** `src/editor/render/full.py`, `src/editor/integrity/approval.py`, `tests/test_full_render.py`, `tests/fixtures/workflow/`
+- **Prova:** o comando real publicou `full.mp4` H.264/AAC em `320x180` com `2.0 s`; o teste de integração confirmou a mesma timeline aprovada, bloqueou mutações independentes de plano, preview e fonte com `APPROVAL_STALE`, rejeitou approval corrompido e preservou a full anterior e `.tmp` vazio na falha simulada do FFmpeg.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/implement.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `src/editor/cli.py`, `src/editor/integrity/approval.py`, `src/editor/render/__init__.py`, `src/editor/render/full.py`, `src/editor/render/preview.py`, `src/editor/workdir.py`, `tests/test_full_render.py`, `tests/fixtures/workflow/full.mp4`
+- **Decisões:** STATE-01, RENDER-01 e PRIV-01 implementadas para a full; o verificador central recalcula os hashes antes do FFmpeg e a publicação continua atômica.
 - **Size:** high, 7/10, revalidação de estado, renderização final, cenários de mutação e publicação atômica
 - **Risk:** medium, qualquer divergência deve bloquear a saída para preservar a integridade da aprovação
 

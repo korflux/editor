@@ -7,9 +7,9 @@
 
 - **ROUTE:** max
 - **Modo:** A
-- **Fila:** T9 implementada; T10 é a próxima elegível e T11 depende de T9 e T10
+- **Fila:** T10 implementada; T11 é a próxima elegível
 - **Analyze:** `analyze.md` aprovado, veredito `limpo`
-- **Pergunta da T9:** um plano validado e uma preview publicada podem ser aprovados por hashes, sem substituir o estado vigente em falha?
+- **Pergunta da T10:** uma aprovação vigente libera a full somente quando plano, preview e fontes continuam com os mesmos hashes?
 
 ## T1: Criar CLI instalável com smoke test
 
@@ -344,6 +344,42 @@
 - **Decisões:** STATE-01, DATA-01, RENDER-01 e CONTRACT-01 implementadas para a aprovação; `render full` permanece fora da T9.
 - **Mensagem de commit:** `task(T9): record hash-bound approval`
 
+## T10: Renderizar full com aprovação vigente
+
+### Reconhecer
+
+- T8 já concentrava o grafo linear, os filtros de áudio e lettering, a validação do MP4 temporário e a publicação atômica da preview.
+- T9 já registrava o hash canônico do plano, o hash da preview e os hashes das fontes, mas ainda não existia uma operação que consumisse esse estado como autorização.
+- A full precisava reutilizar a mesma timeline e os mesmos filtros, usando a resolução do primeiro vídeo sem o limite de 720 pixels da preview.
+
+### Codar
+
+- `src/editor/integrity/approval.py` passou a validar o schema de `approval.json` e recalcular plano, preview e fontes antes de liberar a full; divergências retornam `APPROVAL_STALE`.
+- `src/editor/render/full.py` adiciona `render full`, reutiliza o grafo e os helpers de renderização da preview, valida o MP4 final via FFprobe e publica somente depois do sucesso.
+- `src/editor/workdir.py` adiciona o layout e a publicação atômica de `full.mp4`; `src/editor/cli.py` registra o subcomando e mantém o envelope centralizado.
+- `tests/test_full_render.py` cobre publicação real, aprovação ausente ou corrompida, mutações isoladas e falha do FFmpeg com preservação da full anterior.
+- `.vibeflow/REGRAS.md`, `spec.md` e `plan.md` foram sincronizados com a ferramenta e os critérios comprovados.
+
+### Testar
+
+- `python -m editor render full --workdir A:\Projetos\editor\tests\fixtures\workflow --json` -> exit code `0`, `full.mp4` H.264/AAC, `320x180` e `2.0 s`.
+- `python -m unittest discover -s tests -p "test_full_render.py" -v` -> `Ran 5 tests in 33.461s ... OK`.
+- `python -m unittest discover -s tests -v` -> `Ran 54 tests in 63.757s ... OK`.
+
+### Simplificar e re-testar
+
+- A verificação de estado foi centralizada em `verify_approval`, evitando cópias de comparação em cada render.
+- A full reaproveita o grafo, o comando estruturado, a sondagem de encoders, a validação de mídia e a limpeza de temporários da preview, variando somente o perfil de resolução e o destino.
+- O registro inválido, qualquer hash divergente e a falha de FFmpeg são tratados antes da publicação, preservando `plan.json`, `approval.json`, fontes e `full.mp4` vigente.
+
+### Registro
+
+- **Plan:** T10 marcada como concluída.
+- **Spec comprovada nesta fatia:** A8, C3 e C4. A9 já estava comprovada na T8; A11, C1 e C5 permanecem critérios globais da jornada E2E.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/implement.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `src/editor/cli.py`, `src/editor/integrity/approval.py`, `src/editor/render/__init__.py`, `src/editor/render/full.py`, `src/editor/render/preview.py`, `src/editor/workdir.py`, `tests/test_full_render.py`, `tests/fixtures/workflow/full.mp4`.
+- **Decisões:** STATE-01, RENDER-01 e PRIV-01 implementadas para a full.
+- **Mensagem de commit:** `task(T10): render approved full`
+
 ## Handoff
 
-Fila após T9: T10 é a próxima T elegível; T11 depende de T10. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.
+Fila após T10: T11 é a próxima T elegível. Handoff para a próxima T ou para `vibe-review` quando a fila da fase for encerrada.

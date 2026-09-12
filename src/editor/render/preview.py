@@ -15,6 +15,7 @@ from ..contracts import CliError, EXIT_CODES
 from ..dependencies import is_regular_path
 from ..plan.validation import load_validated_plan
 from ..workdir import (
+    FullLayout,
     PreviewLayout,
     prepare_preview_layout,
     publish_preview_atomic,
@@ -48,8 +49,11 @@ def _number(value: object) -> str:
 def _preview_dimensions(
     document: Mapping[str, Any],
     validation: Mapping[str, Any],
+    *,
+    max_dimension: int | None = MAX_PREVIEW_DIMENSION,
+    artifact_name: str = "preview",
 ) -> tuple[int, int]:
-    """Escolhe um canvas 16:9 baseado no primeiro vídeo sem ultrapassar 720 pixels."""
+    """Escolhe o canvas 16:9 do primeiro vídeo, com limite opcional para a preview."""
 
     first_video_source_id = str(document["segments"][0]["video"]["source_id"])
     source = next(
@@ -61,28 +65,49 @@ def _preview_dimensions(
         None,
     )
     if not isinstance(source, Mapping):
-        raise _error("RENDER_FAILED", "A fonte visual inicial não pôde ser determinada.", EXIT_CODES["OPERATION"])
+        raise _error(
+            "RENDER_FAILED",
+            f"A fonte visual inicial da {artifact_name} não pôde ser determinada.",
+            EXIT_CODES["OPERATION"],
+        )
     try:
         source_width = int(source["video_width"])
         source_height = int(source["video_height"])
     except (KeyError, TypeError, ValueError) as error:
         raise _error(
             "RENDER_FAILED",
-            "As dimensões da fonte visual inicial são inválidas.",
+            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
             EXIT_CODES["OPERATION"],
         ) from error
     if source_width <= 0 or source_height <= 0:
         raise _error(
             "RENDER_FAILED",
-            "As dimensões da fonte visual inicial são inválidas.",
+            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
             EXIT_CODES["OPERATION"],
         )
 
     # Larguras múltiplas de 32 mantêm largura e altura pares no perfil 16:9
     # yuv420p, evitando arredondamento que alteraria a proporção publicada.
-    width = min(source_width, MAX_PREVIEW_DIMENSION)
-    width = max(32, (width // 32) * 32)
+    width = min(source_width, max_dimension) if max_dimension is not None else source_width
+    if max_dimension is not None:
+        width = max(32, (width // 32) * 32)
+    else:
+        # A full mantém a maior resolução possível em um canvas 16:9 exato.
+        width -= width % 16
+    if width < 2:
+        raise _error(
+            "RENDER_FAILED",
+            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
+            EXIT_CODES["OPERATION"],
+        )
     height = width * 9 // 16
+    height -= height % 2
+    if height < 2:
+        raise _error(
+            "RENDER_FAILED",
+            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
+            EXIT_CODES["OPERATION"],
+        )
     return width, height
 
 
@@ -139,11 +164,14 @@ def _require_encoders(has_audio: bool) -> None:
         )
 
 
-def _create_staging_file(layout: PreviewLayout) -> Path:
-    """Cria um arquivo temporário exclusivo dentro do trabalho sem depender da pasta TEMP do host."""
+def _create_staging_file(
+    layout: PreviewLayout | FullLayout,
+    artifact_name: str = "preview",
+) -> Path:
+    """Cria um temporário exclusivo dentro do trabalho para um render MP4."""
 
     for _ in range(8):
-        candidate = layout.temporary / f".preview-{uuid4().hex}.mp4"
+        candidate = layout.temporary / f".{artifact_name}-{uuid4().hex}.mp4"
         try:
             with candidate.open("xb"):
                 pass
@@ -152,14 +180,14 @@ def _create_staging_file(layout: PreviewLayout) -> Path:
         except OSError as error:
             raise _error(
                 "OUTPUT_PUBLISH_FAILED",
-                "Não foi possível preparar a saída temporária da preview.",
+                f"Não foi possível preparar a saída temporária da {artifact_name}.",
                 EXIT_CODES["OPERATION"],
             ) from error
         if is_regular_path(candidate):
             return candidate
     raise _error(
         "OUTPUT_PUBLISH_FAILED",
-        "Não foi possível reservar a saída temporária da preview.",
+        f"Não foi possível reservar a saída temporária da {artifact_name}.",
         EXIT_CODES["OPERATION"],
     )
 
@@ -234,8 +262,12 @@ def _build_ffmpeg_arguments(
     return arguments
 
 
-def _run_ffmpeg(arguments: Sequence[str], duration_seconds: float) -> None:
-    """Executa o render com timeout proporcional à timeline e converte falhas em erro seguro."""
+def _run_ffmpeg(
+    arguments: Sequence[str],
+    duration_seconds: float,
+    artifact_name: str = "preview",
+) -> None:
+    """Executa um render com timeout proporcional e converte falhas em erro seguro."""
 
     timeout_seconds = max(60.0, min(14_400.0, duration_seconds * 8 + 30))
     try:
@@ -254,18 +286,18 @@ def _run_ffmpeg(arguments: Sequence[str], duration_seconds: float) -> None:
         if error.timed_out:
             raise _error(
                 "RENDER_FAILED",
-                "A renderização da preview excedeu o tempo permitido.",
+                f"A renderização da {artifact_name} excedeu o tempo permitido.",
                 EXIT_CODES["OPERATION"],
             ) from error
         raise _error(
             "RENDER_FAILED",
-            "O FFmpeg não conseguiu renderizar a preview.",
+            f"O FFmpeg não conseguiu renderizar a {artifact_name}.",
             EXIT_CODES["OPERATION"],
         ) from error
     if result.returncode != 0:
         raise _error(
             "RENDER_FAILED",
-            "O FFmpeg não conseguiu renderizar a preview.",
+            f"O FFmpeg não conseguiu renderizar a {artifact_name}.",
             EXIT_CODES["OPERATION"],
         )
 
@@ -277,8 +309,10 @@ def _validate_rendered_preview(
     expected_audio: bool,
     canvas_width: int,
     canvas_height: int,
+    max_dimension: int | None = MAX_PREVIEW_DIMENSION,
+    artifact_name: str = "preview",
 ) -> media.MediaMetadata:
-    """Valida o arquivo produzido antes de permitir sua publicação como preview vigente."""
+    """Valida o MP4 produzido antes de permitir sua publicação como artefato vigente."""
 
     try:
         metadata = media.inspect_source(
@@ -291,27 +325,35 @@ def _validate_rendered_preview(
             raise
         raise _error(
             "RENDER_FAILED",
-            "A preview renderizada não passou na validação de mídia.",
+            f"A {artifact_name} renderizada não passou na validação de mídia.",
             EXIT_CODES["OPERATION"],
         ) from error
 
+    exceeds_max_dimension = (
+        max_dimension is not None
+        and max(metadata.video_width or 0, metadata.video_height or 0) > max_dimension
+    )
     if (
         metadata.video_width != canvas_width
         or metadata.video_height != canvas_height
         or metadata.video_width is None
         or metadata.video_height is None
-        or max(metadata.video_width, metadata.video_height) > MAX_PREVIEW_DIMENSION
+        or exceeds_max_dimension
         or abs(metadata.video_width / metadata.video_height - 16 / 9) > 0.001
     ):
         raise _error(
             "RENDER_FAILED",
-            "A preview renderizada não respeita o perfil 16:9 de até 720 pixels.",
+            (
+                "A preview renderizada não respeita o perfil 16:9 de até 720 pixels."
+                if max_dimension is not None
+                else "A full renderizada não respeita o perfil final 16:9."
+            ),
             EXIT_CODES["OPERATION"],
         )
     if (metadata.audio_codec is not None) != expected_audio:
         raise _error(
             "RENDER_FAILED",
-            "A preview renderizada não respeita as faixas de áudio do plano.",
+            f"A {artifact_name} renderizada não respeita as faixas de áudio do plano.",
             EXIT_CODES["OPERATION"],
         )
     frame_rate = metadata.video_frame_rate or 25.0
@@ -319,14 +361,14 @@ def _validate_rendered_preview(
     if abs(metadata.duration_seconds - expected_duration) > duration_tolerance:
         raise _error(
             "RENDER_FAILED",
-            "A duração da preview renderizada não corresponde à timeline.",
+            f"A duração da {artifact_name} renderizada não corresponde à timeline.",
             EXIT_CODES["OPERATION"],
         )
     return metadata
 
 
 def _cleanup_staging(staging: Path | None) -> None:
-    """Remove somente o temporário da operação, preservando a preview vigente em qualquer falha."""
+    """Remove somente o temporário da operação, preservando o artefato vigente em qualquer falha."""
 
     if staging is None or not os.path.lexists(staging):
         return

@@ -47,6 +47,15 @@ class PreviewLayout:
 
 
 @dataclass(frozen=True)
+class FullLayout:
+    """Representa o destino único da full e o diretório temporário do trabalho."""
+
+    root: Path
+    temporary: Path
+    destination: Path
+
+
+@dataclass(frozen=True)
 class ApprovalLayout:
     """Representa o destino do registro de aprovação e o temporário do trabalho."""
 
@@ -236,22 +245,48 @@ def prepare_frames_layout(workdir: str | Path, source_id: str) -> FramesLayout:
     )
 
 
-def prepare_preview_layout(workdir: str | Path) -> PreviewLayout:
-    """Prepara `preview.mp4` e rejeita destinos não regulares antes do FFmpeg."""
+def _prepare_render_layout(
+    workdir: str | Path,
+    filename: str,
+    artifact_name: str,
+) -> tuple[Path, Path, Path]:
+    """Valida o destino de um render MP4 antes de criar temporários ou chamar o FFmpeg."""
 
     root = validate_workdir(workdir)
     temporary = root / ".tmp"
-    destination = root / "preview.mp4"
+    destination = root / filename
     _ensure_directory(temporary)
     if _lexists(destination) and (
         not is_regular_path(destination) or _has_reparse_ancestor(destination.parent)
     ):
         raise _error(
             "OUTPUT_INVALID",
-            "O destino da preview deve ser um arquivo regular dentro do trabalho.",
+            f"O destino da {artifact_name} deve ser um arquivo regular dentro do trabalho.",
             EXIT_CODES["STATE"],
         )
+    return root, temporary, destination
+
+
+def prepare_preview_layout(workdir: str | Path) -> PreviewLayout:
+    """Prepara `preview.mp4` e rejeita destinos não regulares antes do FFmpeg."""
+
+    root, temporary, destination = _prepare_render_layout(
+        workdir,
+        "preview.mp4",
+        "preview",
+    )
     return PreviewLayout(root=root, temporary=temporary, destination=destination)
+
+
+def prepare_full_layout(workdir: str | Path) -> FullLayout:
+    """Prepara `full.mp4` e rejeita destinos não regulares antes do FFmpeg."""
+
+    root, temporary, destination = _prepare_render_layout(
+        workdir,
+        "full.mp4",
+        "full",
+    )
+    return FullLayout(root=root, temporary=temporary, destination=destination)
 
 
 def prepare_approval_layout(workdir: str | Path) -> ApprovalLayout:
@@ -273,7 +308,7 @@ def prepare_approval_layout(workdir: str | Path) -> ApprovalLayout:
 
 
 def relative_artifact_path(
-    layout: WorkdirLayout | FramesLayout | PreviewLayout | ApprovalLayout,
+    layout: WorkdirLayout | FramesLayout | PreviewLayout | FullLayout | ApprovalLayout,
 ) -> str:
     """Retorna o caminho do artefato relativo ao trabalho para respostas estáveis."""
 
@@ -409,14 +444,18 @@ def publish_atomic(layout: WorkdirLayout, payload: bytes) -> None:
                 pass
 
 
-def publish_preview_atomic(layout: PreviewLayout, staging: Path) -> None:
-    """Substitui a preview vigente somente depois que o arquivo temporário foi validado."""
+def _publish_render_atomic(
+    layout: PreviewLayout | FullLayout,
+    staging: Path,
+    artifact_name: str,
+) -> None:
+    """Publica um render MP4 completo por substituição atômica e preserva o vigente em falha."""
 
     try:
         if not is_regular_path(staging) or _has_reparse_ancestor(staging.parent):
             raise _error(
                 "OUTPUT_PUBLISH_FAILED",
-                "O arquivo temporário da preview não pôde ser validado.",
+                f"O arquivo temporário da {artifact_name} não pôde ser validado.",
                 EXIT_CODES["OPERATION"],
             )
         _ensure_directory(layout.temporary)
@@ -426,7 +465,7 @@ def publish_preview_atomic(layout: PreviewLayout, staging: Path) -> None:
         ):
             raise _error(
                 "OUTPUT_PUBLISH_FAILED",
-                "O destino da preview mudou para um estado não seguro.",
+                f"O destino da {artifact_name} mudou para um estado não seguro.",
                 EXIT_CODES["OPERATION"],
             )
         os.replace(staging, layout.destination)
@@ -435,7 +474,7 @@ def publish_preview_atomic(layout: PreviewLayout, staging: Path) -> None:
     except OSError as error:
         raise _error(
             "OUTPUT_PUBLISH_FAILED",
-            "Não foi possível publicar a preview completa.",
+            f"Não foi possível publicar a {artifact_name} completa.",
             EXIT_CODES["OPERATION"],
         ) from error
     finally:
@@ -444,6 +483,18 @@ def publish_preview_atomic(layout: PreviewLayout, staging: Path) -> None:
                 staging.unlink()
             except OSError:
                 pass
+
+
+def publish_preview_atomic(layout: PreviewLayout, staging: Path) -> None:
+    """Substitui a preview vigente somente depois que o arquivo temporário foi validado."""
+
+    _publish_render_atomic(layout, staging, "preview")
+
+
+def publish_full_atomic(layout: FullLayout, staging: Path) -> None:
+    """Substitui a full vigente somente depois que o arquivo temporário foi validado."""
+
+    _publish_render_atomic(layout, staging, "full")
 
 
 def publish_approval_atomic(layout: ApprovalLayout, payload: bytes) -> None:

@@ -1,1 +1,1 @@
-"""Composição local de previews e, nas próximas tasks, renders finais."""
+"""Composição local de previews e renders finais autorizados."""
