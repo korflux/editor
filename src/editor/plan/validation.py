@@ -391,11 +391,9 @@ def _validate_audio_processing(value: Any) -> dict[str, Any]:
     }
 
 
-def validate_plan(workdir: str | Path) -> dict[str, Any]:
-    """Valida plan.json, consulta fontes locais e retorna a timeline e o hash canônico."""
+def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any]) -> dict[str, Any]:
+    """Valida um documento já lido e monta o resultado que alimenta CLI e renderização."""
 
-    root = validate_workdir(workdir)
-    plan_path, document = _read_plan(root)
     reject_unknown_fields(document, ROOT_FIELDS, "raiz")
     schema_version = document.get("schema_version")
     if isinstance(schema_version, bool) or schema_version != 1:
@@ -421,3 +419,18 @@ def validate_plan(workdir: str | Path) -> dict[str, Any]:
             "segments": timeline_segments,
         },
     }
+
+
+def load_validated_plan(workdir: str | Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Lê e valida o plano uma única vez para impedir que o render use documento divergente."""
+
+    root = validate_workdir(workdir)
+    plan_path, document = _read_plan(root)
+    return document, _validate_loaded_plan(root, plan_path, document)
+
+
+def validate_plan(workdir: str | Path) -> dict[str, Any]:
+    """Valida plan.json, consulta fontes locais e retorna a timeline e o hash canônico."""
+
+    _, result = load_validated_plan(workdir)
+    return result

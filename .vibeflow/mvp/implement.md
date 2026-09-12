@@ -7,9 +7,9 @@
 
 - **ROUTE:** max
 - **Modo:** A
-- **Fila:** T7 implementada e em fechamento; T8 é a próxima elegível; T9 e T10 dependem da cadeia de renderização, e T11 permanece bloqueada
+- **Fila:** T8 implementada; T9 é a próxima elegível, T10 depende de T9 e T11 depende de T8, T9 e T10
 - **Analyze:** `analyze.md` aprovado, veredito `limpo`
-- **Pergunta da T7:** um plano explícito de vlog passa por schema estrito, validação de mídia e timeline linear sem renderizar nem alterar fontes?
+- **Pergunta da T8:** um plano validado gera uma única preview linear completa, com áudio e lettering declarados, sem publicar estado parcial?
 
 ## T1: Criar CLI instalável com smoke test
 
@@ -269,6 +269,44 @@
 - **Decisões:** DATA-01, MEDIA-01, AUDIO-01, TEXT-01 e CONTRACT-01 implementadas para validação do plano.
 - **Mensagem de commit:** `task(T7): validate linear editing plan`
 
+## T8: Renderizar preview a partir do plano validado
+
+### Reconhecer
+
+- T7 já centralizava a leitura estrita do plano, a inspeção das fontes, a timeline concatenada, os modos de áudio, o `fit`, os overlays e o hash canônico.
+- T4 já fornecia a execução estruturada sem shell e as regras de diretório temporário; a publicação da preview precisava de um destino de arquivo separado da publicação das análises.
+- A renderização foi mantida em um único grafo FFmpeg para evitar intermediários publicados e preservar a timeline explícita do plano.
+
+### Codar
+
+- `src/editor/plan/validation.py` passou a expor `load_validated_plan`, permitindo renderizar exatamente o documento que acabou de ser validado, sem uma segunda leitura divergente.
+- `src/editor/render/ffmpeg_graph.py` cria entradas determinísticas, cortes, `fit` preserve/contain/crop, concatenação linear, áudio por faixa, loop, ganho em dB, `amix` sem normalização automática, `loudnorm`, limiter e drawtext com posições nomeadas e margem segura.
+- `src/editor/render/preview.py` escolhe canvas 16:9 de até 720 pixels, verifica encoders locais, executa FFmpeg com lista de argumentos, valida o MP4 temporário via FFprobe e publica `preview.mp4` atomicamente.
+- `src/editor/workdir.py` adiciona o layout e a publicação segura da preview, preservando a saída anterior em falha.
+- `src/editor/cli.py` registra `render preview` e mantém o envelope JSON centralizado.
+- `tests/test_preview_render.py` cobre render real, perfil e codecs, mute sem faixa publicada, áudio de A no b-roll, processamento explícito e preservação em falha.
+
+### Testar
+
+- `python -m editor render preview --workdir A:\Projetos\editor\tests\fixtures\workflow --json` -> exit code `0`, `preview.mp4` H.264/AAC, `320x180` e `2.0 s`.
+- `python -m unittest discover -s tests -p "test_preview_render.py" -v` -> `Ran 4 tests ... OK`.
+- `python -m unittest discover -s tests -v` -> `Ran 46 tests ... OK`.
+- A prova confirmou que a fonte original, o plano e o temporário permanecem íntegros; a simulação de falha do FFmpeg retornou `RENDER_FAILED` e preservou a preview anterior.
+
+### Simplificar e re-testar
+
+- O grafo reutiliza a validação de plano e os metadados já consultados, sem uma segunda implementação das regras de mídia ou de timeline.
+- A preview usa arquivo temporário dentro do próprio trabalho, porque a pasta TEMP do host já demonstrou ACL incompatível com processos de mídia em fases anteriores.
+- A sondagem de encoders falha com código explícito quando `libx264` ou `aac` não estão disponíveis; filtros de normalização e limiter compensam os limites de faixa do FFmpeg sem relaxar o plano.
+
+### Registro
+
+- **Plan:** T8 marcada como concluída.
+- **Spec comprovada nesta fatia:** A6, A7 e A9. A8, A10, A11, C1, C2, C3, C4 e C5 permanecem globais ou dependem das tasks seguintes.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/implement.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `src/editor/cli.py`, `src/editor/plan/validation.py`, `src/editor/render/__init__.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/render/preview.py`, `src/editor/workdir.py`, `tests/test_preview_render.py`.
+- **Decisões:** RENDER-01, AUDIO-01, TEXT-01, MEDIA-01 e PRIV-01 implementadas para a preview.
+- **Mensagem de commit:** `task(T8): render validated preview`
+
 ## Handoff
 
-Fila após T7: T8 continua elegível; T9 e T10 dependem da cadeia de renderização, e T11 permanece bloqueada pelas dependências do plano. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.
+Fila após T8: T9 é a próxima T elegível; T10 depende de T9 e T11 depende de T8, T9 e T10. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.

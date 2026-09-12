@@ -190,19 +190,21 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T8: Renderizar preview a partir do plano validado
 
-- [ ] T8 concluída
+- [x] T8 concluída
 - **Spec:** A5, A6, A7, A9, A11, C1, C3, C4, C5
 - **Decisões:** RENDER-01 (mantém uma única preview vigente), AUDIO-01 (aplica ganho, normalização e limiter sem ducking), TEXT-01 (renderiza lettering estático com margem segura), MEDIA-01 (preserva perfil e codecs aceitos), PRIV-01 (publica somente artefato completo)
 - **O quê:** Implementar `render preview` para transformar a timeline validada em uma única `preview.mp4`, incluindo cortes, junções, b-roll em tela cheia com áudio de A, mixagem de música, `fit`, lettering e processamento de áudio. O FFmpeg deve receber argumentos estruturados e a saída deve passar por `.tmp`, validação de metadados e substituição atômica.
 - **Aceite:**
-  - [ ] O plano de cenário gera `preview.mp4` com a timeline linear, proporção 16:9, áudio conforme as faixas declaradas e maior dimensão de no máximo 720 pixels.
-  - [ ] O áudio de B não é usado quando B ocupa a imagem do segmento com áudio de A; ganhos, normalização e limiter respeitam o plano e não há ducking automático.
-  - [ ] Nova preview substitui a anterior somente após sucesso; falha de FFmpeg preserva a anterior, não publica arquivo parcial e retorna `RENDER_FAILED` ou `OUTPUT_PUBLISH_FAILED` seguro.
+  - [x] O plano de cenário gera `preview.mp4` com a timeline linear, proporção 16:9, áudio conforme as faixas declaradas e maior dimensão de no máximo 720 pixels.
+  - [x] O áudio de B não é usado quando B ocupa a imagem do segmento com áudio de A; ganhos, normalização e limiter respeitam o plano e não há ducking automático.
+  - [x] Nova preview substitui a anterior somente após sucesso; falha de FFmpeg preserva a anterior, não publica arquivo parcial e retorna `RENDER_FAILED` ou `OUTPUT_PUBLISH_FAILED` seguro.
 - **Verificação:**
-  - [ ] `python -m editor render preview --workdir tests/fixtures/workflow --json`
-  - [ ] `python -m unittest discover -s tests -p "test_preview_render.py" -v`
+  - [x] `python -m editor render preview --workdir A:\Projetos\editor\tests\fixtures\workflow --json`
+  - [x] `python -m unittest discover -s tests -p "test_preview_render.py" -v` -> `Ran 4 tests ... OK`.
 - **Deps:** T4, T7
-- **Arquivos:** `src/editor/render/preview.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_preview_render.py`, `tests/fixtures/workflow/`
+- **Prova:** o fixture real gerou `preview.mp4` de `2.0 s`, H.264/AAC, `320x180`, com timeline de três segmentos; o grafo não incluiu o áudio de B no b-roll, aplicou ganho, `amix` sem normalização automática, `loudnorm`, limiter e lettering; a falha simulada preservou a preview anterior e deixou `.tmp` vazio.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/implement.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `src/editor/render/__init__.py`, `src/editor/render/preview.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/cli.py`, `src/editor/plan/validation.py`, `src/editor/workdir.py`, `tests/test_preview_render.py`.
+- **Decisões:** RENDER-01, AUDIO-01, TEXT-01, MEDIA-01 e PRIV-01 implementadas para a preview.
 - **Size:** high, 8/10, composição FFmpeg, áudio independente, lettering, escala, publicação atômica e integração de mídia
 - **Risk:** medium, filtros e codecs podem ter diferenças entre builds do FFmpeg
 

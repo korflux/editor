@@ -19,6 +19,7 @@ from .contracts import (
     success_envelope,
 )
 from .plan.validation import validate_plan
+from .render.preview import render_preview
 
 
 class HelpRequested(Exception):
@@ -228,6 +229,36 @@ def build_parser() -> CliArgumentParser:
         default=argparse.SUPPRESS,
         help="retorna o resultado estruturado em JSON pelo stdout",
     )
+    render_parser = subparsers.add_parser(
+        "render",
+        help="renderiza artefatos locais a partir do plano validado",
+        description="renderiza artefatos locais a partir do plano validado",
+    )
+    render_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
+    render_subparsers = render_parser.add_subparsers(
+        dest="render_command",
+        title="renders",
+        metavar="RENDER",
+    )
+    preview_parser = render_subparsers.add_parser(
+        "preview",
+        help="gera ou substitui a única preview.mp4 do trabalho",
+        description="gera ou substitui preview.mp4 a partir de um plano validado",
+    )
+    preview_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    preview_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
     return parser
 
 
@@ -318,6 +349,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "plan" and args.plan_command == "validate":
             result = validate_plan(args.workdir)
             write_json(success_envelope("plan validate", result))
+            return 0
+
+        if args.command == "render" and args.render_command == "preview":
+            result = render_preview(args.workdir)
+            write_json(success_envelope("render preview", result))
             return 0
 
         if args.command is None:
