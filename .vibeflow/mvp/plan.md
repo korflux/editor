@@ -111,7 +111,7 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T4: Analisar áudio com guardrails de mídia
 
-- [ ] T4 concluída
+- [x] T4 concluída
 - **Spec:** A3, A9, A10, A11, C2, C4, C5
 - **Decisões:** MEDIA-01 (restringe formatos, duração e tamanho), DATA-01 (usa diretório local por trabalho), OPS-01 (processa um trabalho por vez), PRIV-01 (preserva originais e mantém processamento local), CONTRACT-01 (mapeia falhas para códigos estáveis)
 - **O quê:** Implementar a validação comum de caminho, diretório de trabalho, arquivo regular, tamanho, duração, codec, streams, temporários e publicação atômica dentro de `analyze audio`. Gerar a análise de loudness, picos, média por janela e intervalos de silêncio por amplitude, sem classificá-los como fala ou ruído.
@@ -120,10 +120,12 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
   - [ ] Caminho inválido, diretório de trabalho ou destino com reparse point, formato, codec, stream, tamanho acima de 4 GiB ou duração acima de 3.600 s falham antes do processamento, com envelope seguro e exit code estável.
   - [ ] Uma falha simulada do FFmpeg preserva originais, plano, análises existentes e destino publicado, removendo temporários sem deixar saída parcial.
 - **Verificação:**
-  - [ ] `python -m editor analyze audio --workdir tests/fixtures/workflow --source-id main --input tests/fixtures/media/main.mp4 --json`
-  - [ ] `python -m unittest discover -s tests -p "test_audio_analysis.py" -v`
+  - [x] `python -m editor analyze audio --workdir A:\Projetos\editor\tmp-t4-run --source-id main --input tests/fixtures/media/main.mp4 --window-s 0.5 --json` -> exit `0`, envelope `analyze audio` e `analysis/audio/main.json` publicados.
+  - [x] `python -m unittest discover -s tests -p "test_audio_analysis.py" -v` -> `Ran 4 tests ... OK`.
 - **Deps:** T1, T2
 - **Arquivos:** `src/editor/workdir.py`, `src/editor/media.py`, `src/editor/process.py`, `src/editor/analysis/audio.py`, `tests/test_audio_analysis.py`, `tests/fixtures/media/`
+- **Prova:** fonte MP4 H.264/AAC de 2 segundos produziu hash SHA-256, loudness integrado, pico verdadeiro, quatro janelas de 0,5 s e dois intervalos de silêncio; janela/formato inválidos falharam antes do subprocesso; falha simulada do FFmpeg preservou `plan.json`, análise vigente e fonte, removendo temporários.
+- **Decisões:** MEDIA-01, DATA-01, OPS-01, PRIV-01 e CONTRACT-01 implementadas para análise de áudio.
 - **Size:** high, 7/10, validação de entrada, FFmpeg, artefato persistente, falhas de publicação e integração com fixtures
 - **Risk:** medium, a análise depende dos metadados e filtros disponíveis no FFmpeg local
 

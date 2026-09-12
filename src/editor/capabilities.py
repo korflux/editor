@@ -8,10 +8,7 @@ from typing import Any
 
 from . import dependencies
 from .contracts import CLI_VERSION
-
-
-MAX_SOURCE_SIZE_BYTES = 4 * 1024**3
-MAX_SOURCE_DURATION_SECONDS = 3_600
+from .media import MAX_SOURCE_DURATION_SECONDS, MAX_SOURCE_SIZE_BYTES
 
 
 def _default_model_root() -> Path:

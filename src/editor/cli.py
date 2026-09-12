@@ -6,6 +6,7 @@ import argparse
 import sys
 from typing import Sequence
 
+from .analysis.audio import analyze_audio
 from .capabilities import collect_capabilities
 from .contracts import (
     CLI_VERSION,
@@ -43,7 +44,7 @@ class CliArgumentParser(argparse.ArgumentParser):
 
 
 def build_parser() -> CliArgumentParser:
-    """Cria o parser raiz e registra somente o comando de capacidades já implementado."""
+    """Cria o parser raiz e registra os comandos locais já implementados."""
 
     parser = CliArgumentParser(
         prog="editor",
@@ -79,6 +80,44 @@ def build_parser() -> CliArgumentParser:
         dest="json_output",
         default=argparse.SUPPRESS,
         help="retorna o inventário estruturado em JSON pelo stdout",
+    )
+    analyze_parser = subparsers.add_parser(
+        "analyze",
+        help="analisa fontes locais sem alterar os originais",
+        description="analisa fontes locais sem alterar os originais",
+    )
+    analyze_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
+    analyze_subparsers = analyze_parser.add_subparsers(
+        dest="analyze_command",
+        title="análises",
+        metavar="ANALYSIS",
+    )
+    audio_parser = analyze_subparsers.add_parser(
+        "audio",
+        help="gera análise de loudness, níveis por janela e silêncio",
+        description="gera análise local de áudio com guardrails de mídia",
+    )
+    audio_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    audio_parser.add_argument("--source-id", required=True, help="identificador seguro da fonte")
+    audio_parser.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
+    audio_parser.add_argument(
+        "--window-s",
+        type=float,
+        default=1.0,
+        help="duração das janelas em segundos, padrão: 1",
+    )
+    audio_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
     )
     return parser
 
@@ -120,6 +159,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_json(success_envelope("capabilities", collect_capabilities()))
             return 0
 
+        if args.command == "analyze" and args.analyze_command == "audio":
+            result = analyze_audio(
+                workdir=args.workdir,
+                source_id=args.source_id,
+                input_path=args.input,
+                window_seconds=args.window_s,
+            )
+            write_json(success_envelope("analyze audio", result))
+            return 0
+
         if args.command is None:
             raise CliError(
                 code="ARGUMENT_INVALID",
@@ -129,7 +178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         raise CliError(
             code="ARGUMENT_INVALID",
-            message="Comando indisponível nesta versão.",
+            message="Comando ou análise indisponível nesta versão.",
             exit_code=EXIT_CODES["ARGUMENT"],
         )
     except HelpRequested as signal:

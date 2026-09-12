@@ -7,7 +7,7 @@
 
 - **ROUTE:** max
 - **Modo:** A
-- **Fila:** T3 executada; T4 é a próxima task elegível
+- **Fila:** T4 concluída; T5, T6 e T7 são elegíveis; T8 a T11 continuam bloqueadas pelas dependências do plano
 - **Analyze:** `analyze.md` aprovado, veredito `limpo`
 - **Pergunta da T2:** o ambiente local pode ser instalado e verificado de forma reproduzível, com dependências pinadas e nenhum componente externo instalado sem ação explícita?
 
@@ -116,6 +116,44 @@
 - **Arquivos:** `src/editor/cli.py`, `src/editor/capabilities.py`, `src/editor/dependencies.py`, `tests/test_capabilities.py`, `.vibeflow/REGRAS.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`.
 - **Mensagem de commit:** `task(T3): add local capabilities discovery`
 
+## T4: Analisar áudio com guardrails de mídia
+
+### Reconhecer
+
+- T3 deixou o parser de envelopes e a sondagem local, mas não havia dispatcher de análise, validação de mídia ou layout de trabalho.
+- A T4 exige validação antes do FFmpeg, um único artefato em `analysis/audio/<source-id>.json`, preservação de estado em falhas e métricas de amplitude sem classificação semântica.
+- O fluxo foi separado em `workdir.py` para caminhos e publicação, `media.py` para FFprobe e limites, `process.py` para subprocessos estruturados e `analysis/audio.py` para a operação de áudio.
+
+### Codar
+
+- `src/editor/cli.py` registra `analyze audio`, aceita `--json` antes ou depois dos subcomandos e encaminha a operação sem prompts.
+- `src/editor/workdir.py` valida diretório absoluto gravável, `source-id`, componentes regulares, destinos internos e publicação atômica por `.tmp`.
+- `src/editor/media.py` valida extensão, contêiner, streams, codecs, tamanho de 4 GiB e duração de 3.600 s com `ffprobe`; a fonte é identificada por SHA-256.
+- `src/editor/process.py` executa FFmpeg/FFprobe com argumentos estruturados, `shell=False`, timeout e PCM float32 em streaming.
+- `src/editor/analysis/audio.py` usa `ebur128` para loudness integrado e pico verdadeiro, calcula média/RMS e pico por janela e detecta somente amplitude abaixo de `-45 dBFS` por pelo menos `0,3 s`.
+- `tests/fixtures/media/main.mp4` fornece uma fonte curta H.264/AAC com silêncio inicial e final; `tests/test_audio_analysis.py` cobre processo real, rejeição precoce e falha simulada.
+
+### Testar
+
+- `python -m editor analyze audio --workdir A:\Projetos\editor\tmp-t4-run --source-id main --input tests/fixtures/media/main.mp4 --window-s 0.5 --json` -> exit `0`; envelope e artefato publicados.
+- `python -m unittest discover -s tests -p "test_audio_analysis.py" -v` -> `Ran 4 tests ... OK`.
+- `python -B -m unittest discover -s tests -v` -> `Ran 18 tests ... OK`.
+- `gitleaks detect --source . --no-banner` -> exit `0`, `no leaks found`.
+
+### Simplificar e re-testar
+
+- A análise mantém somente o primeiro stream de áudio validado, usa processamento PCM em streaming e descarta stderr técnico do processo, porque o contrato público não precisa do diagnóstico bruto e a memória não deve crescer com a duração da fonte.
+- A publicação só ocorre depois de `ffprobe`, loudness, janelas, silêncio e serialização concluírem; falhas preservam os arquivos existentes e removem o temporário.
+- A suíte específica foi executada novamente após a simplificação e permaneceu verde; a suíte completa confirmou ausência de regressão nas T1 a T3.
+
+### Registro
+
+- **Plan:** T4 marcada como concluída.
+- **Spec comprovada nesta fatia:** A3. Os critérios globais de preservação, contrato completo e jornada permanecem abertos até suas tasks correspondentes.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `src/editor/cli.py`, `src/editor/capabilities.py`, `src/editor/workdir.py`, `src/editor/media.py`, `src/editor/process.py`, `src/editor/analysis/__init__.py`, `src/editor/analysis/audio.py`, `tests/test_audio_analysis.py`, `tests/fixtures/media/main.mp4`.
+- **Decisões:** MEDIA-01, DATA-01, OPS-01, PRIV-01 e CONTRACT-01 implementadas para análise de áudio.
+- **Mensagem de commit:** `task(T4): add guarded audio analysis`
+
 ## Handoff
 
-Fila após T3: T4 elegível; T5 a T11 continuam bloqueadas pelas dependências do plano. Em modo A, o próximo handoff é `vibe-implement` para T4.
+Fila após T4: T5, T6 e T7 são elegíveis; T8 a T11 continuam bloqueadas pelas dependências do plano. Em modo A, a próxima escolha deve ser feita entre essas três tasks.
