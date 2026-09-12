@@ -102,12 +102,16 @@ class InstallationContractTests(unittest.TestCase):
 
     def test_install_rejects_incompatible_python_before_creating_venv(self) -> None:
         """Confirma que Install não cria um ambiente quando o Python não é 3.11 x64."""
+        # Usa o launcher do Windows, cujo interpretador padrão é 3.13 neste host, para
+        # manter o teste incompatível mesmo quando a suíte roda no Python 3.11 válido.
+        incompatible_python = shutil.which("py")
+        self.assertIsNotNone(incompatible_python, "o launcher py é necessário neste teste Windows")
         with self.workspace_tempdir() as temporary_path:
             venv_path = temporary_path / "venv"
             result = self.run_installer(
                 "-Install",
                 "-PythonPath",
-                sys.executable,
+                incompatible_python,
                 "-VenvPath",
                 str(venv_path),
             )

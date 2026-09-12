@@ -7,6 +7,7 @@ import sys
 from typing import Sequence
 
 from .analysis.audio import analyze_audio
+from .analysis.transcription import analyze_transcription
 from .capabilities import collect_capabilities
 from .contracts import (
     CLI_VERSION,
@@ -119,6 +120,36 @@ def build_parser() -> CliArgumentParser:
         default=argparse.SUPPRESS,
         help="retorna o resultado estruturado em JSON pelo stdout",
     )
+    transcribe_parser = analyze_subparsers.add_parser(
+        "transcribe",
+        help="gera transcrição local com timestamps por palavra",
+        description="gera transcrição local sem enviar a fonte para a rede",
+    )
+    transcribe_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    transcribe_parser.add_argument("--source-id", required=True, help="identificador seguro da fonte")
+    transcribe_parser.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
+    transcribe_parser.add_argument(
+        "--language",
+        default="auto",
+        help="idioma da transcrição ou auto, padrão: auto",
+    )
+    transcribe_parser.add_argument(
+        "--model",
+        help="nome ou diretório de modelo Whisper local validado",
+    )
+    transcribe_parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "cuda"),
+        default="auto",
+        help="dispositivo de processamento, padrão: auto",
+    )
+    transcribe_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
     return parser
 
 
@@ -126,6 +157,17 @@ def write_json(payload: dict[str, object]) -> None:
     """Escreve exatamente um envelope JSON no stdout, sem misturar logs humanos."""
 
     sys.stdout.write(f"{serialize_envelope(payload)}\n")
+
+
+def configure_output_encoding() -> None:
+    """Fixa stdout e stderr em UTF-8 para preservar o contrato JSON no Windows."""
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            # Test doubles e streams já fechados podem não expor reconfigure.
+            continue
 
 
 def handle_error(error: CliError, json_output: bool) -> int:
@@ -141,6 +183,7 @@ def handle_error(error: CliError, json_output: bool) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Executa a borda da CLI, despacha capacidades e mantém exceções internas fora da resposta pública."""
 
+    configure_output_encoding()
     raw_args = list(sys.argv[1:] if argv is None else argv)
     json_requested = "--json" in raw_args
 
@@ -167,6 +210,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 window_seconds=args.window_s,
             )
             write_json(success_envelope("analyze audio", result))
+            return 0
+
+        if args.command == "analyze" and args.analyze_command == "transcribe":
+            result = analyze_transcription(
+                workdir=args.workdir,
+                source_id=args.source_id,
+                input_path=args.input,
+                language=args.language,
+                model=args.model,
+                device=args.device,
+            )
+            write_json(success_envelope("analyze transcribe", result))
             return 0
 
         if args.command is None:

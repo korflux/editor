@@ -17,11 +17,11 @@ SOURCE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 @dataclass(frozen=True)
 class WorkdirLayout:
-    """Representa os diretórios e o destino reservados para um trabalho."""
+    """Representa os diretórios e o destino reservados para um artefato do trabalho."""
 
     root: Path
     temporary: Path
-    audio_analysis: Path
+    analysis: Path
     destination: Path
 
 
@@ -134,17 +134,27 @@ def _ensure_directory(path: Path) -> None:
         )
 
 
-def prepare_layout(workdir: str | Path, source_id: str) -> WorkdirLayout:
-    """Prepara apenas as pastas internas e valida o destino antes do processamento."""
+def prepare_layout(
+    workdir: str | Path,
+    source_id: str,
+    analysis_kind: str = "audio",
+) -> WorkdirLayout:
+    """Prepara a pasta de uma análise permitida e valida seu destino antes do processamento."""
 
     root = validate_workdir(workdir)
     safe_source_id = validate_source_id(source_id)
+    if analysis_kind not in {"audio", "transcription"}:
+        raise _error(
+            "ARGUMENT_INVALID",
+            "O tipo de análise não é suportado.",
+            EXIT_CODES["ARGUMENT"],
+        )
     temporary = root / ".tmp"
-    audio_analysis = root / "analysis" / "audio"
-    destination = audio_analysis / f"{safe_source_id}.json"
+    analysis = root / "analysis" / analysis_kind
+    destination = analysis / f"{safe_source_id}.json"
 
     _ensure_directory(temporary)
-    _ensure_directory(audio_analysis)
+    _ensure_directory(analysis)
     if _lexists(destination) and (
         not is_regular_path(destination) or _has_reparse_ancestor(destination.parent)
     ):
@@ -156,7 +166,7 @@ def prepare_layout(workdir: str | Path, source_id: str) -> WorkdirLayout:
     return WorkdirLayout(
         root=root,
         temporary=temporary,
-        audio_analysis=audio_analysis,
+        analysis=analysis,
         destination=destination,
     )
 
@@ -173,7 +183,7 @@ def publish_atomic(layout: WorkdirLayout, payload: bytes) -> None:
     temporary_path: Path | None = None
     try:
         _ensure_directory(layout.temporary)
-        _ensure_directory(layout.audio_analysis)
+        _ensure_directory(layout.analysis)
         if _lexists(layout.destination) and (
             not is_regular_path(layout.destination)
             or _has_reparse_ancestor(layout.destination.parent)

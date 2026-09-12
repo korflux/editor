@@ -290,6 +290,18 @@ def _tree_has_only_regular_paths(root: Path) -> bool:
     return True
 
 
+def _has_reparse_ancestor(path: Path) -> bool:
+    """Rejeita modelos cujo caminho atravesse um link ou reparse point existente."""
+
+    current = Path(os.path.abspath(os.fspath(path)))
+    while True:
+        if os.path.lexists(current) and not is_regular_path(current, directory=True):
+            return True
+        if current.parent == current:
+            return False
+        current = current.parent
+
+
 def _valid_model_directory(path: Path) -> bool:
     """Aplica os mesmos arquivos mínimos CTranslate2 exigidos pelo instalador local."""
 
@@ -305,6 +317,13 @@ def _valid_model_directory(path: Path) -> bool:
         )
     except OSError:
         return False
+
+
+def is_valid_model_directory(path: Path) -> bool:
+    """Valida um diretório de modelo local sem permitir links nos pais ou no conteúdo."""
+
+    candidate = Path(os.path.abspath(os.fspath(path)))
+    return not _has_reparse_ancestor(candidate.parent) and _valid_model_directory(candidate)
 
 
 def discover_models(root: Path) -> dict[str, Any]:
@@ -333,7 +352,7 @@ def discover_models(root: Path) -> dict[str, Any]:
                 "path": str(model_path),
                 "reason": "diretório de modelo inválido",
             }
-        elif _valid_model_directory(model_path):
+        elif is_valid_model_directory(model_path):
             item = {
                 "name": name,
                 "status": "available",

@@ -11,7 +11,7 @@ from .contracts import CLI_VERSION
 from .media import MAX_SOURCE_DURATION_SECONDS, MAX_SOURCE_SIZE_BYTES
 
 
-def _default_model_root() -> Path:
+def default_model_root() -> Path:
     """Seleciona o diretório de modelos configurado ou o padrão local do repositório."""
 
     configured = os.environ.get("EDITOR_MODEL_DIR")
@@ -107,7 +107,7 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
     whisper = dependencies.detect_whisper_backend()
     gpu = dependencies.detect_gpu()
     cuda = _cuda_dependency(gpu, whisper)
-    models = dependencies.discover_models(model_dir or _default_model_root())
+    models = dependencies.discover_models(model_dir or default_model_root())
     recommendation = choose_recommendation(models, cuda["status"])
 
     transcribe_status = _combine_statuses(whisper["status"], models["status"])

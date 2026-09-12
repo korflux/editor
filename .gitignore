@@ -7,3 +7,7 @@
 *.bak
 *.backup
 *.orig
+
+# Ambiente Python e pesos de modelos são provisionados localmente e não fazem parte da fonte.
+.venv/
+models/

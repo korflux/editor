@@ -131,19 +131,21 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 
 ### T5: Transcrever fonte local com timestamps por palavra
 
-- [ ] T5 concluída
+- [x] T5 concluída
 - **Spec:** A2, A9, A10, A11, C2, C5
 - **Decisões:** TECH-01 (usa faster-whisper/CTranslate2), AI-01 (CPU `int8` como baseline), AI-02 (seleciona somente modelo local recomendado ou explicitado), MEDIA-01 (reusa allowlist de fontes), PRIV-01 (não envia áudio nem transcrição)
 - **O quê:** Implementar `analyze transcribe` sobre o backend local, reusando a validação de fonte e a escolha de dispositivo/modelo. O JSON canônico deve preservar hash da fonte, idioma, texto, segmentos e timestamps de início/fim por palavra.
 - **Aceite:**
-  - [ ] Uma fonte válida gera `analysis/transcription/<source-id>.json` com todos os campos obrigatórios e timestamps por palavra; ausência desses timestamps falha o comando.
-  - [ ] Modelo ausente, dispositivo indisponível ou fonte inválida retornam `MODEL_MISSING`, `DEVICE_UNAVAILABLE` ou código de entrada correspondente, sem modificar a fonte ou publicar análise parcial.
-  - [ ] `--device cpu|cuda` e `--model` explícitos são respeitados; nenhum download ou fallback para serviço externo ocorre durante a análise.
+  - [x] Uma fonte válida gera `analysis/transcription/<source-id>.json` com todos os campos obrigatórios e timestamps por palavra; ausência desses timestamps falha o comando.
+  - [x] Modelo ausente, dispositivo indisponível ou fonte inválida retornam `MODEL_MISSING`, `DEVICE_UNAVAILABLE` ou código de entrada correspondente, sem modificar a fonte ou publicar análise parcial.
+  - [x] `--device cpu|cuda` e `--model` explícitos são respeitados; nenhum download ou fallback para serviço externo ocorre durante a análise.
 - **Verificação:**
-  - [ ] `python -m editor analyze transcribe --workdir tests/fixtures/workflow --source-id main --input tests/fixtures/media/main.mp4 --device cpu --json`
-  - [ ] `python -m unittest discover -s tests -p "test_transcription.py" -v`
+  - [x] `.venv\Scripts\python.exe -m editor analyze transcribe --workdir A:\Projetos\editor\tmp-t5-run --source-id main --input tests\fixtures\media\main.mp4 --device cpu --model base --json` -> exit `0`, publicou `analysis/transcription/main.json`, idioma `en` e `segment_count: 0`.
+  - [x] `.venv\Scripts\python.exe -m editor analyze transcribe --workdir A:\Projetos\editor\tmp-t5-run --source-id main --input tests\fixtures\media\main.mp4 --device cpu --json` -> exit `0` também sem modelo explícito, usando a recomendação local `base`.
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_transcription.py" -v` -> `Ran 8 tests ... OK`.
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` e `python -B -m unittest discover -s tests -v` -> `Ran 26 tests ... OK` em cada runtime.
 - **Deps:** T3, T4
-- **Arquivos:** `src/editor/analysis/transcription.py`, `src/editor/whisper_backend.py`, `tests/test_transcription.py`, `tests/fixtures/models/`
+- **Arquivos:** `src/editor/analysis/transcription.py`, `src/editor/whisper_backend.py`, `tests/test_transcription.py`, `tests/test_installation.py`, `requirements.lock`
 - **Size:** high, 8/10, backend local externo, contrato de timestamps, seleção de dispositivo e integração com modelo
 - **Risk:** medium, qualidade e disponibilidade dos timestamps dependem do modelo local instalado
 

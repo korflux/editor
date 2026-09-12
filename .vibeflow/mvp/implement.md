@@ -7,7 +7,7 @@
 
 - **ROUTE:** max
 - **Modo:** A
-- **Fila:** T4 concluída; T5, T6 e T7 são elegíveis; T8 a T11 continuam bloqueadas pelas dependências do plano
+- **Fila:** T5 concluída; T6 e T7 são elegíveis; T8 a T11 continuam bloqueadas pelas dependências do plano
 - **Analyze:** `analyze.md` aprovado, veredito `limpo`
 - **Pergunta da T2:** o ambiente local pode ser instalado e verificado de forma reproduzível, com dependências pinadas e nenhum componente externo instalado sem ação explícita?
 
@@ -154,6 +154,47 @@
 - **Decisões:** MEDIA-01, DATA-01, OPS-01, PRIV-01 e CONTRACT-01 implementadas para análise de áudio.
 - **Mensagem de commit:** `task(T4): add guarded audio analysis`
 
+## T5: Transcrever fonte local com timestamps por palavra
+
+### Reconhecer
+
+- T4 já centralizava validação de fonte, hash, limites, diretório de trabalho, temporários e publicação atômica.
+- T3 já centralizava inventário de backend, GPU e modelos `tiny`, `base` e `small`, além da recomendação determinística.
+- O provisionamento explícito instalou CPython 3.11.15 x64, as dependências do `requirements.lock`, o backend local e o modelo CTranslate2 `base`; `Verify` passou sem CUDA, que é opcional.
+
+### Codar
+
+- `src/editor/cli.py` registra `analyze transcribe`, suas opções de idioma, modelo, dispositivo e `--json`; a borda também fixa stdout/stderr em UTF-8 para manter envelopes determinísticos no Windows.
+- `src/editor/whisper_backend.py` resolve somente modelos locais válidos, reaproveita `choose_recommendation`, aplica CPU `int8` ou CUDA `float16`, rejeita dispositivo indisponível e carrega `WhisperModel` com `local_files_only=True`.
+- `src/editor/analysis/transcription.py` reutiliza `media.inspect_source`, valida idioma e timestamps, normaliza segmentos/palavras e publica `analysis/transcription/<source-id>.json` somente após a resposta completa.
+- `src/editor/workdir.py` generaliza o layout e a publicação atômica para `audio` e `transcription`; `dependencies.py` valida diretórios de modelo sem links ou reparse points.
+- `tests/test_transcription.py` cobre artefato canônico, seleção CPU/CUDA, bloqueio de download, ausência de timestamps, rejeição precoce e envelope de modelo ausente.
+- `tests/test_installation.py` mantém o cenário de Python incompatível usando o launcher `py`, evitando que a própria suíte deixe de testar esse contrato quando executada no Python 3.11 válido.
+
+### Testar
+
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_transcription.py" -v` -> `Ran 8 tests ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` e `python -B -m unittest discover -s tests -v` -> `Ran 26 tests ... OK` em cada runtime.
+- `.venv\Scripts\python.exe -m editor analyze transcribe --workdir A:\Projetos\editor\tmp-t5-run --source-id main --input tests\fixtures\media\main.mp4 --device cpu --model base --json` -> exit code `0`, artefato canônico publicado, idioma `en` e `segment_count: 0`; sem `--model`, a seleção automática também retornou exit code `0` usando `base`.
+- `pwsh -NoProfile -File scripts/install.ps1 -Verify -PythonPath C:\Users\marco\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe` -> exit code `0`, backend, modelo, FFmpeg, gitleaks, pip-audit e `pip check` disponíveis.
+- `pip-audit -r requirements.lock --no-deps --disable-pip` -> `No known vulnerabilities found` após atualizar os pins vulneráveis de `setuptools` e `wheel`.
+- `gitleaks detect --source . --no-banner` -> nenhum segredo encontrado.
+- A API pinada do `WhisperModel` aceita `local_files_only`; o teste dedicado garante que a opção permaneça verdadeira.
+
+### Simplificar e re-testar
+
+- A lógica de seleção não duplica a recomendação de T3 e o artefato usa a mesma publicação atômica de T4.
+- A suíte específica e a suíte completa permaneceram verdes nos runtimes Python 3.11 e global.
+- O fixture real não contém fala reconhecida, por isso o artefato de integração tem zero segmentos; a serialização de palavras e a rejeição de timestamps ausentes são cobertas pelos testes dedicados.
+- O lockfile manteve 50 pacotes e hashes pinados; apenas `setuptools` e `wheel` foram atualizados por causa dos achados do SCA.
+
+### Registro
+
+- **Plan:** T5 marcada como concluída com prova real e suíte de regressão verde.
+- **Spec comprovada nesta fatia:** A2.
+- **Arquivos:** `.gitignore`, `.vibeflow/REGRAS.md`, `.vibeflow/mvp/implement.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/spec.md`, `requirements.lock`, `src/editor/cli.py`, `src/editor/capabilities.py`, `src/editor/dependencies.py`, `src/editor/workdir.py`, `src/editor/whisper_backend.py`, `src/editor/analysis/transcription.py`, `tests/test_installation.py`, `tests/test_transcription.py`.
+- **Commit:** `task(T5): add local transcription` (hash registrado no resultado da execução).
+
 ## Handoff
 
-Fila após T4: T5, T6 e T7 são elegíveis; T8 a T11 continuam bloqueadas pelas dependências do plano. Em modo A, a próxima escolha deve ser feita entre essas três tasks.
+Fila após T5: T6 e T7 continuam elegíveis; T8 a T11 continuam bloqueadas pelas dependências do plano. Handoff para a próxima T elegível ou para `vibe-review` quando a fila da fase for encerrada.
