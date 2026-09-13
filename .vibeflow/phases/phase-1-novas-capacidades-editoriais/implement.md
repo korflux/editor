@@ -1,7 +1,7 @@
 # Implement: Novas capacidades editoriais e preparação de trabalhos
 # Alvo: phase-1-novas-capacidades-editoriais
 # Status: aprovado
-# Route: high · modo A · T5
+# Route: high · modo A · T6
 
 ## Reconhecimento
 
@@ -244,5 +244,47 @@
 
 ## Handoff
 
-Próximas T* elegíveis: T6 e T9. T7, T8 e T10 permanecem bloqueadas pelas
-dependências declaradas no `plan.md`. Recomenda-se T6 como próxima fatia.
+### T6: Camadas raster estáticas
+
+#### Reconhecimento
+
+- O plano v2 já discriminava camadas de imagem na estrutura, mas `media` aceitava
+  apenas mídia audiovisual; o grafo incluía somente camadas de texto.
+- `build_ffmpeg_graph` é compartilhado pela preview e full, e os argumentos de
+  entrada são montados centralmente em `render/preview.py`.
+
+#### Implementação
+
+- A inspeção central aceita PNG, JPEG/JPG e WebP estáticos de formato e codec
+  coerentes, até 100 MiB e 8.192 pixels por dimensão. APNG e WebP animado são
+  detectados antes de alcançar o render.
+- O plano exige `kind: image` para a camada e registra a fonte sem duração ou
+  áudio. A imagem entra em loop controlado no FFmpeg e é composta após o vídeo
+  base em ordem de `layers[]`, com alpha, `contain`, `crop` e intervalo fechado
+  à esquerda e aberto à direita.
+- `CliError` deixou de ser uma dataclass imutável após a prova expor que o Python
+  não conseguia atribuir `__traceback__` em falhas propagadas pelo `unittest`.
+  Esse erro preexistente foi corrigido com a remoção de `frozen=True`.
+- O Documento Vivo foi atualizado com o contrato de imagem da Phase 1.
+
+#### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render tests.test_full_render -v`
+  -> `Ran 39 tests ... OK`.
+- Fixtures reais verificam transparência, caixa, `contain`, `crop`, z-order,
+  intervalo, ausência de áudio, formatos permitidos, animação rejeitada e limites.
+- A revisão do diff preservou o único caminho de composição usado por preview
+  e full. `git diff --check` passou.
+
+#### Arquivos
+
+- `src/editor/contracts.py`, `src/editor/media.py`, `src/editor/plan/schema.py`,
+  `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py` e
+  `src/editor/render/preview.py`.
+- `tests/test_plan_validation.py`, `tests/test_preview_render.py` e
+  `tests/fixtures/phase-1/images/`.
+- `.vibeflow/REGRAS.md`, `plan.md` e `implement.md` desta phase.
+
+## Handoff
+
+Próximas T* elegíveis: T7 e T9. T8 depende de T7; T10 depende de T8 e T9.

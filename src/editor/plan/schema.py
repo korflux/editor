@@ -43,7 +43,7 @@ VIDEO_LAYER_FIELDS = LAYER_COMMON_FIELDS | frozenset(
 AUDIO_PROCESSING_FIELDS = frozenset({"normalize_loudness", "target_lufs", "limiter", "ducking"})
 LIMITER_FIELDS = frozenset({"enabled", "ceiling_dbfs"})
 
-SOURCE_KINDS = frozenset({"video", "audio"})
+SOURCE_KINDS = frozenset({"video", "audio", "image"})
 FIT_MODES = frozenset({"preserve", "contain", "crop"})
 AUDIO_MODES = frozenset({"keep", "mute", "replace", "mix"})
 LAYER_TYPES = frozenset({"text", "image", "video"})

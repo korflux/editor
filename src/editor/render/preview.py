@@ -191,6 +191,8 @@ def _build_ffmpeg_arguments(
                 "Uma fonte usada pela timeline não pôde ser localizada.",
                 EXIT_CODES["OPERATION"],
             )
+        if record["kind"] == "image":
+            arguments.extend(["-loop", "1", "-framerate", "25"])
         arguments.extend(["-i", str(record["path"])])
 
     arguments.extend(

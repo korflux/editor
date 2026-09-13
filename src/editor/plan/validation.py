@@ -464,16 +464,21 @@ def _inspect_sources(root: Path, value: Any) -> tuple[dict[str, dict[str, Any]],
         metadata = by_path.get(path)
         if metadata is None:
             try:
-                metadata = media.inspect_source(path, require_audio=False, require_video=False)
+                metadata = media.inspect_source(
+                    path, require_audio=False, require_video=False,
+                    **({"allow_image": True} if kind == "image" else {}),
+                )
             except CliError as error:
                 if error.code == "DEPENDENCY_MISSING":
                     raise
                 raise plan_error("Uma fonte do plano não possui formato ou metadados compatíveis.") from error
             by_path[path] = metadata
-        if kind == "video" and metadata.video_codec is None:
+        if kind == "video" and (metadata.video_codec is None or metadata.duration_seconds is None):
             raise plan_error("Uma fonte declarada como vídeo precisa conter vídeo compatível.")
         if kind == "audio" and metadata.audio_codec is None:
             raise plan_error("Uma fonte declarada como áudio precisa conter áudio compatível.")
+        if kind == "image" and metadata.duration_seconds is not None:
+            raise plan_error("Uma fonte declarada como imagem precisa conter imagem estática compatível.")
         record = {
             "id": source_id,
             "kind": kind,
@@ -481,7 +486,10 @@ def _inspect_sources(root: Path, value: Any) -> tuple[dict[str, dict[str, Any]],
             "container": metadata.container,
             "audio_codec": metadata.audio_codec,
             "video_codec": metadata.video_codec,
-            "duration_seconds": _rounded(metadata.duration_seconds),
+            "duration_seconds": (
+                _rounded(metadata.duration_seconds)
+                if metadata.duration_seconds is not None else None
+            ),
             "size_bytes": metadata.size_bytes,
             "video_width": metadata.video_width,
             "video_height": metadata.video_height,
@@ -511,6 +519,7 @@ def _validate_video(
     if (
         not isinstance(source_id, str)
         or source_id not in source_map
+        or source_map[source_id]["definition"]["kind"] != "video"
         or source_map[source_id]["metadata"].video_codec is None
     ):
         raise plan_error("Cada segmento deve referenciar uma fonte de vídeo válida.")
@@ -714,13 +723,18 @@ def _validate_segments(
 
 
 def _validate_layer_intervals(
-    layers: list[dict[str, Any]], timeline_duration: float
+    layers: list[dict[str, Any]], timeline_duration: float,
+    source_map: dict[str, dict[str, Any]],
 ) -> None:
-    """Garante que cada camada visual esteja contida na timeline já calculada."""
+    """Garante que camadas estejam na timeline e imagens apontem para fontes estáticas."""
 
     for layer in layers:
         if float(layer["end_s"]) > timeline_duration + ASPECT_TOLERANCE:
             raise plan_error("O intervalo da camada está fora da timeline.")
+        if layer["type"] == "image":
+            source = source_map.get(str(layer["source_id"]))
+            if source is None or source["definition"]["kind"] != "image":
+                raise plan_error("A camada de imagem deve usar uma fonte de imagem válida.")
 
 
 def _validate_audio_processing(value: Any) -> dict[str, Any]:
@@ -770,7 +784,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         source_map,
         cut_definitions,
     )
-    _validate_layer_intervals(layer_definitions, timeline_duration)
+    _validate_layer_intervals(layer_definitions, timeline_duration, source_map)
     return {
         "plan_path": str(plan_path),
         "relative_plan_path": "plan.json",

@@ -55,17 +55,17 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `src/editor/capabilities.py`: contrato de inventário local, limites, operações e recomendação.
 - `src/editor/dependencies.py`: sondagem segura de ferramentas, hardware, backend e modelos locais.
 - `src/editor/workdir.py`: validação do trabalho, source IDs, diretórios permitidos e publicação atômica.
-- `src/editor/media.py`: inspeção FFprobe e allowlist de formatos, streams, codecs, tamanho e duração.
+- `src/editor/media.py`: inspeção FFprobe e allowlist de áudio, vídeo e imagens raster estáticas, com limites de tamanho, duração e dimensão.
 - `src/editor/process.py`: execução estruturada e streaming PCM de processos locais sem shell intermediário.
 - `src/editor/analysis/audio.py`: análise de loudness, pico verdadeiro, níveis por janela e silêncio por amplitude.
 - `src/editor/analysis/frames.py`: seleção temporal, extração de PNGs e manifesto de frames efetivos.
 - `src/editor/analysis/transcription.py`: validação da resposta do Whisper e publicação de transcrição com timestamps por palavra.
-- `src/editor/plan/schema.py`: allowlist estrutural e opções suportadas do schema v1 do plano.
+- `src/editor/plan/schema.py`: allowlist estrutural e opções suportadas do schema v2 do plano.
 - `src/editor/plan/validation.py`: validação de fontes, segmentos, áudio, overlays e timeline linear.
 - `src/editor/plan/canonical.py`: serialização UTF-8 canônica e SHA-256 do plano.
 - `src/editor/integrity/hashes.py`: hashing em blocos de artefatos locais para registros de integridade.
 - `src/editor/integrity/approval.py`: validação do plano, cálculo de hashes e publicação atômica de `approval.json`.
-- `src/editor/render/ffmpeg_graph.py`: composição determinística de filtros de vídeo, áudio e lettering para a preview.
+- `src/editor/render/ffmpeg_graph.py`: composição determinística de vídeo, áudio, texto e camadas raster compartilhada pela preview e full.
 - `src/editor/render/preview.py`: renderização, validação de metadados e publicação atômica da única `preview.mp4`.
 - `src/editor/render/full.py`: revalidação da aprovação e renderização final da única `full.mp4`.
 - `src/editor/whisper_backend.py`: seleção local de modelo/dispositivo e ponte lazy com faster-whisper sem download.
@@ -83,6 +83,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `tests/test_capabilities.py`: teste de processo do inventário e da recomendação determinística.
 - `tests/e2e/test_mvp_flow.py`: jornada E2E dos comandos locais, artefatos publicados, saída JSON e bloqueio por aprovação obsoleta.
 - `tests/fixtures/e2e/`: plano curto de vlog, b-roll, música e lettering usado pela prova ponta a ponta.
+- `tests/fixtures/phase-1/images/`: raster estático, alpha e animações rejeitadas na prova de camadas da Phase 1.
 - `.vibeflow/`: fonte de governança e Documento Vivo de regras.
 - `.vibeflow/mvp/`: entrevista, spec, plan, analyze e implement do MVP.
 - `.vibeflow/phases/`: artefatos de entrevista, especificação, plano, análise, implementação e revisão por fase.
@@ -216,3 +217,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** o ambiente local descrito em `skills/vibe-editor/references/installation.md` e as práticas de YouTube em `skills/vibe-editor/references/youtube-editing.md`.
 - **Limitação conhecida:** a skill registra como parciais ou ausentes legendas sincronizadas, zoom/movimento, inserções em camada e cortes J/L de primeira classe; `ponytail: implementar essas capacidades somente na fase posterior ao MVP, com contrato e verificação próprios`.
 - **Verificação:** `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor` e revisão dos comandos documentados contra `scripts/install.ps1` e `src/editor/cli.py`.
+
+### Camadas raster estáticas, Phase 1 T6
+
+- **Propósito:** compor PNG com alpha, JPEG/JPG e WebP estáticos no plano v2, respeitando caixa, intervalo, `contain`/`crop` e a ordem de `layers[]`.
+- **Entrada:** fonte local `kind: "image"` e camada `type: "image"` com `source_id`, `fit` e geometria normalizada.
+- **Saída:** `plan validate` reporta metadados sem duração/áudio; preview e full usam a mesma composição sem áudio implícito.
+- **Dependências:** FFprobe para a allowlist real e FFmpeg com `libx264` para a renderização local.
+- **Limitação conhecida:** somente imagens estáticas das três famílias raster listadas; `ponytail: ampliar formatos apenas quando houver fonte editorial real que justifique outro decoder`.
+- **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` e `.venv\Scripts\python.exe -B -m unittest tests.test_full_render -v`.

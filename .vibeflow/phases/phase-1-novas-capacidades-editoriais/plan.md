@@ -140,18 +140,19 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T6: Compor imagens raster com transparência
 
-- [ ] T6 concluída
+- [x] T6 concluída
 - **Spec:** A3, A6, C2
 - **Decisões:** LAYER-01 (camadas ordenadas abaixo para cima), MEDIA-02 (allowlist raster, 100 MiB e 8.192 pixels por dimensão)
 - **O quê:** Estender a inspeção centralizada de mídia para fontes `kind: "image"` estáticas e validar a camada de imagem com `contain` ou `crop`. Incorporar imagens no grafo com duração controlada, alpha preservado e composição sobre o vídeo-base na ordem declarada, sem criar áudio.
 - **Aceite:**
-  - [ ] PNG, JPEG/JPG e WebP estáticos são aceitos somente quando extensão, formato real, tamanho e dimensões estiverem dentro da allowlist; GIF, SVG, BMP, imagens animadas e limites excedidos falham antes do render.
-  - [ ] `contain` revela o vídeo-base nas áreas não ocupadas, `crop` preenche a caixa com corte central, alpha de PNG é preservado e a ordem de `layers[]` define o z-order.
-  - [ ] Fixture real com transparência e sobreposição confirma que a imagem cobre apenas seu intervalo e nunca fornece stream de áudio.
+  - [x] PNG, JPEG/JPG e WebP estáticos são aceitos somente quando extensão, formato real, tamanho e dimensões estiverem dentro da allowlist; GIF, SVG, BMP, imagens animadas e limites excedidos falham antes do render.
+  - [x] `contain` revela o vídeo-base nas áreas não ocupadas, `crop` preenche a caixa com corte central, alpha de PNG é preservado e a ordem de `layers[]` define o z-order.
+  - [x] Fixture real com transparência e sobreposição confirma que a imagem cobre apenas seu intervalo e nunca fornece stream de áudio.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+- **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render tests.test_full_render -v` -> `Ran 39 tests ... OK`; fixtures raster reais cobrem alpha, `contain`, `crop`, z-order, tempo, áudio ausente, rejeição de animação e limites; `git diff --check` passou.
 - **Deps:** T5
-- **Arquivos:** `src/editor/media.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/render/preview.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `tests/fixtures/phase-1/images/`
+- **Arquivos:** `src/editor/media.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/render/preview.py`, `src/editor/contracts.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `tests/fixtures/phase-1/images/`, `.vibeflow/REGRAS.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/implement.md`
 - **Size:** `high, 8/10, nova família de mídia e composição alpha com FFmpeg real`
 - **Risk:** `high, decodificação fora da allowlist ou perda de alpha quebra segurança e resultado visual`
 

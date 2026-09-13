@@ -36,7 +36,7 @@ def reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return document
 
 
-@dataclass(frozen=True)
+@dataclass
 class CliError(Exception):
     """Erro de domínio que o handler da borda converte em envelope seguro."""
 

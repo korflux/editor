@@ -27,6 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = PROJECT_ROOT / "tests" / "fixtures" / "workflow"
 WORKFLOW_PLAN = WORKFLOW_DIR / "plan.json"
 WORKFLOW_SOURCES = WORKFLOW_DIR / "sources"
+IMAGE_FIXTURES = PROJECT_ROOT / "tests" / "fixtures" / "phase-1" / "images"
 
 
 def run_module(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -349,6 +350,63 @@ class PreviewRenderTests(unittest.TestCase):
             (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
             escaped_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
             self.assertEqual(escaped_result.returncode, 0, escaped_result.stderr)
+
+    def test_image_layers_preserve_alpha_fit_interval_order_and_audio_contract(self) -> None:
+        """Compara frames reais de contain, crop e z-order sem deixar imagem criar áudio."""
+
+        with workspace_tempdir() as workdir:
+            layered = workdir / "layered"
+            baseline = workdir / "baseline"
+            layered.mkdir()
+            baseline.mkdir()
+            for target in (layered, baseline):
+                copy_workflow(target)
+                use_video_only_motion_fixture(target)
+            document = json.loads((layered / "plan.json").read_text(encoding="utf-8"))
+            for source_id, name in (("alpha", "alpha.png"), ("blue", "blue.png")):
+                shutil.copy2(IMAGE_FIXTURES / name, layered / "sources" / name)
+                document["sources"].append({
+                    "id": source_id, "kind": "image", "path": f"sources/{name}"
+                })
+            image_layer = {
+                "type": "image", "start_s": 0.5, "end_s": 1.25,
+                "x": 0.1, "y": 0.2, "width": 0.25, "height": 0.4,
+                "source_id": "alpha", "fit": "contain",
+            }
+            document["layers"] = [image_layer]
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            baseline_document = json.loads((baseline / "plan.json").read_text(encoding="utf-8"))
+            baseline_document["layers"] = []
+            (baseline / "plan.json").write_text(json.dumps(baseline_document), encoding="utf-8")
+
+            layered_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            baseline_result = run_module("render", "preview", "--workdir", str(baseline.resolve()), "--json")
+            self.assertEqual(layered_result.returncode, 0, layered_result.stderr)
+            self.assertEqual(baseline_result.returncode, 0, baseline_result.stderr)
+            self.assertEqual(json.loads(layered_result.stdout)["data"]["audio"]["present"], False)
+            active = extract_rgb_frame(layered / "preview.mp4", 0.75)
+            plain = extract_rgb_frame(baseline / "preview.mp4", 0.75)
+            self.assertGreater(mean_region_difference(active, plain, 40, 58, 50, 65), 5)
+            self.assertLess(mean_region_difference(active, plain, 75, 58, 85, 65), 2)
+            for timestamp in (0.25, 1.5):
+                self.assertLess(mean_frame_difference(
+                    extract_rgb_frame(layered / "preview.mp4", timestamp),
+                    extract_rgb_frame(baseline / "preview.mp4", timestamp),
+                ), 2)
+
+            image_layer["fit"] = "crop"
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            crop_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            self.assertEqual(crop_result.returncode, 0, crop_result.stderr)
+            crop = extract_rgb_frame(layered / "preview.mp4", 0.75)
+            self.assertGreater(mean_region_difference(crop, active, 40, 58, 50, 65), 3)
+
+            document["layers"].append({**image_layer, "source_id": "blue", "fit": "crop"})
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            stacked_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            self.assertEqual(stacked_result.returncode, 0, stacked_result.stderr)
+            stacked = extract_rgb_frame(layered / "preview.mp4", 0.75)
+            self.assertGreater(mean_region_difference(stacked, crop, 40, 58, 50, 65), 5)
 
     def test_graph_does_not_use_broll_audio_and_keeps_processing_explicit(self) -> None:
         """Confirma no grafo que B fornece somente imagem e o áudio controla a mixagem."""

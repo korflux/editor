@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = PROJECT_ROOT / "tests" / "fixtures" / "workflow"
 WORKFLOW_PLAN = WORKFLOW_DIR / "plan.json"
 WORKFLOW_SOURCES = WORKFLOW_DIR / "sources"
+IMAGE_FIXTURES = PROJECT_ROOT / "tests" / "fixtures" / "phase-1" / "images"
 
 
 def run_module(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -149,6 +150,62 @@ class PlanValidationTests(unittest.TestCase):
         )
         self.assertEqual(len(data["plan_sha256"]), 64)
         self.assertEqual(json.loads(data["canonical_json"])["schema_version"], 2)
+
+    def test_image_sources_require_static_matching_raster_and_correct_layer_kind(self) -> None:
+        """Exercita formatos reais e impede extensão falsa, animação e referência audiovisual."""
+
+        with workspace_tempdir() as workdir:
+            shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+            document = load_workflow_plan()
+            document["layers"] = [{
+                "type": "image", "start_s": 0.25, "end_s": 1.25,
+                "x": 0.1, "y": 0.1, "width": 0.3, "height": 0.4,
+                "source_id": "still", "fit": "contain",
+            }]
+            for name in ("alpha.png", "static.jpg", "static.webp"):
+                shutil.copy2(IMAGE_FIXTURES / name, workdir / "sources" / name)
+                document["sources"].append({"id": "still", "kind": "image", "path": f"sources/{name}"})
+                write_plan(workdir, document)
+                result = validate_plan(workdir)
+                self.assertEqual(result["sources"][-1]["duration_seconds"], None)
+                self.assertEqual(result["sources"][-1]["audio_codec"], None)
+                document["sources"].pop()
+            shutil.copy2(IMAGE_FIXTURES / "static.jpg", workdir / "sources" / "static.jpeg")
+            document["sources"].append({"id": "still", "kind": "image", "path": "sources/static.jpeg"})
+            write_plan(workdir, document)
+            self.assertEqual(validate_plan(workdir)["sources"][-1]["video_codec"], "mjpeg")
+            document["sources"].pop()
+
+            document["layers"][0]["source_id"] = "main"
+            write_plan(workdir, document)
+            with self.assertRaisesRegex(CliError, "imagem"):
+                validate_plan(workdir)
+
+            document["layers"][0]["source_id"] = "still"
+            invalid = workdir / "sources" / "fake.png"
+            shutil.copy2(IMAGE_FIXTURES / "static.jpg", invalid)
+            document["sources"].append({"id": "still", "kind": "image", "path": "sources/fake.png"})
+            write_plan(workdir, document)
+            with self.assertRaises(CliError):
+                validate_plan(workdir)
+            document["sources"].pop()
+
+            for name in ("animated.png", "animated.webp", "rejected.gif", "rejected.bmp"):
+                shutil.copy2(IMAGE_FIXTURES / name, workdir / "sources" / name)
+                document["sources"].append({"id": "still", "kind": "image", "path": f"sources/{name}"})
+                write_plan(workdir, document)
+                with self.assertRaises(CliError, msg=name):
+                    validate_plan(workdir)
+                document["sources"].pop()
+
+            document["sources"].append({"id": "still", "kind": "image", "path": "sources/alpha.png"})
+            write_plan(workdir, document)
+            with patch("editor.media.MAX_IMAGE_SIZE_BYTES", 1):
+                with self.assertRaises(CliError):
+                    validate_plan(workdir)
+            with patch("editor.media.MAX_IMAGE_DIMENSION", 10):
+                with self.assertRaises(CliError):
+                    validate_plan(workdir)
 
     def test_j_and_l_define_global_audio_windows(self) -> None:
         """Confirma que J antecipa e L prolonga a janela do grupo sem mudar a timeline visual."""

@@ -17,7 +17,15 @@ from .workdir import resolve_source_path
 
 MAX_SOURCE_SIZE_BYTES = 4 * 1024**3
 MAX_SOURCE_DURATION_SECONDS = 3_600
+MAX_IMAGE_SIZE_BYTES = 100 * 1024**2
+MAX_IMAGE_DIMENSION = 8_192
 SUPPORTED_SOURCE_EXTENSIONS = {".mp4", ".mp3", ".wav"}
+IMAGE_FORMATS = {
+    ".png": ("png_pipe", "png"),
+    ".jpg": ("jpeg_pipe", "mjpeg"),
+    ".jpeg": ("jpeg_pipe", "mjpeg"),
+    ".webp": ("webp_pipe", "webp"),
+}
 
 
 @dataclass(frozen=True)
@@ -28,7 +36,7 @@ class MediaMetadata:
     container: str
     audio_codec: str | None
     video_codec: str | None
-    duration_seconds: float
+    duration_seconds: float | None
     size_bytes: int
     sample_rate: int | None
     channels: int | None
@@ -211,22 +219,89 @@ def _validate_probe_payload(
     )
 
 
+def _image_is_animated(path: Path) -> bool:
+    """Detecta APNG e WebP animado sem depender de metadados temporais do FFprobe."""
+
+    try:
+        with path.open("rb") as source:
+            if path.suffix.lower() == ".png":
+                if source.read(8) != b"\x89PNG\r\n\x1a\n":
+                    return True
+                while True:
+                    header = source.read(8)
+                    if len(header) != 8:
+                        return True
+                    length = int.from_bytes(header[:4], "big")
+                    chunk = header[4:]
+                    if chunk == b"acTL":
+                        return True
+                    if chunk == b"IDAT":
+                        return False
+                    source.seek(length + 4, os.SEEK_CUR)
+            if path.suffix.lower() == ".webp":
+                header = source.read(21)
+                return (
+                    len(header) < 16
+                    or header[:4] != b"RIFF"
+                    or header[8:12] != b"WEBP"
+                    or (header[12:16] == b"VP8X" and (len(header) < 21 or bool(header[20] & 2)))
+                )
+    except OSError as error:
+        raise _error("SOURCE_INVALID", "Não foi possível ler a imagem.") from error
+    return False
+
+
+def _validate_image_probe_payload(
+    path: Path, size_bytes: int, payload: dict[str, Any]
+) -> MediaMetadata:
+    """Aceita somente um stream raster estático cujo codec e formato correspondem à extensão."""
+
+    expected_format, expected_codec = IMAGE_FORMATS[path.suffix.lower()]
+    format_data = payload.get("format")
+    streams = payload.get("streams")
+    if not isinstance(format_data, dict) or not isinstance(streams, list) or len(streams) != 1:
+        raise _error("MEDIA_UNSUPPORTED", "A imagem não possui metadados compatíveis.")
+    stream = streams[0]
+    if (
+        not isinstance(stream, dict)
+        or format_data.get("format_name") != expected_format
+        or stream.get("codec_type") != "video"
+        or stream.get("codec_name") != expected_codec
+        or _image_is_animated(path)
+    ):
+        raise _error("MEDIA_UNSUPPORTED", "O formato da imagem não é aceito.")
+    width = _parse_positive_int(stream.get("width"))
+    height = _parse_positive_int(stream.get("height"))
+    if width is None or height is None:
+        raise _error("MEDIA_UNSUPPORTED", "As dimensões da imagem são inválidas.")
+    if size_bytes > MAX_IMAGE_SIZE_BYTES or max(width, height) > MAX_IMAGE_DIMENSION:
+        raise _error("MEDIA_LIMIT_EXCEEDED", "A imagem excede os limites permitidos.")
+    return MediaMetadata(
+        path=path, container=path.suffix.lower().removeprefix("."),
+        audio_codec=None, video_codec=expected_codec, duration_seconds=None,
+        size_bytes=size_bytes, sample_rate=None, channels=None,
+        video_width=width, video_height=height,
+    )
+
+
 def inspect_source(
     input_path: str | Path,
     *,
     require_audio: bool = True,
     require_video: bool = False,
+    allow_image: bool = False,
 ) -> MediaMetadata:
     """Inspeciona uma fonte local com FFprobe antes de iniciar uma operação de mídia."""
 
     path = resolve_source_path(input_path)
-    if path.suffix.lower() not in SUPPORTED_SOURCE_EXTENSIONS:
+    is_image = allow_image and path.suffix.lower() in IMAGE_FORMATS
+    if path.suffix.lower() not in SUPPORTED_SOURCE_EXTENSIONS and not is_image:
         raise _error("MEDIA_UNSUPPORTED", "A extensão da fonte não é aceita.")
     try:
         size_bytes = path.stat().st_size
     except OSError as error:
         raise _error("SOURCE_INVALID", "Não foi possível ler o tamanho da fonte.") from error
-    if size_bytes > MAX_SOURCE_SIZE_BYTES:
+    if size_bytes > (MAX_IMAGE_SIZE_BYTES if is_image else MAX_SOURCE_SIZE_BYTES):
         raise _error("MEDIA_LIMIT_EXCEEDED", "A fonte excede o limite de tamanho permitido.")
 
     arguments = [
@@ -250,6 +325,8 @@ def inspect_source(
         raise _error("MEDIA_PROBE_FAILED", "Os metadados da fonte são inválidos.") from error
     if not isinstance(payload, dict):
         raise _error("MEDIA_PROBE_FAILED", "Os metadados da fonte são inválidos.")
+    if is_image:
+        return _validate_image_probe_payload(path, size_bytes, payload)
     return _validate_probe_payload(
         path,
         size_bytes,

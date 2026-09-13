@@ -407,7 +407,7 @@ def _text_layer_filter(
 
 
 def _used_source_ids(document: Mapping[str, Any]) -> tuple[str, ...]:
-    """Lista fontes usadas pela timeline na ordem declarada, sem adicionar entradas especulativas."""
+    """Lista fontes usadas por segmentos e camadas na ordem estável de primeira referência."""
 
     seen: set[str] = set()
     ordered: list[str] = []
@@ -419,7 +419,52 @@ def _used_source_ids(document: Mapping[str, Any]) -> tuple[str, ...]:
             if normalized not in seen:
                 seen.add(normalized)
                 ordered.append(normalized)
+    for layer in document["layers"]:
+        if layer["type"] == "image":
+            source_id = str(layer["source_id"])
+            if source_id not in seen:
+                seen.add(source_id)
+                ordered.append(source_id)
     return tuple(ordered)
+
+
+def _image_layer_filter(
+    input_label: str,
+    layer: Mapping[str, Any],
+    layer_index: int,
+    input_index: int,
+    canvas_width: int,
+    canvas_height: int,
+    timeline_duration: float,
+) -> tuple[str, str]:
+    """Dimensiona uma imagem estática com alpha e a sobrepõe apenas no intervalo da camada."""
+
+    left = min(canvas_width - 1, int(float(layer["x"]) * canvas_width))
+    top = min(canvas_height - 1, int(float(layer["y"]) * canvas_height))
+    right = min(canvas_width, math.ceil((float(layer["x"]) + float(layer["width"])) * canvas_width))
+    bottom = min(canvas_height, math.ceil((float(layer["y"]) + float(layer["height"])) * canvas_height))
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    fit = str(layer["fit"])
+    scaled = f"image{layer_index}"
+    output = f"vimage{layer_index}"
+    scale_mode = "decrease" if fit == "contain" else "increase"
+    filters = [
+        f"[{input_index}:v:0]trim=duration={_number(timeline_duration)},setpts=PTS-STARTPTS,"
+        f"format=rgba,scale=w={width}:h={height}:force_original_aspect_ratio={scale_mode}"
+    ]
+    if fit == "crop":
+        filters.append(f",crop=w={width}:h={height}:x=(iw-ow)/2:y=(ih-oh)/2")
+    filters.append(f"[{scaled}]")
+    x = str(left) if fit == "crop" else f"{left}+({width}-w)/2"
+    y = str(top) if fit == "crop" else f"{top}+({height}-h)/2"
+    start = _number(layer["start_s"])
+    end = _number(layer["end_s"])
+    filters.append(
+        f";[{input_label}][{scaled}]overlay=x={x}:y={y}:eof_action=pass:"
+        f"enable='gte(t\\,{start})*lt(t\\,{end})'[{output}]"
+    )
+    return "".join(filters), output
 
 
 def build_ffmpeg_graph(
@@ -486,6 +531,14 @@ def build_ffmpeg_graph(
         if layer["type"] == "text":
             filter_part, video_label = _text_layer_filter(
                 video_label, layer, layer_index, canvas_width, canvas_height
+            )
+            parts.append(filter_part)
+        elif layer["type"] == "image":
+            filter_part, video_label = _image_layer_filter(
+                video_label, layer, layer_index,
+                input_indexes[str(layer["source_id"])],
+                canvas_width, canvas_height,
+                float(validation["timeline"]["duration_seconds"]),
             )
             parts.append(filter_part)
 
