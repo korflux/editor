@@ -35,6 +35,7 @@ class CliContractTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("usage: editor", result.stdout)
+        self.assertIn("init", result.stdout)
         self.assertEqual(result.stderr, "")
 
     def test_installed_entry_point_help_is_non_interactive(self) -> None:

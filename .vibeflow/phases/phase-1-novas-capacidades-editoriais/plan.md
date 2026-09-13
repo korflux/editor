@@ -49,18 +49,19 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T1: Preparar trabalho seguro com `editor init`
 
-- [ ] T1 concluída
+- [x] T1 concluída
 - **Spec:** A1, A2, C1, C4
 - **Decisões:** INIT-01 (cria a estrutura técnica idempotente sem estado editorial)
 - **O quê:** Adicionar o comando `editor init --workdir <caminho-absoluto> --json` ao parser e ao handler central, reutilizando o envelope e as validações de caminho existentes. Criar ou completar apenas `.tmp`, `analysis/audio`, `analysis/transcription` e `frames`, preservando artefatos e removendo, em falha, somente diretórios vazios criados pela própria execução.
 - **Aceite:**
-  - [ ] Um processo real cria a estrutura na ordem declarada, retorna `command: "init"`, `state: "ready"`, `created`, `existing` e `preserved_artifacts`, e uma segunda execução é idempotente.
-  - [ ] Caminho relativo, arquivo, link, junction, reparse point, pai inseguro ou destino não gravável retornam `WORKDIR_INVALID` em envelope seguro antes de criar estado editorial.
-  - [ ] `plan.json`, `approval.json`, `preview.mp4`, `full.mp4`, análises, frames e arquivos preexistentes permanecem byte a byte; `sources` não é criado.
+  - [x] Um processo real cria a estrutura na ordem declarada, retorna `command: "init"`, `state: "ready"`, `created`, `existing` e `preserved_artifacts`, e uma segunda execução é idempotente.
+  - [x] Caminho relativo, arquivo, link, junction, reparse point, pai inseguro ou destino não gravável retornam `WORKDIR_INVALID` em envelope seguro antes de criar estado editorial.
+  - [x] `plan.json`, `approval.json`, `preview.mp4`, `full.mp4`, análises, frames e arquivos preexistentes permanecem byte a byte; `sources` não é criado.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_init tests.test_cli_contract -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_init tests.test_cli_contract -v`
+- **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_init tests.test_cli_contract -v` -> `Ran 10 tests ... OK`; suíte completa -> `Ran 74 tests ... OK`
+- **Arquivos:** `src/editor/cli.py`, `src/editor/workdir.py`, `tests/test_init.py`, `tests/test_cli_contract.py`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/analyze.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/spec.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/implement.md`
 - **Deps:** nenhuma
-- **Arquivos:** `src/editor/cli.py`, `src/editor/workdir.py`, `tests/test_init.py`, `tests/test_cli_contract.py`
 - **Size:** `medium, 6/10, mudança de CLI e workdir com validação de processo no Windows e rollback local`
 - **Risk:** `medium, manipula criação de diretórios e precisa preservar estado operacional existente`
 

@@ -15,6 +15,9 @@ from .dependencies import is_regular_path
 
 
 SOURCE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+INIT_DIRECTORY_PATHS = (".tmp", "analysis", "analysis/audio", "analysis/transcription", "frames")
+_KNOWN_ROOT_ARTIFACTS = ("plan.json", "approval.json", "preview.mp4", "full.mp4")
+_KNOWN_FRAME_FILE = re.compile(r"^frame-\d{4}\.png$")
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,250 @@ def _has_reparse_ancestor(path: Path) -> bool:
         current = current.parent
 
 
+def _normalize_workdir_path(raw_path: str | Path) -> Path:
+    """Normaliza um caminho absoluto sem resolver links, preservando a fronteira de segurança."""
+
+    try:
+        candidate = Path(raw_path).expanduser()
+    except (OSError, TypeError, ValueError) as error:
+        raise _error(
+            "WORKDIR_INVALID",
+            "O diretório de trabalho deve ser um caminho absoluto válido.",
+            EXIT_CODES["STATE"],
+        ) from error
+    if not candidate.is_absolute():
+        raise _error(
+            "WORKDIR_INVALID",
+            "O diretório de trabalho deve ser um caminho absoluto.",
+            EXIT_CODES["STATE"],
+        )
+    return Path(os.path.normpath(os.fspath(candidate)))
+
+
+def _init_invalid(message: str = "O diretório de trabalho não pode ser preparado com segurança.") -> CliError:
+    """Cria o erro público único para qualquer falha de validação do `init`."""
+
+    return _error("WORKDIR_INVALID", message, EXIT_CODES["STATE"])
+
+
+def _validate_init_root(raw_path: str | Path) -> tuple[Path, bool]:
+    """Valida o trabalho existente ou confirma que somente seu último componente pode nascer."""
+
+    path = _normalize_workdir_path(raw_path)
+    if _lexists(path):
+        if (
+            not is_regular_path(path, directory=True)
+            or _has_reparse_ancestor(path)
+            or not os.access(path, os.W_OK)
+        ):
+            raise _init_invalid()
+        return path, False
+
+    parent = path.parent
+    if (
+        not is_regular_path(parent, directory=True)
+        or _has_reparse_ancestor(parent)
+        or not os.access(parent, os.W_OK)
+    ):
+        raise _init_invalid()
+    return path, True
+
+
+def _validate_regular_tree(root: Path) -> None:
+    """Garante que uma árvore gerenciada não contém links, reparse points ou tipos especiais."""
+
+    if not is_regular_path(root, directory=True) or _has_reparse_ancestor(root):
+        raise _init_invalid()
+
+    def raise_walk_error(error: OSError) -> None:
+        """Interrompe o preflight quando uma pasta gerenciada não pode ser lida."""
+
+        raise error
+
+    try:
+        for current, directories, files in os.walk(
+            root,
+            topdown=True,
+            onerror=raise_walk_error,
+            followlinks=False,
+        ):
+            current_path = Path(current)
+            if not is_regular_path(current_path, directory=True) or _has_reparse_ancestor(current_path):
+                raise _init_invalid()
+            directories.sort()
+            files.sort()
+            for name in directories:
+                child = current_path / name
+                if not is_regular_path(child, directory=True) or _has_reparse_ancestor(child):
+                    raise _init_invalid()
+            for name in files:
+                child = current_path / name
+                if not is_regular_path(child) or _has_reparse_ancestor(child.parent):
+                    raise _init_invalid()
+    except CliError:
+        raise
+    except OSError as error:
+        raise _init_invalid() from error
+
+
+def _validate_init_parent(path: Path) -> None:
+    """Valida o diretório efetivamente usado para uma criação sem atravessar componentes inseguros."""
+
+    parent = path.parent
+    while not _lexists(parent):
+        if parent.parent == parent:
+            raise _init_invalid()
+        parent = parent.parent
+    if (
+        not is_regular_path(parent, directory=True)
+        or _has_reparse_ancestor(parent)
+        or not os.access(parent, os.W_OK)
+    ):
+        raise _init_invalid()
+
+
+def _validate_init_directory(path: Path) -> None:
+    """Valida uma pasta gerenciada existente e todos os arquivos que o `init` deve preservar."""
+
+    if not is_regular_path(path, directory=True) or _has_reparse_ancestor(path):
+        raise _init_invalid()
+    if not os.access(path, os.W_OK):
+        raise _init_invalid()
+    _validate_regular_tree(path)
+
+
+def _validate_init_preflight(root: Path) -> None:
+    """Conclui todas as validações de estado antes de permitir qualquer subpasta nova."""
+
+    for relative_path in INIT_DIRECTORY_PATHS:
+        managed_path = root / relative_path
+        if _lexists(managed_path):
+            _validate_init_directory(managed_path)
+        else:
+            _validate_init_parent(managed_path)
+
+    for artifact_name in _KNOWN_ROOT_ARTIFACTS:
+        artifact = root / artifact_name
+        if _lexists(artifact) and not is_regular_path(artifact):
+            raise _init_invalid()
+
+
+def _create_init_directory(root: Path, relative_path: str) -> bool:
+    """Cria uma pasta gerenciada sem `parents=True` e informa se ela já existia."""
+
+    path = root / relative_path
+    if _lexists(path):
+        _validate_init_directory(path)
+        return False
+
+    _validate_init_parent(path)
+    try:
+        path.mkdir()
+    except FileExistsError:
+        _validate_init_directory(path)
+        return False
+    except OSError as error:
+        raise _init_invalid() from error
+
+    if not is_regular_path(path, directory=True) or _has_reparse_ancestor(path):
+        raise _init_invalid()
+    return True
+
+
+def _cleanup_created_init_directories(
+    root: Path,
+    created_paths: list[str],
+    root_created: bool,
+) -> None:
+    """Remove somente diretórios vazios criados pela operação, sem tocar em estado vigente."""
+
+    for relative_path in reversed(created_paths):
+        path = root / relative_path
+        if not is_regular_path(path, directory=True):
+            continue
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+    if root_created and is_regular_path(root, directory=True):
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+
+
+def _collect_preserved_artifacts(root: Path) -> list[str]:
+    """Lista somente artefatos conhecidos já existentes, mantendo a ordem operacional estável."""
+
+    preserved: list[str] = []
+    for artifact_name in _KNOWN_ROOT_ARTIFACTS:
+        if is_regular_path(root / artifact_name):
+            preserved.append(artifact_name)
+
+    for relative_directory in ("analysis/audio", "analysis/transcription"):
+        directory = root / relative_directory
+        if not is_regular_path(directory, directory=True):
+            continue
+        for current, directories, files in os.walk(directory, topdown=True, followlinks=False):
+            directories.sort()
+            files.sort()
+            current_path = Path(current)
+            for name in files:
+                candidate = current_path / name
+                if candidate.suffix.lower() == ".json" and is_regular_path(candidate):
+                    preserved.append(candidate.relative_to(root).as_posix())
+
+    frames = root / "frames"
+    if is_regular_path(frames, directory=True):
+        for current, directories, files in os.walk(frames, topdown=True, followlinks=False):
+            directories.sort()
+            files.sort()
+            current_path = Path(current)
+            for name in files:
+                if name == "manifest.json" or _KNOWN_FRAME_FILE.fullmatch(name):
+                    candidate = current_path / name
+                    if is_regular_path(candidate):
+                        preserved.append(candidate.relative_to(root).as_posix())
+    return preserved
+
+
+def init_workdir(workdir: str | Path) -> dict[str, object]:
+    """Prepara a estrutura técnica do trabalho sem criar ou substituir estado editorial."""
+
+    root, root_created = _validate_init_root(workdir)
+    if not root_created:
+        _validate_init_preflight(root)
+
+    created_paths: list[str] = []
+    existing_paths: list[str] = []
+    try:
+        if root_created:
+            try:
+                root.mkdir()
+            except OSError as error:
+                raise _init_invalid() from error
+            if not is_regular_path(root, directory=True) or _has_reparse_ancestor(root):
+                raise _init_invalid()
+            _validate_init_preflight(root)
+
+        for relative_path in INIT_DIRECTORY_PATHS:
+            if _create_init_directory(root, relative_path):
+                created_paths.append(relative_path)
+            else:
+                existing_paths.append(relative_path)
+    except Exception:
+        _cleanup_created_init_directories(root, created_paths, root_created)
+        raise
+
+    return {
+        "workdir": str(root),
+        "state": "ready",
+        "created": created_paths,
+        "existing": existing_paths,
+        "preserved_artifacts": _collect_preserved_artifacts(root),
+    }
+
+
 def validate_source_id(source_id: str) -> str:
     """Aceita somente IDs que podem virar nome de arquivo sem traversal."""
 
@@ -103,15 +350,7 @@ def validate_source_id(source_id: str) -> str:
 def validate_workdir(raw_path: str | Path) -> Path:
     """Valida um diretório absoluto, existente, gravável e sem componentes linkados."""
 
-    candidate = Path(raw_path).expanduser()
-    if not candidate.is_absolute():
-        raise _error(
-            "WORKDIR_INVALID",
-            "O diretório de trabalho deve ser um caminho absoluto.",
-            EXIT_CODES["STATE"],
-        )
-
-    path = Path(os.path.normpath(os.fspath(candidate)))
+    path = _normalize_workdir_path(raw_path)
     if (
         not is_regular_path(path, directory=True)
         or _has_reparse_ancestor(path)

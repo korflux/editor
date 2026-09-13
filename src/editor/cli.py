@@ -22,6 +22,7 @@ from .integrity.approval import approve_workdir
 from .plan.validation import validate_plan
 from .render.full import render_full
 from .render.preview import render_preview
+from .workdir import init_workdir
 
 
 class HelpRequested(Exception):
@@ -86,6 +87,19 @@ def build_parser() -> CliArgumentParser:
         dest="json_output",
         default=argparse.SUPPRESS,
         help="retorna o inventário estruturado em JSON pelo stdout",
+    )
+    init_parser = subparsers.add_parser(
+        "init",
+        help="prepara a estrutura técnica do trabalho sem criar estado editorial",
+        description="prepara o diretório de trabalho sem escolher fontes ou criar artefatos",
+    )
+    init_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    init_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
     )
     analyze_parser = subparsers.add_parser(
         "analyze",
@@ -337,6 +351,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             # O inventário é sempre estruturado para que agentes não dependam de
             # texto humano, mesmo quando o operador omite o sinalizador `--json`.
             write_json(success_envelope("capabilities", collect_capabilities()))
+            return 0
+
+        if args.command == "init":
+            result = init_workdir(args.workdir)
+            write_json(success_envelope("init", result))
             return 0
 
         if args.command == "analyze" and args.analyze_command == "audio":

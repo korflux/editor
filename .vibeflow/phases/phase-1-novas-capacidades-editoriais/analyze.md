@@ -1,6 +1,6 @@
 # Analyze: Novas capacidades editoriais e preparação de trabalhos
 # Alvo: phase-1-novas-capacidades-editoriais
-# Status: rascunho
+# Status: aprovado
 # Plan: plan.md (mesma pasta)
 
 ## Fontes

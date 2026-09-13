@@ -303,10 +303,10 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
 
 ### Aceite
 
-- [ ] A1: `editor init --workdir <caminho-absoluto> --json` cria a estrutura
+- [x] A1: `editor init --workdir <caminho-absoluto> --json` cria a estrutura
   técnica em um diretório novo com pai seguro, completa um diretório existente,
   é idempotente e preserva todos os artefatos preexistentes.
-- [ ] A2: `init` rejeita caminho relativo, arquivo no destino, componente
+- [x] A2: `init` rejeita caminho relativo, arquivo no destino, componente
   linkado, reparse point e destino não gravável com envelope seguro, sem deixar
   arquivo editorial ou estado de aprovação parcial.
 - [ ] A3: `plan validate` aceita um plano v2 com movimento, J/L, texto em
@@ -342,7 +342,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
   muda o enquadramento e que a imagem-base continua presente sob as camadas.
 - [ ] C3: A prova de áudio confirma o início antecipado do J, a extensão do L e a
   duração final exata sem ducking ou crossfade implícito.
-- [ ] C4: A execução repetida de `init` não altera hashes nem bytes dos artefatos
+- [x] C4: A execução repetida de `init` não altera hashes nem bytes dos artefatos
   existentes e não cria `plan.json`, `approval.json`, `preview.mp4` ou `full.mp4`.
 - [ ] C5: A full só é liberada com aprovação vigente e fica bloqueada após
   mutação independente do plano, da preview, da fonte de vídeo, áudio ou imagem.
