@@ -1,4 +1,4 @@
-"""Allowlist estrutural do schema v1 do plano linear."""
+"""Allowlist estrutural do schema v2 do plano linear."""
 
 from __future__ import annotations
 
@@ -9,7 +9,15 @@ from ..contracts import CliError, EXIT_CODES
 
 
 ROOT_FIELDS = frozenset(
-    {"schema_version", "profile", "sources", "segments", "overlays", "audio_processing"}
+    {
+        "schema_version",
+        "profile",
+        "sources",
+        "segments",
+        "cuts",
+        "layers",
+        "audio_processing",
+    }
 )
 PROFILE_FIELDS = frozenset({"aspect_ratio"})
 SOURCE_FIELDS = frozenset({"id", "kind", "path"})
@@ -17,8 +25,16 @@ SEGMENT_FIELDS = frozenset({"video", "audio"})
 VIDEO_FIELDS = frozenset({"source_id", "in_s", "out_s", "fit"})
 AUDIO_FIELDS = frozenset({"mode", "tracks"})
 TRACK_FIELDS = frozenset({"source_id", "in_s", "out_s", "gain_db", "loop"})
-OVERLAY_FIELDS = frozenset(
-    {"text", "start_s", "end_s", "position", "font", "size_px", "color", "align", "wrap"}
+CUT_FIELDS = frozenset({"after_segment", "type", "duration_s"})
+LAYER_COMMON_FIELDS = frozenset(
+    {"type", "start_s", "end_s", "x", "y", "width", "height"}
+)
+TEXT_LAYER_FIELDS = LAYER_COMMON_FIELDS | frozenset(
+    {"text", "font", "size_px", "color", "align", "wrap"}
+)
+IMAGE_LAYER_FIELDS = LAYER_COMMON_FIELDS | frozenset({"source_id", "fit"})
+VIDEO_LAYER_FIELDS = LAYER_COMMON_FIELDS | frozenset(
+    {"source_id", "in_s", "out_s", "fit"}
 )
 AUDIO_PROCESSING_FIELDS = frozenset({"normalize_loudness", "target_lufs", "limiter", "ducking"})
 LIMITER_FIELDS = frozenset({"enabled", "ceiling_dbfs"})
@@ -26,10 +42,10 @@ LIMITER_FIELDS = frozenset({"enabled", "ceiling_dbfs"})
 SOURCE_KINDS = frozenset({"video", "audio"})
 FIT_MODES = frozenset({"preserve", "contain", "crop"})
 AUDIO_MODES = frozenset({"keep", "mute", "replace", "mix"})
-OVERLAY_POSITIONS = frozenset(
-    {"top-left", "top-center", "center", "bottom-center", "bottom-right"}
-)
-OVERLAY_ALIGNS = frozenset({"left", "center", "right"})
+LAYER_TYPES = frozenset({"text", "image", "video"})
+LAYER_FIT_MODES = frozenset({"contain", "crop"})
+CUT_TYPES = frozenset({"j", "l"})
+TEXT_ALIGNS = frozenset({"left", "center", "right"})
 
 
 def plan_error(message: str) -> CliError:

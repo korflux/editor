@@ -67,7 +67,7 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T2: Adotar contrato estrutural v2 estrito
 
-- [ ] T2 concluída
+- [x] T2 concluída
 - **Spec:** A3, A7, A10, C6
 - **Decisões:** CONTRACT-01 (substitui o plano vigente por `schema_version: 2`), TEXT-01 (remove posições nomeadas do contrato v2)
 - **O quê:** Substituir a allowlist v1 por `schema_version`, `profile`, `sources`, `segments`, `cuts`, `layers` e `audio_processing`, mantendo `cuts` e `layers` explícitos e rejeitando `overlays`, v1 e campos desconhecidos antes de consultar mídia. Atualizar a versão do pacote e da CLI para o próximo major, `1.0.0`, e migrar o fixture linear e suas expectativas para v2 sem manter fallback. Os artefatos derivados do workflow serão regenerados na T8, junto com o grafo v2, preservando a versão própria de `approval.json`.
@@ -76,7 +76,9 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
   - [ ] Plano v1, `overlays`, posições nomeadas, campos desconhecidos, números não finitos e listas ausentes ou inválidas falham como `PLAN_INVALID` antes do FFprobe quando a falha for estrutural.
   - [ ] `pyproject.toml`, `CLI_VERSION`, testes e fixtures do plano deixam de declarar v1 como contrato vigente, enquanto o schema separado de `approval.json` permanece estável e nenhuma dependência Python nova é adicionada.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_cli_contract tests.test_plan_validation -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_cli_contract tests.test_plan_validation -v`
+- **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_cli_contract tests.test_plan_validation -v` -> `Ran 21 tests ... OK`; `git diff --check` passou
+- **Arquivos:** `pyproject.toml`, `src/editor/contracts.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `tests/test_cli_contract.py`, `tests/test_capabilities.py`, `tests/test_plan_validation.py`, `tests/fixtures/workflow/plan.json`
 - **Deps:** nenhuma
 - **Arquivos:** `pyproject.toml`, `src/editor/contracts.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `tests/test_cli_contract.py`, `tests/test_plan_validation.py`, `tests/fixtures/workflow/plan.json`
 - **Size:** `high, 7/10, quebra de contrato compartilhado com migração do validador, CLI e fixture de workflow`

@@ -1,4 +1,4 @@
-"""Validação estrita do plano linear e cálculo da timeline resultante."""
+"""Validação estrita do plano v2 e cálculo da timeline resultante."""
 
 from __future__ import annotations
 
@@ -18,17 +18,22 @@ from .schema import (
     AUDIO_FIELDS,
     AUDIO_MODES,
     AUDIO_PROCESSING_FIELDS,
+    CUT_FIELDS,
+    CUT_TYPES,
     FIT_MODES,
+    IMAGE_LAYER_FIELDS,
+    LAYER_FIT_MODES,
+    LAYER_TYPES,
     LIMITER_FIELDS,
-    OVERLAY_ALIGNS,
-    OVERLAY_FIELDS,
-    OVERLAY_POSITIONS,
     PROFILE_FIELDS,
     ROOT_FIELDS,
     SEGMENT_FIELDS,
     SOURCE_FIELDS,
     SOURCE_KINDS,
+    TEXT_ALIGNS,
+    TEXT_LAYER_FIELDS,
     TRACK_FIELDS,
+    VIDEO_LAYER_FIELDS,
     VIDEO_FIELDS,
     plan_error,
     reject_unknown_fields,
@@ -39,7 +44,10 @@ from .schema import (
 
 MAX_PLAN_BYTES = 2 * 1024 * 1024
 MAX_SEGMENTS = 1_000
-MAX_OVERLAYS = 1_000
+MAX_LAYERS = 1_000
+# Mantém o símbolo interno consumido pelo inventário até a task de documentação
+# trocar o nome público do limite, sem aceitar `overlays` no plano v2.
+MAX_OVERLAYS = MAX_LAYERS
 MAX_TIMELINE_DURATION_SECONDS = float(media.MAX_SOURCE_DURATION_SECONDS)
 ASPECT_RATIO = 16 / 9
 ASPECT_TOLERANCE = 1e-6
@@ -149,6 +157,206 @@ def _validate_profile(value: Any) -> None:
     reject_unknown_fields(profile, PROFILE_FIELDS, "profile")
     if profile.get("aspect_ratio") != "16:9":
         raise plan_error("O perfil de saída do MVP deve usar aspect_ratio 16:9.")
+
+
+def _validate_source_structure(value: Any) -> None:
+    """Valida a forma das fontes antes de permitir qualquer inspeção de mídia."""
+
+    sources = require_array(value, "sources")
+    if not sources:
+        raise plan_error("O plano deve declarar ao menos uma fonte.")
+    for source_value in sources:
+        source = require_object(source_value, "sources[]")
+        reject_unknown_fields(source, SOURCE_FIELDS, "sources[]")
+        source_id = source.get("id")
+        kind = source.get("kind")
+        raw_path = source.get("path")
+        if not isinstance(source_id, str) or not re.fullmatch(
+            r"^[a-z0-9][a-z0-9_-]{0,63}$", source_id
+        ):
+            raise plan_error("Cada fonte deve ter um ID seguro e único.")
+        if not isinstance(kind, str) or kind not in SOURCE_KINDS:
+            raise plan_error("Cada fonte deve ter um ID único e um tipo suportado.")
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path.strip()
+            or len(raw_path) > 4_096
+            or "\x00" in raw_path
+            or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", raw_path)
+        ):
+            raise plan_error("Toda fonte do plano deve apontar para um arquivo local válido.")
+    ids = [str(source["id"]) for source in sources]
+    if len(ids) != len(set(ids)):
+        raise plan_error("Cada fonte deve ter um ID único e um tipo suportado.")
+def _validate_segment_structure(value: Any) -> None:
+    """Valida objetos e números dos segmentos antes de consultar suas fontes reais."""
+
+    segments = require_array(value, "segments")
+    if not segments:
+        raise plan_error("O plano deve declarar ao menos um segmento.")
+    if len(segments) > MAX_SEGMENTS:
+        raise plan_error("O plano excede o limite de segmentos permitido.")
+    for segment_value in segments:
+        segment = require_object(segment_value, "segments[]")
+        reject_unknown_fields(segment, SEGMENT_FIELDS, "segments[]")
+        video = require_object(segment.get("video"), "segments[].video")
+        reject_unknown_fields(video, VIDEO_FIELDS, "segments[].video")
+        source_id = video.get("source_id")
+        if not isinstance(source_id, str) or not re.fullmatch(
+            r"^[a-z0-9][a-z0-9_-]{0,63}$", source_id
+        ):
+            raise plan_error("Cada segmento deve referenciar uma fonte de vídeo válida.")
+        fit = video.get("fit")
+        if not isinstance(fit, str) or fit not in FIT_MODES:
+            raise plan_error("Cada vídeo deve declarar fit preserve, contain ou crop.")
+        _finite_number(video.get("in_s"), "segments[].video.in_s")
+        _finite_number(video.get("out_s"), "segments[].video.out_s")
+
+        audio = require_object(segment.get("audio"), "segments[].audio")
+        reject_unknown_fields(audio, AUDIO_FIELDS, "segments[].audio")
+        mode = audio.get("mode")
+        if not isinstance(mode, str) or mode not in AUDIO_MODES:
+            raise plan_error("O modo de áudio do segmento não é suportado.")
+        tracks = require_array(audio.get("tracks"), "segments[].audio.tracks")
+        for track_value in tracks:
+            track = require_object(track_value, "segments[].audio.tracks[]")
+            reject_unknown_fields(track, TRACK_FIELDS, "segments[].audio.tracks[]")
+            track_source_id = track.get("source_id")
+            if not isinstance(track_source_id, str) or not re.fullmatch(
+                r"^[a-z0-9][a-z0-9_-]{0,63}$", track_source_id
+            ):
+                raise plan_error("Cada faixa deve referenciar uma fonte com áudio compatível.")
+            _finite_number(track.get("in_s"), "segments[].audio.tracks[].in_s")
+            _finite_number(track.get("out_s"), "segments[].audio.tracks[].out_s")
+            _finite_number(track.get("gain_db"), "segments[].audio.tracks[].gain_db")
+            if "loop" in track and not isinstance(track["loop"], bool):
+                raise plan_error("O campo loop da faixa deve ser booleano.")
+def _validate_cuts_structure(value: Any) -> list[dict[str, Any]]:
+    """Valida a forma explícita dos cortes sem ainda calcular sua sobreposição temporal."""
+
+    cuts = require_array(value, "cuts")
+    for cut_value in cuts:
+        cut = require_object(cut_value, "cuts[]")
+        reject_unknown_fields(cut, CUT_FIELDS, "cuts[]")
+        after_segment = cut.get("after_segment")
+        if (
+            isinstance(after_segment, bool)
+            or not isinstance(after_segment, int)
+            or after_segment < 1
+        ):
+            raise plan_error("O campo cuts[].after_segment deve ser um índice inteiro positivo.")
+        cut_type = cut.get("type")
+        if not isinstance(cut_type, str) or cut_type not in CUT_TYPES:
+            raise plan_error("O tipo do corte deve ser j ou l.")
+        duration = _finite_number(cut.get("duration_s"), "cuts[].duration_s")
+        if not 0 < duration <= 30:
+            raise plan_error("A duração do corte deve estar entre zero e trinta segundos.")
+    return cuts
+
+
+def _validate_layer_geometry(layer: dict[str, Any], location: str) -> None:
+    """Valida intervalo e caixa normalizada comuns a todas as camadas visuais."""
+
+    start = _finite_number(layer.get("start_s"), f"{location}.start_s")
+    end = _finite_number(layer.get("end_s"), f"{location}.end_s")
+    if start < 0 or end <= start:
+        raise plan_error("O intervalo da camada deve ser finito e crescente.")
+    x = _finite_number(layer.get("x"), f"{location}.x")
+    y = _finite_number(layer.get("y"), f"{location}.y")
+    width = _finite_number(layer.get("width"), f"{location}.width")
+    height = _finite_number(layer.get("height"), f"{location}.height")
+    if (
+        x < 0
+        or y < 0
+        or width <= 0
+        or height <= 0
+        or x > 1
+        or y > 1
+        or width > 1
+        or height > 1
+        or x + width > 1 + ASPECT_TOLERANCE
+        or y + height > 1 + ASPECT_TOLERANCE
+    ):
+        raise plan_error("A caixa da camada deve permanecer dentro do canvas normalizado.")
+
+
+def _validate_layers_structure(value: Any) -> list[dict[str, Any]]:
+    """Valida camadas v2, inclusive texto em coordenadas livres, sem consultar mídia."""
+
+    layers = require_array(value, "layers")
+    if len(layers) > MAX_LAYERS:
+        raise plan_error("O plano excede o limite de camadas permitido.")
+    fields_by_type = {
+        "text": TEXT_LAYER_FIELDS,
+        "image": IMAGE_LAYER_FIELDS,
+        "video": VIDEO_LAYER_FIELDS,
+    }
+    for layer_value in layers:
+        layer = require_object(layer_value, "layers[]")
+        layer_type = layer.get("type")
+        if not isinstance(layer_type, str) or layer_type not in LAYER_TYPES:
+            raise plan_error("O tipo da camada deve ser text, image ou video.")
+        location = "layers[]"
+        reject_unknown_fields(layer, fields_by_type[layer_type], location)
+        _validate_layer_geometry(layer, location)
+        if layer_type == "text":
+            text = layer.get("text")
+            if not isinstance(text, str) or not text.strip() or len(text) > 4_096:
+                raise plan_error("O texto da camada deve ser uma string não vazia.")
+            _reject_nul(text, "layers[].text")
+            font = layer.get("font")
+            if (
+                not isinstance(font, str)
+                or not font.strip()
+                or len(font) > 128
+                or "/" in font
+                or "\\" in font
+            ):
+                raise plan_error("A fonte da camada deve ser um nome instalado válido.")
+            _reject_nul(font, "layers[].font")
+            _positive_integer(layer.get("size_px"), "layers[].size_px", 512)
+            color = layer.get("color")
+            if not isinstance(color, str) or not HEX_COLOR_PATTERN.fullmatch(color):
+                raise plan_error("A cor da camada deve estar no formato hexadecimal #RRGGBB.")
+            if (
+                not isinstance(layer.get("align"), str)
+                or layer.get("align") not in TEXT_ALIGNS
+            ):
+                raise plan_error("O alinhamento da camada de texto é inválido.")
+            if not isinstance(layer.get("wrap"), bool):
+                raise plan_error("A opção wrap da camada de texto deve ser booleana.")
+        elif layer_type == "image":
+            source_id = layer.get("source_id")
+            if not isinstance(source_id, str) or not re.fullmatch(
+                r"^[a-z0-9][a-z0-9_-]{0,63}$", source_id
+            ):
+                raise plan_error("A camada de imagem deve referenciar uma fonte válida.")
+            if layer.get("fit") not in LAYER_FIT_MODES:
+                raise plan_error("A camada de imagem deve declarar fit contain ou crop.")
+        else:
+            source_id = layer.get("source_id")
+            if not isinstance(source_id, str) or not re.fullmatch(
+                r"^[a-z0-9][a-z0-9_-]{0,63}$", source_id
+            ):
+                raise plan_error("A camada de vídeo deve referenciar uma fonte válida.")
+            _finite_number(layer.get("in_s"), "layers[].in_s")
+            _finite_number(layer.get("out_s"), "layers[].out_s")
+            if layer.get("fit") not in LAYER_FIT_MODES:
+                raise plan_error("A camada de vídeo deve declarar fit contain ou crop.")
+    return layers
+
+
+def _validate_plan_structure(
+    document: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Fecha a fronteira estrutural v2 antes de qualquer chamada ao FFprobe."""
+
+    _validate_source_structure(document.get("sources"))
+    _validate_segment_structure(document.get("segments"))
+    cuts = _validate_cuts_structure(document.get("cuts"))
+    layers = _validate_layers_structure(document.get("layers"))
+    audio_processing = _validate_audio_processing(document.get("audio_processing"))
+    return cuts, layers, audio_processing
 
 
 def _inspect_sources(root: Path, value: Any) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
@@ -345,43 +553,14 @@ def _validate_segments(
     return timeline_segments, _rounded(timeline_end)
 
 
-def _validate_overlays(value: Any, timeline_duration: float) -> int:
-    """Valida letterings estáticos, posições nomeadas e seus intervalos na timeline."""
+def _validate_layer_intervals(
+    layers: list[dict[str, Any]], timeline_duration: float
+) -> None:
+    """Garante que cada camada visual esteja contida na timeline já calculada."""
 
-    overlays = require_array(value, "overlays")
-    if len(overlays) > MAX_OVERLAYS:
-        raise plan_error("O plano excede o limite de overlays permitido.")
-    for overlay_value in overlays:
-        overlay = require_object(overlay_value, "overlays[]")
-        reject_unknown_fields(overlay, OVERLAY_FIELDS, "overlays[]")
-        text = overlay.get("text")
-        if not isinstance(text, str) or not text.strip() or len(text) > 4_096:
-            raise plan_error("O texto do overlay deve ser uma string não vazia.")
-        _reject_nul(text, "overlays[].text")
-        start = _finite_number(overlay.get("start_s"), "overlays[].start_s")
-        end = _finite_number(overlay.get("end_s"), "overlays[].end_s")
-        if start < 0 or end <= start or end > timeline_duration + ASPECT_TOLERANCE:
-            raise plan_error("O intervalo do overlay está fora da timeline.")
-        if (
-            not isinstance(overlay.get("position"), str)
-            or overlay.get("position") not in OVERLAY_POSITIONS
-        ):
-            raise plan_error("A posição do overlay não é suportada.")
-        font = overlay.get("font")
-        if not isinstance(font, str) or not font.strip() or len(font) > 128 or "/" in font or "\\" in font:
-            raise plan_error("A fonte do overlay deve ser um nome instalado válido.")
-        _reject_nul(font, "overlays[].font")
-        _positive_integer(overlay.get("size_px"), "overlays[].size_px", 512)
-        color = overlay.get("color")
-        if not isinstance(color, str) or not HEX_COLOR_PATTERN.fullmatch(color):
-            raise plan_error("A cor do overlay deve estar no formato hexadecimal #RRGGBB.")
-        if (
-            not isinstance(overlay.get("align"), str)
-            or overlay.get("align") not in OVERLAY_ALIGNS
-            or not isinstance(overlay.get("wrap"), bool)
-        ):
-            raise plan_error("O alinhamento e a quebra de linha do overlay são inválidos.")
-    return len(overlays)
+    for layer in layers:
+        if float(layer["end_s"]) > timeline_duration + ASPECT_TOLERANCE:
+            raise plan_error("O intervalo da camada está fora da timeline.")
 
 
 def _validate_audio_processing(value: Any) -> dict[str, Any]:
@@ -421,22 +600,23 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
 
     reject_unknown_fields(document, ROOT_FIELDS, "raiz")
     schema_version = document.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != 1:
-        raise plan_error("O plano deve usar schema_version 1.")
+    if isinstance(schema_version, bool) or schema_version != 2:
+        raise plan_error("O plano deve usar schema_version 2.")
     _validate_profile(document.get("profile"))
+    cut_definitions, layer_definitions, audio_processing = _validate_plan_structure(document)
     source_map, source_records = _inspect_sources(root, document.get("sources"))
     timeline_segments, timeline_duration = _validate_segments(document.get("segments"), source_map)
-    overlay_count = _validate_overlays(document.get("overlays", []), timeline_duration)
-    audio_processing = _validate_audio_processing(document.get("audio_processing"))
+    _validate_layer_intervals(layer_definitions, timeline_duration)
     return {
         "plan_path": str(plan_path),
         "relative_plan_path": "plan.json",
-        "schema_version": 1,
+        "schema_version": 2,
         "plan_sha256": canonical_sha256(document),
         "canonical_json": canonical_json(document),
         "source_count": len(source_records),
         "segment_count": len(timeline_segments),
-        "overlay_count": overlay_count,
+        "cut_count": len(cut_definitions),
+        "layer_count": len(layer_definitions),
         "sources": source_records,
         "audio_processing": audio_processing,
         "timeline": {

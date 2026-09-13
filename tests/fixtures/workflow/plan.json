@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "profile": {
     "aspect_ratio": "16:9"
   },
@@ -86,12 +86,17 @@
       }
     }
   ],
-  "overlays": [
+  "cuts": [],
+  "layers": [
     {
-      "text": "Paraty",
+      "type": "text",
       "start_s": 0.5,
       "end_s": 1.25,
-      "position": "bottom-right",
+      "x": 0.72,
+      "y": 0.82,
+      "width": 0.23,
+      "height": 0.1,
+      "text": "Paraty",
       "font": "Arial",
       "size_px": 32,
       "color": "#FFFFFF",

@@ -67,7 +67,7 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(payload["ok"], True)
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["command"], "version")
-        self.assertIn("version", payload["data"])
+        self.assertEqual(payload["data"]["version"], "1.0.0")
 
     def test_json_error_envelope_has_no_traceback(self) -> None:
         """Confirma que chamada inválida retorna somente erro JSON seguro no stdout."""

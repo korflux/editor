@@ -118,7 +118,7 @@ class PlanValidationTests(unittest.TestCase):
             raise unittest.SkipTest("fixture do plano não está disponível")
 
     def test_real_cli_validates_linear_travel_workflow(self) -> None:
-        """Confirma fontes reais, timeline concatenada, b-roll, mixagem e lettering."""
+        """Confirma fontes reais, timeline concatenada, b-roll, mixagem e camada de texto."""
 
         result = run_module(
             "plan",
@@ -135,7 +135,8 @@ class PlanValidationTests(unittest.TestCase):
         self.assertEqual(payload["command"], "plan validate")
         self.assertEqual(data["source_count"], 3)
         self.assertEqual(data["segment_count"], 3)
-        self.assertEqual(data["overlay_count"], 1)
+        self.assertEqual(data["cut_count"], 0)
+        self.assertEqual(data["layer_count"], 1)
         self.assertEqual(data["timeline"]["duration_seconds"], 2.0)
         self.assertEqual(
             [segment["video_source_id"] for segment in data["timeline"]["segments"]],
@@ -147,7 +148,7 @@ class PlanValidationTests(unittest.TestCase):
             ["main", "music-01"],
         )
         self.assertEqual(len(data["plan_sha256"]), 64)
-        self.assertEqual(json.loads(data["canonical_json"])["schema_version"], 1)
+        self.assertEqual(json.loads(data["canonical_json"])["schema_version"], 2)
 
     def test_canonical_hash_ignores_json_formatting(self) -> None:
         """Confirma que espaços e ordem textual não alteram o hash do plano semântico."""
@@ -165,6 +166,78 @@ class PlanValidationTests(unittest.TestCase):
 
         document = load_workflow_plan()
         document["unexpected"] = True
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            with patch("editor.plan.validation.media.inspect_source") as inspect:
+                with self.assertRaises(CliError) as raised:
+                    validate_plan(workdir)
+
+            self.assertEqual(raised.exception.code, "PLAN_INVALID")
+            inspect.assert_not_called()
+
+    def test_v1_plan_is_rejected_before_media_probe(self) -> None:
+        """Confirma que o contrato v1 não alcança a inspeção de fontes após a migração."""
+
+        document = load_workflow_plan()
+        document["schema_version"] = 1
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            with patch("editor.plan.validation.media.inspect_source") as inspect:
+                with self.assertRaises(CliError) as raised:
+                    validate_plan(workdir)
+
+            self.assertEqual(raised.exception.code, "PLAN_INVALID")
+            inspect.assert_not_called()
+
+    def test_legacy_overlays_are_rejected_before_media_probe(self) -> None:
+        """Confirma que `overlays` não permanece como uma segunda interpretação do plano."""
+
+        document = load_workflow_plan()
+        document["overlays"] = []
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            with patch("editor.plan.validation.media.inspect_source") as inspect:
+                with self.assertRaises(CliError) as raised:
+                    validate_plan(workdir)
+
+            self.assertEqual(raised.exception.code, "PLAN_INVALID")
+            inspect.assert_not_called()
+
+    def test_v2_lists_are_required_and_structural_failures_precede_media_probe(self) -> None:
+        """Confirma que `cuts` e `layers` existem como listas antes de consultar FFprobe."""
+
+        for field in ("cuts", "layers"):
+            with self.subTest(field=field):
+                document = load_workflow_plan()
+                document.pop(field)
+                with workspace_tempdir() as workdir:
+                    write_plan(workdir, document)
+                    with patch("editor.plan.validation.media.inspect_source") as inspect:
+                        with self.assertRaises(CliError) as raised:
+                            validate_plan(workdir)
+
+                    self.assertEqual(raised.exception.code, "PLAN_INVALID")
+                    inspect.assert_not_called()
+
+    def test_named_text_position_is_rejected_before_media_probe(self) -> None:
+        """Confirma que coordenadas nomeadas não atravessam a fronteira estrutural v2."""
+
+        document = load_workflow_plan()
+        document["layers"][0]["position"] = "bottom-right"
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            with patch("editor.plan.validation.media.inspect_source") as inspect:
+                with self.assertRaises(CliError) as raised:
+                    validate_plan(workdir)
+
+            self.assertEqual(raised.exception.code, "PLAN_INVALID")
+            inspect.assert_not_called()
+
+    def test_non_finite_layer_number_is_rejected_before_media_probe(self) -> None:
+        """Confirma que NaN é rejeitado pelo parser antes de qualquer sondagem de mídia."""
+
+        document = load_workflow_plan()
+        document["layers"][0]["x"] = float("nan")
         with workspace_tempdir() as workdir:
             write_plan(workdir, document)
             with patch("editor.plan.validation.media.inspect_source") as inspect:
@@ -213,7 +286,7 @@ class PlanValidationTests(unittest.TestCase):
 
         with workspace_tempdir() as workdir:
             (workdir / "plan.json").write_text(
-                '{"schema_version":1,"schema_version":1}',
+                '{"schema_version":2,"schema_version":2}',
                 encoding="utf-8",
             )
             with patch("editor.plan.validation.media.inspect_source") as inspect:
@@ -247,7 +320,7 @@ class PlanValidationTests(unittest.TestCase):
         """Confirma que a timeline total não ultrapassa o limite operacional do MVP."""
 
         document = {
-            "schema_version": 1,
+            "schema_version": 2,
             "profile": {"aspect_ratio": "16:9"},
             "sources": [
                 {
@@ -276,7 +349,8 @@ class PlanValidationTests(unittest.TestCase):
                     "audio": {"mode": "mute", "tracks": []},
                 },
             ],
-            "overlays": [],
+            "cuts": [],
+            "layers": [],
         }
         with workspace_tempdir() as workdir:
             write_plan(workdir, document)
@@ -306,11 +380,11 @@ class PlanValidationTests(unittest.TestCase):
 
             self.assertEqual(raised.exception.code, "PLAN_INVALID")
 
-    def test_invalid_overlay_interval_is_rejected(self) -> None:
-        """Confirma que um lettering não pode ultrapassar a duração calculada da timeline."""
+    def test_invalid_layer_interval_is_rejected(self) -> None:
+        """Confirma que uma camada não pode ultrapassar a duração calculada da timeline."""
 
         document = load_workflow_plan()
-        document["overlays"][0]["end_s"] = 2.01
+        document["layers"][0]["end_s"] = 2.01
         with workspace_tempdir() as workdir:
             write_plan(workdir, document)
             with patch(
@@ -322,10 +396,10 @@ class PlanValidationTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "PLAN_INVALID")
 
-    def test_nul_in_overlay_returns_plan_invalid_envelope(self) -> None:
+    def test_nul_in_layer_returns_plan_invalid_envelope(self) -> None:
         """Confirma que controle NUL falha na validação antes de alcançar o filtro FFmpeg."""
         document = load_workflow_plan()
-        document["overlays"][0]["text"] = "texto\x00inválido"
+        document["layers"][0]["text"] = "texto\x00inválido"
         with workspace_tempdir() as workdir:
             write_plan(workdir, document)
             result = run_module(

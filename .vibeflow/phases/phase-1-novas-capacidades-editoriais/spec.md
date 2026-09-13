@@ -322,7 +322,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
 - [ ] A6: Camadas de texto, imagem e vídeo respeitam intervalo, caixa, fit,
   transparência, ordem do array e ausência de áudio implícito. Camadas não
   substituem o vídeo-base.
-- [ ] A7: O texto v2 usa `x`, `y`, `width` e `height` normalizados, e posições
+- [x] A7: O texto v2 usa `x`, `y`, `width` e `height` normalizados, e posições
   nomeadas ou coordenadas inválidas são rejeitadas.
 - [ ] A8: Preview e full usam o mesmo grafo v2, publicam somente arquivos MP4
   completos, mantêm os limites de resolução e preservam preview/full vigentes em

@@ -58,7 +58,7 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(payload["ok"], True)
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["command"], "capabilities")
-        self.assertEqual(data["cli_version"], "0.1.0")
+        self.assertEqual(data["cli_version"], "1.0.0")
         for key in (
             "system",
             "dependencies",
