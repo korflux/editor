@@ -1,7 +1,7 @@
 # Implement: Novas capacidades editoriais e preparação de trabalhos
 # Alvo: phase-1-novas-capacidades-editoriais
 # Status: aprovado
-# Route: high · modo A · T9
+# Route: high · modo A · T10
 
 ## Reconhecimento
 
@@ -413,4 +413,67 @@
 
 ## Handoff
 
-Próxima T* elegível: T10. A fila da phase fica bloqueada até a prova E2E e os gates finais.
+T10 foi executada nesta mesma fatia; a fila da phase aguardava apenas o registro
+da prova E2E e dos gates finais.
+
+## T10: Provar jornada E2E da phase e gates finais
+
+### Reconhecer
+
+- A fila tinha somente T10 elegível após T9.
+- O E2E existente em `tests/e2e/test_mvp_flow.py` ainda usava schema v1 e não
+  exercitava `init`, movimento, J/L ou as três famílias de camada em conjunto.
+- As provas unitárias já cobriam cada capacidade isoladamente; a lacuna era a
+  jornada de processo completo e a invalidação do estado aprovado por cada
+  família de mutação.
+
+### Codar
+
+- Migrado `tests/fixtures/e2e/plan.json` para schema v2, com dois cortes J/L,
+  movimento, texto, imagem raster e vídeo em camada, mantendo áudio explícito.
+- Migrado o E2E do MVP para preparar o trabalho com `init`, repetir a operação,
+  validar os contadores v2 e continuar cobrindo análise, preview, aprovação e full.
+- Adicionado `tests/e2e/test_phase_1_flow.py`, que gera somente dentro do trabalho
+  temporário fontes visuais curtas e determinísticas para provar movimento e
+  composição de vídeo, sem adicionar dependências ou binários ao repositório.
+- A jornada compara referências sem camadas, sem movimento e sem cortes para
+  verificar pixels do vídeo-base, movimento, z-order/intervalos e antecipação ou
+  extensão de áudio. Depois muta, em subcasos independentes, plano, preview,
+  vídeo, áudio e imagem, exigindo `APPROVAL_STALE` sem substituir full ou approval.
+
+### Testar
+
+- `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_1_flow -v`
+  -> `Ran 1 test ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v`
+  -> `Ran 1 test ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
+  -> `Ran 99 tests in 204.932s ... OK`.
+- `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
+  -> `No known vulnerabilities found`.
+- `gitleaks detect --source . --no-banner`
+  -> `no leaks found`.
+- `git diff --check` passou.
+
+### Simplificar e re-testar
+
+- A prova reutiliza os helpers de processo, envelope, hashes e amostragem já
+  existentes, concentrando a nova lógica somente na jornada da Phase 1.
+- As fontes adicionais são criadas no diretório temporário do teste, evitando
+  fixtures binárias duplicadas e mantendo o repositório pequeno.
+- A suíte da fatia e a suíte completa foram executadas novamente após a
+  simplificação; não houve alteração em código de produção.
+
+### Registro
+
+- **Plan:** T10 marcada como concluída.
+- **Spec comprovada nesta fatia:** A10, C1 e C6; C2, C3, C4 e C5 foram
+  reexercitados na jornada E2E junto com as capacidades já marcadas.
+- **Arquivos:** `tests/e2e/test_phase_1_flow.py`, `tests/e2e/test_mvp_flow.py`,
+  `tests/fixtures/e2e/plan.json` e `tests/fixtures/phase-1/images/` como
+  fixture consumida.
+- **Decisões:** SCOPE-01, INIT-01 e STATE-01 implementadas na prova ponta a ponta.
+
+## Handoff
+
+Fila da phase concluída. Próximo passo: `vibe-review`.

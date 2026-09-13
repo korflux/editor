@@ -1,4 +1,4 @@
-"""Prova E2E da jornada local completa do MVP, do inventário à full aprovada."""
+"""Prova E2E da jornada local completa do MVP sobre o contrato v2."""
 
 from __future__ import annotations
 
@@ -22,8 +22,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = PROJECT_ROOT / "tests" / "fixtures" / "e2e"
 FIXTURE_SOURCES = FIXTURE_ROOT / "sources"
 SPEECH_FIXTURE = FIXTURE_ROOT / "speech.mp3.b64"
+PHASE_IMAGE_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "phase-1" / "images" / "alpha.png"
 MODEL_ROOT = PROJECT_ROOT / "models"
 REQUIRED_OPERATIONS = (
+    "init",
     "capabilities",
     "analyze_audio",
     "analyze_transcribe",
@@ -64,10 +66,10 @@ def run_cli(
 
 
 @contextmanager
-def workspace_tempdir() -> Iterator[Path]:
-    """Cria um trabalho E2E dentro do workspace e remove seu estado publicado ao final."""
+def workspace_tempdir(prefix: str = "mvp-e2e") -> Iterator[Path]:
+    """Cria um trabalho E2E isolado, com prefixo explícito para cada jornada."""
 
-    temporary_path = PROJECT_ROOT / f"tmp-mvp-e2e-{uuid4().hex}"
+    temporary_path = PROJECT_ROOT / f"tmp-{prefix}-{uuid4().hex}"
     temporary_path.mkdir()
     try:
         yield temporary_path
@@ -76,10 +78,11 @@ def workspace_tempdir() -> Iterator[Path]:
 
 
 def copy_fixture(workdir: Path) -> None:
-    """Copia plano e fontes curtas para que a jornada não altere fixtures versionadas."""
+    """Copia plano v2, fontes audiovisuais e imagem raster sem alterar fixtures versionadas."""
 
     shutil.copy2(FIXTURE_ROOT / "plan.json", workdir / "plan.json")
     shutil.copytree(FIXTURE_SOURCES, workdir / "sources")
+    shutil.copy2(PHASE_IMAGE_FIXTURE, workdir / "sources" / "alpha.png")
     # A fala fica em Base64 para manter a fixture binária pequena e transportável no repositório.
     speech_path = workdir / "sources" / "speech.mp3"
     speech_path.write_bytes(
@@ -147,6 +150,7 @@ class MvpFlowTests(unittest.TestCase):
             not (FIXTURE_ROOT / "plan.json").is_file()
             or not FIXTURE_SOURCES.is_dir()
             or not SPEECH_FIXTURE.is_file()
+            or not PHASE_IMAGE_FIXTURE.is_file()
         ):
             raise AssertionError("fixture E2E do MVP não está disponível")
         if any(dependencies.resolve_executable(name) is None for name in ("ffmpeg", "ffprobe")):
@@ -161,8 +165,23 @@ class MvpFlowTests(unittest.TestCase):
 
         fixture_hashes = source_hashes(FIXTURE_SOURCES)
         with workspace_tempdir() as workdir:
-            copy_fixture(workdir)
             workdir_argument = str(workdir.resolve())
+            initialized = assert_json_success(
+                self,
+                run_cli("init", "--workdir", workdir_argument, "--json"),
+                "init",
+            )
+            self.assertEqual(initialized["data"]["state"], "ready")
+            copy_fixture(workdir)
+            repeated_init = assert_json_success(
+                self,
+                run_cli("init", "--workdir", workdir_argument, "--json"),
+                "init",
+            )
+            self.assertEqual(repeated_init["data"]["created"], [])
+            self.assertFalse((workdir / "approval.json").exists())
+            self.assertFalse((workdir / "preview.mp4").exists())
+            self.assertFalse((workdir / "full.mp4").exists())
             working_sources = workdir / "sources"
             initial_working_hashes = source_hashes(working_sources)
 
@@ -278,7 +297,11 @@ class MvpFlowTests(unittest.TestCase):
             self.assertEqual(manifest["selection"]["mode"], "timestamps")
             self.assertEqual(len(manifest["frames"]), 2)
             self.assertEqual(plan["data"]["timeline"]["duration_seconds"], 2.0)
+            self.assertEqual(plan["data"]["cut_count"], 2)
+            self.assertEqual(plan["data"]["layer_count"], 3)
             self.assertEqual(preview["data"]["timeline_duration_seconds"], 2.0)
+            self.assertEqual(preview["data"]["cut_count"], 2)
+            self.assertEqual(preview["data"]["layer_count"], 3)
 
             approval_document = json.loads(
                 (workdir / "approval.json").read_text(encoding="utf-8")

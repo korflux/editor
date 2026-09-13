@@ -215,22 +215,24 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T10: Provar jornada E2E da phase e gates finais
 
-- [ ] T10 concluída
+- [x] T10 concluída
 - **Spec:** A1 a A10, C1 a C6
 - **Decisões:** SCOPE-01 (prova as cinco capacidades combinadas), INIT-01 (inicia a jornada sem estado editorial), STATE-01 (repete após mutações e exige aprovação vigente)
 - **O quê:** Criar fixtures curtas locais e uma jornada E2E que execute `init`, escreva um plano v2 combinado com movimento, J/L, texto, imagem e vídeo em camada, valide, gere preview, aprove e gere full. Migrar a prova E2E do MVP para o contrato v2 e cobrir mutações independentes de plano, preview e todas as famílias de fonte.
 - **Aceite:**
-  - [ ] O E2E executa a jornada completa sem `SkipTest`, verifica artefatos, frames em timestamps distintos, áudio antecipado/prolongado, duração final e preservação do vídeo-base sob as camadas.
-  - [ ] Repetir `init` não cria artefatos editoriais nem altera hashes ou bytes preexistentes; mutar plano, preview, vídeo, áudio ou imagem bloqueia a full e preserva o estado aprovado.
-  - [ ] A suíte completa, `pip-audit`, gitleaks e `git diff --check` passam sem segredo, dependência nova ou whitespace inválido.
+  - [x] O E2E executa a jornada completa sem `SkipTest`, verifica artefatos, frames em timestamps distintos, áudio antecipado/prolongado, duração final e preservação do vídeo-base sob as camadas.
+  - [x] Repetir `init` não cria artefatos editoriais nem altera hashes ou bytes preexistentes; mutar plano, preview, vídeo, áudio ou imagem bloqueia a full e preserva o estado aprovado.
+  - [x] A suíte completa, `pip-audit`, gitleaks e `git diff --check` passam sem segredo, dependência nova ou whitespace inválido.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_1_flow -v`
-  - [ ] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
-  - [ ] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
-  - [ ] `gitleaks detect --source . --no-banner`
-  - [ ] `git diff --check`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_1_flow -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
+  - [x] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
+  - [x] `gitleaks detect --source . --no-banner`
+  - [x] `git diff --check`
+- **Prova:** `tests.e2e.test_phase_1_flow` -> `Ran 1 test ... OK`; `tests.e2e.test_mvp_flow` -> `Ran 1 test ... OK`; suíte -> `Ran 99 tests in 204.932s ... OK`; `pip-audit` -> `No known vulnerabilities found`; gitleaks -> `no leaks found`; `git diff --check` passou.
 - **Deps:** T8, T9
-- **Arquivos:** `tests/e2e/test_phase_1_flow.py`, `tests/e2e/test_mvp_flow.py`, `tests/fixtures/phase-1/`, `tests/fixtures/e2e/plan.json`, `tests/test_init.py`
+- **Arquivos:** `tests/e2e/test_phase_1_flow.py`, `tests/e2e/test_mvp_flow.py`, `tests/fixtures/phase-1/images/`, `tests/fixtures/e2e/plan.json`
 - **Size:** `high, 8/10, jornada ponta a ponta com mídia real, estado aprovado e gates de segurança`
 - **Risk:** `high, falha de cobertura pode deixar uma regressão de composição ou integridade passar para a revisão`
 

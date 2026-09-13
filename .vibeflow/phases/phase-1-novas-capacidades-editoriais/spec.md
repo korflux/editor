@@ -330,12 +330,12 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
 - [x] A9: `approve` e `render full` continuam vinculados aos hashes do plano v2,
   preview e fontes. Alterar uma camada, um corte, uma imagem ou qualquer fonte
   retorna `APPROVAL_STALE` sem renderizar nem substituir a full.
-- [ ] A10: `capabilities --json`, a documentação da `vibe-editor` e os fixtures
+- [x] A10: `capabilities --json`, a documentação da `vibe-editor` e os fixtures
   internos descrevem o v2 e nenhuma dependência nova é adicionada.
 
 ### Critérios de sucesso
 
-- [ ] C1: O E2E da phase executa `init` e percorre validação, preview, aprovação e
+- [x] C1: O E2E da phase executa `init` e percorre validação, preview, aprovação e
   full com um único plano que combina movimento, J/L, camada de imagem ou vídeo,
   lettering por coordenadas e o áudio explícito do MVP.
 - [x] C2: A prova de frames confirma em timestamps distintos que o movimento
@@ -346,7 +346,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
   existentes e não cria `plan.json`, `approval.json`, `preview.mp4` ou `full.mp4`.
 - [x] C5: A full só é liberada com aprovação vigente e fica bloqueada após
   mutação independente do plano, da preview, da fonte de vídeo, áudio ou imagem.
-- [ ] C6: A suíte completa, os gates de dependência e segredo e a verificação de
+- [x] C6: A suíte completa, os gates de dependência e segredo e a verificação de
   whitespace passam sem `SkipTest` por ausência de pré-requisito local.
 
 ## Implementação
