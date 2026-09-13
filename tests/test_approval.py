@@ -22,6 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = PROJECT_ROOT / "tests" / "fixtures" / "workflow"
 WORKFLOW_PLAN = WORKFLOW_DIR / "plan.json"
 WORKFLOW_SOURCES = WORKFLOW_DIR / "sources"
+IMAGE_FIXTURES = PROJECT_ROOT / "tests" / "fixtures" / "phase-1" / "images"
 
 
 def run_module(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -54,6 +55,49 @@ def copy_workflow(workdir: Path) -> None:
 
     shutil.copy2(WORKFLOW_PLAN, workdir / "plan.json")
     shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+
+
+def configure_layered_workflow(workdir: Path) -> None:
+    """Adiciona fontes distintas de imagem e vídeo para provar o vínculo das camadas."""
+
+    shutil.copy2(IMAGE_FIXTURES / "alpha.png", workdir / "sources" / "layer-image.png")
+    shutil.copy2(WORKFLOW_SOURCES / "broll.mp4", workdir / "sources" / "layer-video.mp4")
+    document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+    document["sources"].extend(
+        [
+            {"id": "layer-image", "kind": "image", "path": "sources/layer-image.png"},
+            {"id": "layer-video", "kind": "video", "path": "sources/layer-video.mp4"},
+        ]
+    )
+    document["layers"].extend(
+        [
+            {
+                "type": "image",
+                "start_s": 0.25,
+                "end_s": 1.0,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.25,
+                "height": 0.25,
+                "source_id": "layer-image",
+                "fit": "contain",
+            },
+            {
+                "type": "video",
+                "start_s": 1.0,
+                "end_s": 1.75,
+                "x": 0.5,
+                "y": 0.25,
+                "width": 0.4,
+                "height": 0.5,
+                "source_id": "layer-video",
+                "in_s": 0.25,
+                "out_s": 1.0,
+                "fit": "crop",
+            },
+        ]
+    )
+    (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
 
 
 def render_preview(workdir: Path) -> None:
@@ -133,6 +177,48 @@ class ApprovalTests(unittest.TestCase):
                 0,
             )
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_real_cli_includes_image_and_video_layer_sources_in_approval(self) -> None:
+        """Confirma que aprovação e preview usam todas as fontes declaradas por camadas."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            configure_layered_workflow(workdir)
+            preview = run_module(
+                "render",
+                "preview",
+                "--workdir",
+                str(workdir.resolve()),
+                "--json",
+            )
+            preview_payload = json.loads(preview.stdout)
+            self.assertEqual(preview.returncode, 0, preview.stderr)
+            self.assertEqual(preview_payload["data"]["cut_count"], 0)
+            self.assertEqual(preview_payload["data"]["layer_count"], 3)
+
+            result = run_module(
+                "approve",
+                "--workdir",
+                str(workdir.resolve()),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            approval = json.loads((workdir / "approval.json").read_text(encoding="utf-8"))
+            plan = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(
+                [source["source_id"] for source in approval["sources"]],
+                [source["id"] for source in plan["sources"]],
+            )
+            self.assertEqual(
+                [source["sha256"] for source in approval["sources"]],
+                [
+                    hashlib.sha256((workdir / source["path"]).read_bytes()).hexdigest()
+                    for source in plan["sources"]
+                ],
+            )
 
     def test_missing_preview_preserves_existing_approval(self) -> None:
         """Confirma que preview ausente não cria estado novo nem substitui aprovação vigente."""

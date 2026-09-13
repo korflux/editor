@@ -1,7 +1,7 @@
 # Implement: Novas capacidades editoriais e preparação de trabalhos
 # Alvo: phase-1-novas-capacidades-editoriais
 # Status: aprovado
-# Route: high · modo A · T6
+# Route: high · modo A · T8
 
 ## Reconhecimento
 
@@ -308,6 +308,52 @@
 - `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`.
 - `.vibeflow/REGRAS.md`, `plan.md`, `spec.md` e `implement.md` desta phase.
 
+## T8: Vincular aprovação e full à composição v2
+
+#### Reconhecimento
+
+- A fila tinha T8 e T9 elegíveis; T8 foi escolhida explicitamente pelo operador.
+- Preview e full já compartilhavam `build_ffmpeg_graph`, e os envelopes já
+  expunham `cut_count` e `layer_count`. A lacuna de prova estava na integração
+  do estado aprovado com fontes usadas exclusivamente por camadas e nos
+  artefatos derivados ainda vinculados ao hash anterior do plano.
+- `approve_workdir()` e `verify_approval()` já recebiam todos os registros de
+  fontes produzidos pela validação v2; a garantia precisava ficar explícita e
+  ser exercitada com imagem e vídeo em camada, sem criar um caminho paralelo.
+
+#### Implementação
+
+- Mantida a composição única compartilhada entre preview e full, com os mesmos
+  cortes J/L, movimento e camadas; a full continua alterando apenas o perfil de
+  resolução próprio e verificando aprovação antes do FFmpeg.
+- Documentado no ponto central de hashing que toda fonte declarada é vinculada,
+  inclusive fontes consumidas somente por imagem ou vídeo em camada, preservando
+  a ordem do plano e o bloqueio por `APPROVAL_STALE`.
+- Adicionada prova de preview/full v2 com texto, imagem e vídeo em camadas,
+  contadores `cut_count`/`layer_count` e MP4 completo.
+- Adicionadas provas de stale para mutações de corte, geometria de camada,
+  preview e fontes de vídeo, áudio e imagem, preservando `approval.json`,
+  `full.mp4` vigente e `.tmp` limpo.
+- Regenerados `preview.mp4`, `approval.json` e `full.mp4` do workflow a partir
+  do `plan.json` v2 atual.
+
+#### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_preview_render tests.test_approval tests.test_full_render -v`
+  -> `Ran 25 tests in 152.618s ... OK`.
+- Os testes reais confirmam a composição v2 na preview e na full, o vínculo
+  ordenado de todas as fontes declaradas e a preservação de estado em falhas e
+  mutações; `git diff --check` passou.
+
+#### Arquivos
+
+- `src/editor/integrity/approval.py`.
+- `tests/test_approval.py`, `tests/test_full_render.py`.
+- `tests/fixtures/workflow/approval.json`, `tests/fixtures/workflow/preview.mp4`,
+  `tests/fixtures/workflow/full.mp4`.
+- `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`, `spec.md` e
+  `implement.md`.
+
 ## Handoff
 
-Próximas T* elegíveis: T8 e T9. T10 depende das duas.
+Próxima T* elegível: T9. T10 depende de T8 e T9.

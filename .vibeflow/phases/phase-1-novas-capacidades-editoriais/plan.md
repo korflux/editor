@@ -177,16 +177,18 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T8: Vincular aprovação e full à composição v2
 
-- [ ] T8 concluída
+- [x] T8 concluída
 - **Spec:** A8, A9, C5
 - **Decisões:** STATE-01 (mantém aprovação obrigatória por hash), CONTRACT-01 (hash do plano v2 sem caminho v1)
 - **O quê:** Atualizar preview e full para consumir o mesmo grafo v2, retornar `cut_count` e `layer_count`, e manter publicação atômica. Fazer `approve` e `verify_approval` incluírem toda fonte declarada, inclusive imagens e vídeos em camadas, para bloquear qualquer divergência antes de chamar o FFmpeg da full.
 - **Aceite:**
-  - [ ] Preview e full produzem MP4 completo com a mesma semântica de movimento, J/L e camadas, mudando apenas resolução, taxa de quadros e limite próprios de cada artefato.
-  - [ ] Alterar semanticamente plano, corte, camada, preview, vídeo, áudio ou imagem retorna `APPROVAL_STALE` sem renderizar, substituir a full vigente ou modificar `approval.json`.
-  - [ ] Falha de FFmpeg ou validação preserva preview/full vigentes e limpa temporários, enquanto full sem aprovação continua bloqueada.
+  - [x] Preview e full produzem MP4 completo com a mesma semântica de movimento, J/L e camadas, mudando apenas resolução, taxa de quadros e limite próprios de cada artefato.
+  - [x] Alterar semanticamente plano, corte, camada, preview, vídeo, áudio ou imagem retorna `APPROVAL_STALE` sem renderizar, substituir a full vigente ou modificar `approval.json`.
+  - [x] Falha de FFmpeg ou validação preserva preview/full vigentes e limpa temporários, enquanto full sem aprovação continua bloqueada.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_preview_render tests.test_approval tests.test_full_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_preview_render tests.test_approval tests.test_full_render -v`
+- **Prova:** verificação da T8 -> `Ran 25 tests ... OK`; preview e full reais com texto, imagem e vídeo em camadas, hashes ordenados de toda fonte declarada, mutações de corte/camada/preview/vídeo/áudio/imagem bloqueadas por `APPROVAL_STALE`, falhas preservando artefatos e temporários limpos; fixtures workflow v2 regenerados; `git diff --check` passou.
+- **Arquivos executados:** `src/editor/integrity/approval.py`, `tests/test_approval.py`, `tests/test_full_render.py`, `tests/fixtures/workflow/approval.json`, `tests/fixtures/workflow/preview.mp4` e `tests/fixtures/workflow/full.mp4`.
 - **Deps:** T7
 - **Arquivos:** `src/editor/render/preview.py`, `src/editor/render/full.py`, `src/editor/integrity/approval.py`, `src/editor/integrity/hashes.py`, `tests/test_preview_render.py`, `tests/test_approval.py`, `tests/test_full_render.py`, `tests/fixtures/workflow/preview.mp4`, `tests/fixtures/workflow/full.mp4`, `tests/fixtures/workflow/approval.json`
 - **Size:** `high, 8/10, estado aprovado, grafo compartilhado e publicação atômica com integração real`

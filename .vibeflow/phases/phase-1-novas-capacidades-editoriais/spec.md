@@ -324,10 +324,10 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
   substituem o vídeo-base.
 - [x] A7: O texto v2 usa `x`, `y`, `width` e `height` normalizados, e posições
   nomeadas ou coordenadas inválidas são rejeitadas.
-- [ ] A8: Preview e full usam o mesmo grafo v2, publicam somente arquivos MP4
+- [x] A8: Preview e full usam o mesmo grafo v2, publicam somente arquivos MP4
   completos, mantêm os limites de resolução e preservam preview/full vigentes em
   caso de falha.
-- [ ] A9: `approve` e `render full` continuam vinculados aos hashes do plano v2,
+- [x] A9: `approve` e `render full` continuam vinculados aos hashes do plano v2,
   preview e fontes. Alterar uma camada, um corte, uma imagem ou qualquer fonte
   retorna `APPROVAL_STALE` sem renderizar nem substituir a full.
 - [ ] A10: `capabilities --json`, a documentação da `vibe-editor` e os fixtures
@@ -344,7 +344,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
   duração final exata sem ducking ou crossfade implícito.
 - [x] C4: A execução repetida de `init` não altera hashes nem bytes dos artefatos
   existentes e não cria `plan.json`, `approval.json`, `preview.mp4` ou `full.mp4`.
-- [ ] C5: A full só é liberada com aprovação vigente e fica bloqueada após
+- [x] C5: A full só é liberada com aprovação vigente e fica bloqueada após
   mutação independente do plano, da preview, da fonte de vídeo, áudio ou imagem.
 - [ ] C6: A suíte completa, os gates de dependência e segredo e a verificação de
   whitespace passam sem `SkipTest` por ausência de pré-requisito local.

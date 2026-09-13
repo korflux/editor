@@ -62,9 +62,12 @@ def _serialize_approval(document: dict[str, Any]) -> bytes:
 
 
 def _hash_sources(validation: dict[str, Any]) -> list[dict[str, str]]:
-    """Calcula hashes na ordem do plano para preservar a identidade editorial das fontes."""
+    """Calcula hash de toda fonte declarada, na ordem do plano, para preservar a identidade editorial."""
 
     source_hashes: list[dict[str, str]] = []
+    # A aprovação vincula todas as declarações do plano, inclusive fontes usadas
+    # somente por camadas ou ainda não consumidas pelo grafo, para que nenhuma
+    # mutação de imagem, vídeo ou áudio passe pela barreira da full.
     for source in validation["sources"]:
         source_path = Path(str(source["path"]))
         if not is_regular_path(source_path):

@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = PROJECT_ROOT / "tests" / "fixtures" / "workflow"
 WORKFLOW_PLAN = WORKFLOW_DIR / "plan.json"
 WORKFLOW_SOURCES = WORKFLOW_DIR / "sources"
+IMAGE_FIXTURES = PROJECT_ROOT / "tests" / "fixtures" / "phase-1" / "images"
 
 
 def run_module(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -56,6 +57,58 @@ def copy_workflow(workdir: Path) -> None:
 
     shutil.copy2(WORKFLOW_PLAN, workdir / "plan.json")
     shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+
+
+def configure_layered_workflow(workdir: Path) -> None:
+    """Adiciona imagem e vídeo em camada para testar a integridade da composição v2."""
+
+    shutil.copy2(IMAGE_FIXTURES / "alpha.png", workdir / "sources" / "layer-image.png")
+    shutil.copy2(WORKFLOW_SOURCES / "broll.mp4", workdir / "sources" / "layer-video.mp4")
+    document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+    document["sources"].extend(
+        [
+            {"id": "layer-image", "kind": "image", "path": "sources/layer-image.png"},
+            {"id": "layer-video", "kind": "video", "path": "sources/layer-video.mp4"},
+        ]
+    )
+    document["layers"].extend(
+        [
+            {
+                "type": "image",
+                "start_s": 0.25,
+                "end_s": 1.0,
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.25,
+                "height": 0.25,
+                "source_id": "layer-image",
+                "fit": "contain",
+            },
+            {
+                "type": "video",
+                "start_s": 1.0,
+                "end_s": 1.75,
+                "x": 0.5,
+                "y": 0.25,
+                "width": 0.4,
+                "height": 0.5,
+                "source_id": "layer-video",
+                "in_s": 0.25,
+                "out_s": 1.0,
+                "fit": "crop",
+            },
+        ]
+    )
+    (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def configure_cut_workflow(workdir: Path) -> None:
+    """Declara um corte J com cobertura suficiente para testar seu hash aprovado."""
+
+    document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+    document["cuts"] = [{"after_segment": 1, "type": "j", "duration_s": 0.1}]
+    document["segments"][1]["audio"]["tracks"][0]["in_s"] = 0.55
+    (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
 
 
 def approve_workflow(workdir: Path) -> None:
@@ -119,6 +172,8 @@ class FullRenderTests(unittest.TestCase):
             self.assertEqual(payload["command"], "render full")
             self.assertEqual(payload["data"]["timeline_duration_seconds"], 2.0)
             self.assertEqual(payload["data"]["video"]["max_dimension"], 320)
+            self.assertEqual(payload["data"]["cut_count"], 0)
+            self.assertEqual(payload["data"]["layer_count"], 1)
             self.assertEqual(payload["data"]["audio"], {"codec": "aac", "present": True})
 
             full_path = Path(payload["data"]["artifact_path"])
@@ -135,6 +190,134 @@ class FullRenderTests(unittest.TestCase):
                 {path.name: path.read_bytes() for path in (workdir / "sources").iterdir()},
                 sources_before,
             )
+            self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_real_cli_publishes_full_with_v2_media_layers(self) -> None:
+        """Confirma que a full consome a composição v2 completa e seus contadores."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            configure_layered_workflow(workdir)
+            approve_workflow(workdir)
+
+            result = run_module(
+                "render",
+                "full",
+                "--workdir",
+                str(workdir.resolve()),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["data"]["cut_count"], 0)
+            self.assertEqual(payload["data"]["layer_count"], 3)
+            self.assertEqual(payload["data"]["video"]["max_dimension"], 320)
+            self.assertEqual(payload["data"]["audio"], {"codec": "aac", "present": True})
+            full_path = Path(payload["data"]["artifact_path"])
+            self.assertEqual(full_path, workdir / "full.mp4")
+            self.assertTrue(full_path.is_file())
+            metadata = inspect_source(full_path, require_audio=True, require_video=True)
+            self.assertEqual((metadata.video_width, metadata.video_height), (320, 180))
+            self.assertAlmostEqual(metadata.duration_seconds, 2.0, places=1)
+            self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_layer_source_mutations_make_approval_stale(self) -> None:
+        """Confirma que mutar a imagem ou o vídeo usado em camada bloqueia a full."""
+
+        mutations: dict[str, str] = {
+            "image": "layer-image.png",
+            "video": "layer-video.mp4",
+        }
+        for kind, filename in mutations.items():
+            with self.subTest(source=kind):
+                with workspace_tempdir() as workdir:
+                    copy_workflow(workdir)
+                    configure_layered_workflow(workdir)
+                    approve_workflow(workdir)
+                    approval_before = (workdir / "approval.json").read_bytes()
+                    full_path = workdir / "full.mp4"
+                    previous_full = b"previous-full"
+                    full_path.write_bytes(previous_full)
+                    source_path = workdir / "sources" / filename
+                    source_path.write_bytes(source_path.read_bytes() + b"stale")
+
+                    result = run_module(
+                        "render",
+                        "full",
+                        "--workdir",
+                        str(workdir.resolve()),
+                        "--json",
+                    )
+                    payload = json.loads(result.stdout)
+
+                    self.assertEqual(result.returncode, 5)
+                    self.assertEqual(payload["error"]["code"], "APPROVAL_STALE")
+                    self.assertEqual(full_path.read_bytes(), previous_full)
+                    self.assertEqual((workdir / "approval.json").read_bytes(), approval_before)
+                    self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_layer_plan_mutation_makes_approval_stale(self) -> None:
+        """Confirma que mudar a geometria declarada da camada invalida a aprovação."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            configure_layered_workflow(workdir)
+            approve_workflow(workdir)
+            approval_before = (workdir / "approval.json").read_bytes()
+            full_path = workdir / "full.mp4"
+            previous_full = b"previous-full"
+            full_path.write_bytes(previous_full)
+
+            document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+            document["layers"][1]["x"] = 0.51
+            (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+
+            result = run_module(
+                "render",
+                "full",
+                "--workdir",
+                str(workdir.resolve()),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 5)
+            self.assertEqual(payload["error"]["code"], "APPROVAL_STALE")
+            self.assertEqual(full_path.read_bytes(), previous_full)
+            self.assertEqual((workdir / "approval.json").read_bytes(), approval_before)
+            self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_cut_plan_mutation_makes_approval_stale(self) -> None:
+        """Confirma que mudar a duração de um corte J invalida a aprovação vigente."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            configure_cut_workflow(workdir)
+            approve_workflow(workdir)
+            approval_before = (workdir / "approval.json").read_bytes()
+            full_path = workdir / "full.mp4"
+            previous_full = b"previous-full"
+            full_path.write_bytes(previous_full)
+
+            document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+            document["cuts"][0]["duration_s"] = 0.2
+            (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+
+            result = run_module(
+                "render",
+                "full",
+                "--workdir",
+                str(workdir.resolve()),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 5)
+            self.assertEqual(payload["error"]["code"], "APPROVAL_STALE")
+            self.assertEqual(full_path.read_bytes(), previous_full)
+            self.assertEqual((workdir / "approval.json").read_bytes(), approval_before)
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
     def test_missing_approval_blocks_full_without_output(self) -> None:
