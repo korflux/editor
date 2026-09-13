@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ from editor import dependencies
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = PROJECT_ROOT / "tests" / "fixtures" / "e2e"
 FIXTURE_SOURCES = FIXTURE_ROOT / "sources"
+SPEECH_FIXTURE = FIXTURE_ROOT / "speech.mp3.b64"
 MODEL_ROOT = PROJECT_ROOT / "models"
 REQUIRED_OPERATIONS = (
     "capabilities",
@@ -78,6 +80,11 @@ def copy_fixture(workdir: Path) -> None:
 
     shutil.copy2(FIXTURE_ROOT / "plan.json", workdir / "plan.json")
     shutil.copytree(FIXTURE_SOURCES, workdir / "sources")
+    # A fala fica em Base64 para manter a fixture binária pequena e transportável no repositório.
+    speech_path = workdir / "sources" / "speech.mp3"
+    speech_path.write_bytes(
+        base64.b64decode(SPEECH_FIXTURE.read_text(encoding="ascii").strip(), validate=True)
+    )
 
 
 def sha256_file(path: Path) -> str:
@@ -134,16 +141,20 @@ class MvpFlowTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        """Garante que a prova real tenha FFmpeg, backend Whisper e modelo local disponíveis."""
+        """Falha o gate quando a prova real não possui os pré-requisitos do MVP."""
 
-        if not (FIXTURE_ROOT / "plan.json").is_file() or not FIXTURE_SOURCES.is_dir():
-            raise unittest.SkipTest("fixture E2E do MVP não está disponível")
+        if (
+            not (FIXTURE_ROOT / "plan.json").is_file()
+            or not FIXTURE_SOURCES.is_dir()
+            or not SPEECH_FIXTURE.is_file()
+        ):
+            raise AssertionError("fixture E2E do MVP não está disponível")
         if any(dependencies.resolve_executable(name) is None for name in ("ffmpeg", "ffprobe")):
-            raise unittest.SkipTest("ffmpeg e ffprobe não estão disponíveis localmente")
+            raise AssertionError("ffmpeg e ffprobe não estão disponíveis localmente")
         if dependencies.detect_whisper_backend()["status"] != "available":
-            raise unittest.SkipTest("backend Whisper local não está disponível")
+            raise AssertionError("backend Whisper local não está disponível")
         if not dependencies.is_valid_model_directory(MODEL_ROOT / "base"):
-            raise unittest.SkipTest("modelo Whisper base local não está disponível")
+            raise AssertionError("modelo Whisper base local não está disponível")
 
     def test_complete_local_mvp_workflow(self) -> None:
         """Executa análise, plano, preview, aprovação, full e falha por mutação de fonte."""
@@ -175,7 +186,7 @@ class MvpFlowTests(unittest.TestCase):
                     "--source-id",
                     "main",
                     "--input",
-                    str(working_sources / "main.mp4"),
+                    str(working_sources / "speech.mp3"),
                     "--window-s",
                     "0.5",
                     "--json",
@@ -192,7 +203,7 @@ class MvpFlowTests(unittest.TestCase):
                     "--source-id",
                     "main",
                     "--input",
-                    str(working_sources / "main.mp4"),
+                    str(working_sources / "speech.mp3"),
                     "--device",
                     "cpu",
                     "--model",
@@ -254,6 +265,16 @@ class MvpFlowTests(unittest.TestCase):
             manifest = json.loads(
                 (workdir / "frames" / "main" / "manifest.json").read_text(encoding="utf-8")
             )
+            transcription_document = json.loads(
+                Path(transcription["data"]["artifact_path"]).read_text(encoding="utf-8")
+            )
+            transcription_segments = transcription_document["transcription"]["segments"]
+            self.assertIsInstance(transcription_segments, list)
+            self.assertGreater(len(transcription_segments), 0)
+            for segment in transcription_segments:
+                with self.subTest(segment=segment.get("id")):
+                    self.assertIsInstance(segment["words"], list)
+                    self.assertTrue(segment["words"])
             self.assertEqual(manifest["selection"]["mode"], "timestamps")
             self.assertEqual(len(manifest["frames"]), 2)
             self.assertEqual(plan["data"]["timeline"]["duration_seconds"], 2.0)

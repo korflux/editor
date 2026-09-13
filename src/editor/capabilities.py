@@ -7,8 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from . import dependencies
+from .analysis.audio import MAX_AUDIO_WINDOW_SECONDS, MAX_AUDIO_WINDOWS
 from .contracts import CLI_VERSION
 from .media import MAX_SOURCE_DURATION_SECONDS, MAX_SOURCE_SIZE_BYTES
+from .plan.validation import (
+    MAX_OVERLAYS,
+    MAX_SEGMENTS,
+    MAX_TIMELINE_DURATION_SECONDS,
+)
 
 
 def default_model_root() -> Path:
@@ -74,22 +80,35 @@ def choose_recommendation(models: dict[str, Any], cuda_status: str) -> dict[str,
     }
 
 
-def _cuda_dependency(gpu: dict[str, Any], whisper: dict[str, Any]) -> dict[str, Any]:
-    """Classifica CUDA como utilizável apenas quando hardware e backend local estão prontos."""
+def _cuda_dependency(
+    gpu: dict[str, Any],
+    whisper: dict[str, Any],
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    """Classifica CUDA somente quando hardware, backend e runtime local estão prontos."""
 
     if gpu["status"] != "available":
         return {
             "status": gpu["status"],
             "reason": "GPU NVIDIA não foi detectada ou não respondeu à sondagem local",
+            "runtime": runtime,
         }
     if whisper["status"] == "available":
+        if runtime["status"] == "available":
+            return {
+                "status": "available",
+                "reason": "GPU NVIDIA, backend Whisper e runtime CUDA local estão disponíveis",
+                "runtime": runtime,
+            }
         return {
-            "status": "available",
-            "reason": "GPU NVIDIA e backend Whisper local estão disponíveis",
+            "status": runtime["status"],
+            "reason": "o runtime CUDA local não está utilizável pelo backend de transcrição",
+            "runtime": runtime,
         }
     return {
         "status": whisper["status"],
         "reason": "backend Whisper local é necessário para usar CUDA na transcrição",
+        "runtime": runtime,
     }
 
 
@@ -106,13 +125,24 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
     ffmpeg = dependencies.detect_ffmpeg()
     whisper = dependencies.detect_whisper_backend()
     gpu = dependencies.detect_gpu()
-    cuda = _cuda_dependency(gpu, whisper)
+    cuda_runtime = (
+        dependencies.detect_cuda_runtime()
+        if gpu["status"] == "available"
+        else {
+            "status": gpu["status"],
+            "device_count": 0,
+            "reason": "GPU NVIDIA não está disponível para sondar o runtime CUDA",
+        }
+    )
+    cuda = _cuda_dependency(gpu, whisper, cuda_runtime)
     models = dependencies.discover_models(model_dir or default_model_root())
     recommendation = choose_recommendation(models, cuda["status"])
 
     # A capacidade reportada precisa refletir os comandos existentes, mas sem
     # declarar operações que ainda não têm a dependência externa necessária.
     ffprobe_status = ffmpeg["tools"]["ffprobe"]["status"]
+    render_status = _combine_statuses(ffmpeg["status"], ffmpeg["encoders"]["status"])
+    render_requires = ["ffmpeg", "ffprobe", *dependencies.RENDER_ENCODERS]
 
     transcribe_status = _combine_statuses(whisper["status"], models["status"])
     operations = {
@@ -138,8 +168,8 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "validação local de plan.json e das fontes declaradas",
         ),
         "render_preview": _operation(
-            ffmpeg["status"],
-            ["ffmpeg", "ffprobe", "libx264", "aac"],
+            render_status,
+            render_requires,
             "renderização linear da preview com publicação atômica",
         ),
         "approve": _operation(
@@ -148,8 +178,8 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "aprovação local vinculada aos hashes do plano, preview e fontes",
         ),
         "render_full": _operation(
-            ffmpeg["status"],
-            ["ffmpeg", "ffprobe", "libx264", "aac"],
+            render_status,
+            render_requires,
             "renderização final condicionada à aprovação vigente",
         ),
     }
@@ -196,6 +226,11 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
         "limits": {
             "max_source_size_bytes": MAX_SOURCE_SIZE_BYTES,
             "max_source_duration_seconds": MAX_SOURCE_DURATION_SECONDS,
+            "max_audio_window_seconds": MAX_AUDIO_WINDOW_SECONDS,
+            "max_audio_windows": MAX_AUDIO_WINDOWS,
+            "max_segments": MAX_SEGMENTS,
+            "max_overlays": MAX_OVERLAYS,
+            "max_timeline_duration_seconds": MAX_TIMELINE_DURATION_SECONDS,
             "jobs_in_parallel": 1,
         },
         "operations": operations,

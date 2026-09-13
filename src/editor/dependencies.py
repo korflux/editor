@@ -17,6 +17,8 @@ from typing import Any, Sequence
 
 ALLOWED_MODEL_NAMES = ("tiny", "base", "small")
 REPARSE_POINT_ATTRIBUTE = 0x400
+RENDER_ENCODERS = ("libx264", "aac")
+_ENCODER_LINE = re.compile(r"^\s*[A-Z.]{6}\s+(\S+)")
 
 
 def is_regular_path(path: Path, *, directory: bool = False) -> bool:
@@ -102,6 +104,51 @@ def probe_executable(name: str) -> dict[str, Any]:
     }
 
 
+def _encoder_names(output: str) -> set[str]:
+    """Extrai nomes de encoders da sondagem local sem publicar a saída bruta do FFmpeg."""
+
+    return {
+        match.group(1)
+        for line in output.splitlines()
+        if (match := _ENCODER_LINE.match(line)) is not None
+    }
+
+
+def probe_ffmpeg_encoders(executable: Path | None = None) -> dict[str, Any]:
+    """Confirma os encoders exigidos pelo render sem executar uma operação de mídia."""
+
+    candidate = executable or resolve_executable("ffmpeg")
+    if candidate is None:
+        return {
+            "status": "missing",
+            "available": [],
+            "missing": list(RENDER_ENCODERS),
+            "reason": "FFmpeg não está disponível localmente",
+        }
+
+    probe = run_local_probe(candidate, ("-hide_banner", "-encoders"))
+    if probe is None or probe["returncode"] != 0:
+        return {
+            "status": "unsupported",
+            "available": [],
+            "missing": list(RENDER_ENCODERS),
+            "reason": "não foi possível sondar os encoders do FFmpeg",
+        }
+
+    names = _encoder_names(probe["output"])
+    missing = [name for name in RENDER_ENCODERS if name not in names]
+    return {
+        "status": "available" if not missing else "unsupported",
+        "available": [name for name in RENDER_ENCODERS if name in names],
+        "missing": missing,
+        "reason": (
+            "encoders H.264 e AAC disponíveis"
+            if not missing
+            else "um ou mais encoders exigidos não estão disponíveis"
+        ),
+    }
+
+
 def detect_ffmpeg() -> dict[str, Any]:
     """Confirma FFmpeg e FFprobe juntos, pois as operações de mídia dependem dos dois."""
 
@@ -113,10 +160,21 @@ def detect_ffmpeg() -> dict[str, Any]:
         status = "unsupported"
     else:
         status = "missing"
+    encoders = (
+        probe_ffmpeg_encoders(Path(tools["ffmpeg"]["path"]))
+        if tools["ffmpeg"]["status"] == "available"
+        else {
+            "status": tools["ffmpeg"]["status"],
+            "available": [],
+            "missing": list(RENDER_ENCODERS),
+            "reason": "FFmpeg não está disponível para sondar encoders",
+        }
+    )
     return {
         "status": status,
         "version": tools["ffmpeg"]["version"],
         "tools": tools,
+        "encoders": encoders,
     }
 
 
@@ -208,6 +266,39 @@ def detect_gpu() -> dict[str, Any]:
     if not devices:
         return {"status": "unsupported", "path": str(executable), "devices": []}
     return {"status": "available", "path": str(executable), "devices": devices}
+
+
+def detect_cuda_runtime() -> dict[str, Any]:
+    """Confirma que o CTranslate2 local consegue enumerar dispositivos CUDA utilizáveis."""
+
+    try:
+        import ctranslate2
+    except (ImportError, ModuleNotFoundError):
+        return {
+            "status": "missing",
+            "device_count": 0,
+            "reason": "CTranslate2 não está disponível para sondar CUDA",
+        }
+
+    try:
+        device_count = int(ctranslate2.get_cuda_device_count())
+    except Exception:
+        return {
+            "status": "unsupported",
+            "device_count": 0,
+            "reason": "o runtime CUDA local não pôde ser inicializado pelo CTranslate2",
+        }
+    if device_count <= 0:
+        return {
+            "status": "unsupported",
+            "device_count": device_count,
+            "reason": "o CTranslate2 local não encontrou um dispositivo CUDA utilizável",
+        }
+    return {
+        "status": "available",
+        "device_count": device_count,
+        "reason": "o CTranslate2 local enumerou dispositivos CUDA utilizáveis",
+    }
 
 
 def read_total_memory_bytes() -> int | None:

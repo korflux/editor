@@ -281,7 +281,7 @@ def _overlay_filter(
         f"[{input_label}]drawtext=font='{font}':fontsize={int(overlay['size_px'])}:"
         f"fontcolor={overlay['color']}:text='{escaped_text}':expansion=none:"
         f"text_align={overlay['align']}:x={x}:y={y}:fix_bounds=1:"
-        f"enable='between(t\\,{start}\\,{end})'[{output_label}]"
+        f"enable='gte(t\\,{start})*lt(t\\,{end})'[{output_label}]"
     )
 
 

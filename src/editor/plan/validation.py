@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import media
-from ..contracts import CliError, EXIT_CODES
+from ..contracts import CliError, EXIT_CODES, reject_duplicate_json_keys
 from ..dependencies import is_regular_path
 from ..workdir import resolve_source_path, validate_workdir
 from .canonical import canonical_json, canonical_sha256
@@ -38,6 +38,9 @@ from .schema import (
 
 
 MAX_PLAN_BYTES = 2 * 1024 * 1024
+MAX_SEGMENTS = 1_000
+MAX_OVERLAYS = 1_000
+MAX_TIMELINE_DURATION_SECONDS = float(media.MAX_SOURCE_DURATION_SECONDS)
 ASPECT_RATIO = 16 / 9
 ASPECT_TOLERANCE = 1e-6
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -54,7 +57,10 @@ def _finite_number(value: Any, location: str) -> float:
 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise plan_error(f"O campo {location} deve ser um número finito.")
-    parsed = float(value)
+    try:
+        parsed = float(value)
+    except (OverflowError, ValueError) as error:
+        raise plan_error(f"O campo {location} deve ser um número finito.") from error
     if not math.isfinite(parsed):
         raise plan_error(f"O campo {location} deve ser um número finito.")
     return parsed
@@ -124,7 +130,11 @@ def _read_plan(root: Path) -> tuple[Path, dict[str, Any]]:
     except (OSError, UnicodeError) as error:
         raise plan_error("Não foi possível ler o plan.json.") from error
     try:
-        document = json.loads(raw, parse_constant=_reject_non_finite_constant)
+        document = json.loads(
+            raw,
+            object_pairs_hook=reject_duplicate_json_keys,
+            parse_constant=_reject_non_finite_constant,
+        )
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         raise plan_error("O plan.json não contém JSON válido.") from error
     if not isinstance(document, dict):
@@ -301,6 +311,8 @@ def _validate_segments(
     segments = require_array(value, "segments")
     if not segments:
         raise plan_error("O plano deve declarar ao menos um segmento.")
+    if len(segments) > MAX_SEGMENTS:
+        raise plan_error("O plano excede o limite de segmentos permitido.")
     timeline_segments: list[dict[str, Any]] = []
     timeline_end = 0.0
     for index, item in enumerate(segments, start=1):
@@ -308,6 +320,8 @@ def _validate_segments(
         reject_unknown_fields(segment, SEGMENT_FIELDS, "segments[]")
         video, _ = _validate_video(segment.get("video"), source_map, "segments[].video")
         duration = float(video["out_s"]) - float(video["in_s"])
+        if timeline_end + duration > MAX_TIMELINE_DURATION_SECONDS + ASPECT_TOLERANCE:
+            raise plan_error("A timeline excede a duração máxima permitida.")
         audio, tracks = _validate_audio(
             segment.get("audio"),
             source_map,
@@ -335,6 +349,8 @@ def _validate_overlays(value: Any, timeline_duration: float) -> int:
     """Valida letterings estáticos, posições nomeadas e seus intervalos na timeline."""
 
     overlays = require_array(value, "overlays")
+    if len(overlays) > MAX_OVERLAYS:
+        raise plan_error("O plano excede o limite de overlays permitido.")
     for overlay_value in overlays:
         overlay = require_object(overlay_value, "overlays[]")
         reject_unknown_fields(overlay, OVERLAY_FIELDS, "overlays[]")

@@ -6,17 +6,17 @@ from collections.abc import Mapping, Sequence
 import math
 import os
 from pathlib import Path
-import re
 from uuid import uuid4
 from typing import Any
 
-from .. import media, process
+from .. import dependencies, media, process
 from ..contracts import CliError, EXIT_CODES
 from ..dependencies import is_regular_path
 from ..plan.validation import load_validated_plan
 from ..workdir import (
     FullLayout,
     PreviewLayout,
+    ensure_sources_do_not_alias_output,
     prepare_preview_layout,
     publish_preview_atomic,
     relative_artifact_path,
@@ -26,7 +26,6 @@ from .ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
 
 MAX_PREVIEW_DIMENSION = 720
 """Maior dimensão permitida para reduzir o custo da aprovação visual."""
-_ENCODER_LINE = re.compile(r"^\s*[A-Z.]{6}\s+(\S+)")
 
 
 def _error(code: str, message: str, exit_code: int) -> CliError:
@@ -111,52 +110,32 @@ def _preview_dimensions(
     return width, height
 
 
-def _encoder_names(output: str) -> set[str]:
-    """Extrai apenas nomes de encoders da sondagem local do FFmpeg."""
-
-    return {
-        match.group(1)
-        for line in output.splitlines()
-        if (match := _ENCODER_LINE.match(line)) is not None
-    }
-
-
 def _require_encoders(has_audio: bool) -> None:
     """Confirma encoders locais antes de criar a saída, produzindo dependência explícita."""
 
-    try:
-        result = process.run_tool(
-            "ffmpeg",
-            ["-hide_banner", "-encoders"],
-            timeout_seconds=15,
-        )
-    except process.ProcessExecutionError as error:
-        if error.missing:
-            raise _error(
-                "DEPENDENCY_MISSING",
-                "FFmpeg não está disponível localmente.",
-                EXIT_CODES["DEPENDENCY"],
-            ) from error
+    if dependencies.resolve_executable("ffmpeg") is None:
         raise _error(
-            "RENDER_FAILED",
-            "Não foi possível verificar os encoders locais.",
-            EXIT_CODES["OPERATION"],
-        ) from error
-    if result.returncode != 0:
+            "DEPENDENCY_MISSING",
+            "FFmpeg não está disponível localmente.",
+            EXIT_CODES["DEPENDENCY"],
+        )
+
+    encoders = dependencies.probe_ffmpeg_encoders()
+    if encoders["status"] == "unsupported" and not encoders["available"]:
         raise _error(
             "RENDER_FAILED",
             "Não foi possível verificar os encoders locais.",
             EXIT_CODES["OPERATION"],
         )
 
-    names = _encoder_names(f"{result.stdout or ''}\n{result.stderr or ''}")
-    if "libx264" not in names:
+    available = set(encoders["available"])
+    if "libx264" not in available:
         raise _error(
             "DEPENDENCY_MISSING",
             "O encoder H.264 libx264 não está disponível localmente.",
             EXIT_CODES["DEPENDENCY"],
         )
-    if has_audio and "aac" not in names:
+    if has_audio and "aac" not in available:
         raise _error(
             "DEPENDENCY_MISSING",
             "O encoder AAC não está disponível localmente.",
@@ -383,6 +362,11 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
 
     document, validation = load_validated_plan(workdir)
     layout = prepare_preview_layout(workdir)
+    ensure_sources_do_not_alias_output(
+        [Path(str(record["path"])) for record in validation["sources"]],
+        layout.destination,
+        "preview",
+    )
     canvas_width, canvas_height = _preview_dimensions(document, validation)
     graph = build_ffmpeg_graph(
         document,

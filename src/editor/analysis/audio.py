@@ -156,6 +156,12 @@ class _AudioAccumulator:
         start_seconds = start_sample / PCM_SAMPLE_RATE
         end_seconds = min(end_sample / PCM_SAMPLE_RATE, self.duration_seconds)
         if end_seconds > start_seconds:
+            if len(self.windows) >= MAX_AUDIO_WINDOWS:
+                raise CliError(
+                    code="ANALYSIS_FAILED",
+                    message="A análise de áudio excedeu o limite de janelas.",
+                    exit_code=EXIT_CODES["OPERATION"],
+                )
             self.windows.append(
                 {
                     "start_s": round(start_seconds, 6),

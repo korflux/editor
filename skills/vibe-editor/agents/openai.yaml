@@ -1,0 +1,7 @@
+interface:
+  display_name: "Vibe Editor"
+  short_description: "Edita vídeos locais com agentes"
+  default_prompt: "Use $vibe-editor para editar um vídeo local do briefing à versão final aprovada."
+
+policy:
+  allow_implicit_invocation: true

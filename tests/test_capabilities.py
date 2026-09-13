@@ -10,6 +10,7 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Iterator
+from unittest.mock import patch
 from uuid import uuid4
 
 from editor.capabilities import choose_recommendation, collect_capabilities
@@ -121,6 +122,66 @@ class CapabilitiesTests(unittest.TestCase):
             self.assertEqual(models["base"]["status"], "available")
             self.assertEqual(models["tiny"]["status"], "unsupported")
             self.assertEqual(data["recommendation"]["model"], "base")
+
+    def test_render_capabilities_require_the_declared_encoders(self) -> None:
+        """Confirma que render indisponível aparece antes da execução sem libx264."""
+
+        ffmpeg = {
+            "status": "available",
+            "version": "fixture",
+            "tools": {
+                "ffmpeg": {"status": "available", "path": "ffmpeg", "version": "fixture"},
+                "ffprobe": {"status": "available", "path": "ffprobe", "version": "fixture"},
+            },
+            "encoders": {
+                "status": "unsupported",
+                "available": ["aac"],
+                "missing": ["libx264"],
+                "reason": "libx264 ausente",
+            },
+        }
+        with workspace_tempdir() as root:
+            with patch(
+                "editor.capabilities.dependencies.detect_ffmpeg",
+                return_value=ffmpeg,
+            ):
+                data = collect_capabilities(root)
+
+        self.assertEqual(data["operations"]["render_preview"]["status"], "unsupported")
+        self.assertEqual(data["operations"]["render_full"]["status"], "unsupported")
+
+    def test_cuda_capability_requires_a_working_ctranslate_runtime(self) -> None:
+        """Confirma que driver e backend presentes não bastam para recomendar CUDA."""
+
+        gpu = {
+            "status": "available",
+            "path": "nvidia-smi",
+            "devices": [{"status": "available", "name": "fixture", "memory_bytes": 1}],
+        }
+        whisper = {"status": "available", "packages": {}}
+        runtime = {
+            "status": "unsupported",
+            "device_count": 0,
+            "reason": "runtime ausente",
+        }
+        models = {
+            "status": "available",
+            "root": "models",
+            "available": ["base", "small"],
+            "models": [],
+        }
+        with (
+            patch("editor.capabilities.dependencies.detect_gpu", return_value=gpu),
+            patch("editor.capabilities.dependencies.detect_whisper_backend", return_value=whisper),
+            patch("editor.capabilities.dependencies.detect_cuda_runtime", return_value=runtime),
+            patch("editor.capabilities.dependencies.discover_models", return_value=models),
+        ):
+            data = collect_capabilities(Path("models"))
+
+        self.assertEqual(data["dependencies"]["cuda"]["status"], "unsupported")
+        self.assertEqual(data["devices"]["cuda"]["status"], "unsupported")
+        self.assertEqual(data["recommendation"]["device"], "cpu")
+        self.assertEqual(data["devices"]["auto"]["resolves_to"], "cpu")
 
 
 if __name__ == "__main__":

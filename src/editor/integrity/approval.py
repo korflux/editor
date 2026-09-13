@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from ..contracts import CliError, EXIT_CODES
+from ..contracts import CliError, EXIT_CODES, reject_duplicate_json_keys
 from ..dependencies import is_regular_path
 from ..plan.validation import load_validated_plan
 from ..workdir import (
@@ -120,6 +120,7 @@ def _read_approval(path: Path) -> dict[str, Any]:
             raise _approval_stale("O registro de aprovação excede o limite permitido.")
         payload = json.loads(
             path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_json_keys,
             parse_constant=_reject_non_finite_constant,
         )
     except CliError:

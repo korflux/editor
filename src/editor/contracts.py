@@ -25,6 +25,17 @@ EXIT_CODES = {
 }
 
 
+def reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Rejeita objetos JSON ambíguos antes que a última chave esconda a primeira."""
+
+    document: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"chave JSON duplicada: {key}")
+        document[key] = value
+    return document
+
+
 @dataclass(frozen=True)
 class CliError(Exception):
     """Erro de domínio que o handler da borda converte em envelope seguro."""

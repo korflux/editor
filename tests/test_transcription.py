@@ -18,7 +18,7 @@ from uuid import uuid4
 from editor import dependencies
 from editor.analysis.transcription import analyze_transcription
 from editor.contracts import CliError
-from editor.whisper_backend import WhisperConfig, _load_whisper_model
+from editor.whisper_backend import WhisperConfig, _load_whisper_model, resolve_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -166,6 +166,59 @@ class TranscriptionTests(unittest.TestCase):
             self.assertEqual(config.model_name, "base")
             self.assertEqual(config.device, "cpu")
             self.assertEqual(config.compute_type, "int8")
+
+    def test_auto_device_requires_cuda_runtime_before_selecting_gpu(self) -> None:
+        """Confirma que auto permanece em CPU quando o runtime CUDA não está utilizável."""
+
+        with workspace_tempdir() as workdir:
+            model_root = create_model_root(workdir / "models")
+            shutil.copytree(model_root / "base", model_root / "small")
+            models = {
+                "status": "available",
+                "available": ["base", "small"],
+                "models": [
+                    {
+                        "name": "base",
+                        "status": "available",
+                        "path": str(model_root / "base"),
+                    },
+                    {
+                        "name": "small",
+                        "status": "available",
+                        "path": str(model_root / "small"),
+                    },
+                ],
+            }
+            with (
+                patch("editor.whisper_backend.default_model_root", return_value=model_root),
+                patch(
+                    "editor.whisper_backend.dependencies.discover_models",
+                    return_value=models,
+                ),
+                patch(
+                    "editor.whisper_backend.dependencies.detect_gpu",
+                    return_value={
+                        "status": "available",
+                        "devices": [{"status": "available"}],
+                    },
+                ),
+                patch(
+                    "editor.whisper_backend.dependencies.detect_cuda_runtime",
+                    return_value={
+                        "status": "unsupported",
+                        "device_count": 0,
+                    },
+                ),
+                patch(
+                    "editor.whisper_backend.dependencies.detect_whisper_backend",
+                    return_value={"status": "available"},
+                ),
+            ):
+                config = resolve_config(None, "auto")
+
+        self.assertEqual(config.device, "cpu")
+        self.assertEqual(config.compute_type, "int8")
+        self.assertEqual(config.model_name, "base")
 
     def test_backend_loader_forces_local_files_only(self) -> None:
         """Confirma diretamente que o adaptador não pode solicitar download de pesos."""

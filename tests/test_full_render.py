@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -164,6 +165,40 @@ class FullRenderTests(unittest.TestCase):
             self.assertEqual(payload["error"]["code"], "APPROVAL_REQUIRED")
             self.assertFalse((workdir / "full.mp4").exists())
 
+    def test_source_cannot_alias_full_destination(self) -> None:
+        """Confirma que a full vigente nunca pode ser usada como entrada do próprio render."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            approve_workflow(workdir)
+            published = run_module(
+                "render",
+                "full",
+                "--workdir",
+                str(workdir.resolve()),
+                "--json",
+            )
+            self.assertEqual(published.returncode, 0, published.stderr)
+            full_path = workdir / "full.mp4"
+            previous_hash = hashlib.sha256(full_path.read_bytes()).hexdigest()
+
+            document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+            document["sources"][0]["path"] = "full.mp4"
+            (workdir / "plan.json").write_text(
+                json.dumps(document),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(CliError) as raised:
+                render_full(workdir)
+
+            self.assertEqual(raised.exception.code, "OUTPUT_INVALID")
+            self.assertEqual(
+                hashlib.sha256(full_path.read_bytes()).hexdigest(),
+                previous_hash,
+            )
+            self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
     def test_separate_plan_preview_and_source_mutations_make_approval_stale(self) -> None:
         """Confirma que qualquer mutação isolada bloqueia a full e preserva a saída vigente."""
 
@@ -204,7 +239,10 @@ class FullRenderTests(unittest.TestCase):
         with workspace_tempdir() as workdir:
             copy_workflow(workdir)
             approve_workflow(workdir)
-            (workdir / "approval.json").write_text("{}", encoding="utf-8")
+            (workdir / "approval.json").write_text(
+                '{"schema_version":1,"schema_version":1}',
+                encoding="utf-8",
+            )
 
             result = run_module(
                 "render",

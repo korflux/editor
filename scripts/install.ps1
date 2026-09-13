@@ -409,7 +409,7 @@ function Test-WhisperModels {
     Add-Check 'modelos Whisper locais' $passed $false $names
 }
 
-# Verifica driver e bibliotecas CUDA quando presentes, mas mantém CPU como baseline obrigatório do MVP.
+# Verifica driver, bibliotecas e enumeração do CTranslate2, mas mantém CPU como baseline obrigatório do MVP.
 function Test-Cuda {
     $nvidia = Resolve-Executable 'nvidia-smi'
     $driver = if ($nvidia) { Invoke-External $nvidia @('--query-gpu=name,driver_version,memory.total', '--format=csv,noheader') } else { $null }
@@ -425,8 +425,14 @@ function Test-Cuda {
         if (Get-ChildItem -LiteralPath $directory -Filter 'cublas64_12.dll' -File -ErrorAction SilentlyContinue) { $cublas = $true }
         if (Get-ChildItem -LiteralPath $directory -Filter 'cudnn*.dll' -File -ErrorAction SilentlyContinue) { $cudnn = $true }
     }
-    $passed = $null -ne $driver -and $driver.exit_code -eq 0 -and $cublas -and $cudnn
-    $detail = if ($passed) { 'GPU, driver, cuBLAS 12 e cuDNN foram localizados.' } else { 'CUDA não está completo; CPU continua disponível como baseline.' }
+    $runtimeCount = 0
+    if ($script:RuntimePython) {
+        # A presença de DLLs não prova que o backend consegue inicializar CUDA; confirme o mesmo runtime usado pela CLI.
+        $runtimeProbe = Invoke-Python @('-c', 'import ctranslate2; print(int(ctranslate2.get_cuda_device_count()))')
+        try { $runtimeCount = [int]$runtimeProbe.output.Trim() } catch { $runtimeCount = 0 }
+    }
+    $passed = $null -ne $driver -and $driver.exit_code -eq 0 -and $cublas -and $cudnn -and $runtimeCount -gt 0
+    $detail = if ($passed) { 'GPU, driver, cuBLAS 12, cuDNN e runtime CTranslate2 foram validados.' } else { 'CUDA não está completo; CPU continua disponível como baseline.' }
     Add-Check 'CUDA' $passed $true $detail
 }
 
@@ -623,8 +629,9 @@ function Invoke-SecurityGates {
 # Executa toda a verificação de instalação sem criar, atualizar ou baixar qualquer componente.
 function Invoke-Verification {
     $lock = Test-Lockfile
-    [void](Test-PythonTarget)
     [void](Test-VirtualEnvironment)
+    # Um venv válido já é o runtime operacional; só use o Python base quando ele ainda não existe.
+    [void](Test-PythonTarget)
     if ($lock) { Test-PythonPackages $lock }
     Test-Ffmpeg
     Test-WhisperModels

@@ -133,7 +133,33 @@ class PreviewRenderTests(unittest.TestCase):
         self.assertIn("amix=inputs=2:duration=longest:dropout_transition=0:normalize=0", graph.filter_complex)
         self.assertIn("loudnorm=I=-16", graph.filter_complex)
         self.assertIn("alimiter=", graph.filter_complex)
-        self.assertIn("enable='between(t\\,0.5\\,1.25)'", graph.filter_complex)
+        self.assertIn("enable='gte(t\\,0.5)*lt(t\\,1.25)'", graph.filter_complex)
+
+    def test_source_cannot_alias_preview_destination(self) -> None:
+        """Confirma que a preview vigente nunca pode ser usada como entrada do próprio render."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            render_preview(workdir)
+            preview_path = workdir / "preview.mp4"
+            previous_hash = hashlib.sha256(preview_path.read_bytes()).hexdigest()
+
+            document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+            document["sources"][0]["path"] = "preview.mp4"
+            (workdir / "plan.json").write_text(
+                json.dumps(document),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(CliError) as raised:
+                render_preview(workdir)
+
+            self.assertEqual(raised.exception.code, "OUTPUT_INVALID")
+            self.assertEqual(
+                hashlib.sha256(preview_path.read_bytes()).hexdigest(),
+                previous_hash,
+            )
+            self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
     def test_real_cli_publishes_video_only_preview_when_plan_mutes_audio(self) -> None:
         """Confirma que `mute` não cria uma faixa silenciosa publicada como áudio real."""

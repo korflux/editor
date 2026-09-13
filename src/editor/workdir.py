@@ -139,6 +139,50 @@ def resolve_source_path(raw_path: str | Path) -> Path:
     return path
 
 
+def ensure_sources_do_not_alias_output(
+    source_paths: list[Path],
+    destination: Path,
+    artifact_name: str,
+) -> None:
+    """Rejeita aliases físicos entre fontes e o destino antes de substituir uma entrada."""
+
+    destination_path = Path(os.path.abspath(os.fspath(destination)))
+    for raw_source_path in source_paths:
+        source_path = resolve_source_path(raw_source_path)
+        if os.path.normcase(os.fspath(source_path)) == os.path.normcase(
+            os.fspath(destination_path)
+        ):
+            raise _error(
+                "OUTPUT_INVALID",
+                f"Uma fonte não pode coincidir com o destino da {artifact_name}.",
+                EXIT_CODES["STATE"],
+            )
+        if not _lexists(destination_path):
+            continue
+        if not is_regular_path(destination_path):
+            raise _error(
+                "OUTPUT_INVALID",
+                f"O destino da {artifact_name} não é um arquivo regular válido.",
+                EXIT_CODES["STATE"],
+            )
+        try:
+            same_file = os.path.samefile(source_path, destination_path)
+        except FileNotFoundError:
+            same_file = False
+        except OSError as error:
+            raise _error(
+                "OUTPUT_INVALID",
+                f"Não foi possível verificar o destino da {artifact_name}.",
+                EXIT_CODES["STATE"],
+            ) from error
+        if same_file:
+            raise _error(
+                "OUTPUT_INVALID",
+                f"Uma fonte não pode coincidir com o destino da {artifact_name}.",
+                EXIT_CODES["STATE"],
+            )
+
+
 def _ensure_directory(path: Path) -> None:
     """Cria uma pasta interna somente depois de validar todos os pais existentes."""
 

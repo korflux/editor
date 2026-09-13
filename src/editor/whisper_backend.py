@@ -91,20 +91,30 @@ def resolve_config(model: str | None, device: str) -> WhisperConfig:
 
     models = dependencies.discover_models(default_model_root())
     gpu = dependencies.detect_gpu()
-    if device == "cuda" and gpu["status"] != "available":
+    runtime = (
+        dependencies.detect_cuda_runtime()
+        if gpu["status"] == "available"
+        else {"status": gpu["status"], "device_count": 0}
+    )
+    backend = dependencies.detect_whisper_backend()
+    cuda_status = "available"
+    if gpu["status"] != "available":
+        cuda_status = gpu["status"]
+    elif runtime["status"] != "available":
+        cuda_status = runtime["status"]
+    elif backend["status"] != "available":
+        cuda_status = backend["status"]
+
+    if device == "cuda" and cuda_status != "available":
         raise _error("DEVICE_UNAVAILABLE", "O dispositivo CUDA não está disponível localmente.")
 
     if device == "auto":
-        recommendation = choose_recommendation(
-            models,
-            "available" if gpu["status"] == "available" else gpu["status"],
-        )
+        recommendation = choose_recommendation(models, cuda_status)
         resolved_device = str(recommendation["device"])
     else:
         resolved_device = device
 
     model_name, model_path = _select_model(model, models, resolved_device)
-    backend = dependencies.detect_whisper_backend()
     if backend["status"] != "available":
         raise _error(
             "DEPENDENCY_MISSING",

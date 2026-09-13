@@ -7,7 +7,7 @@
 
 - **ROUTE:** max
 - **Modo:** A
-- **Fila:** T10 implementada; T11 é a próxima elegível
+- **Fila:** T11 e correções pós-review R1-R12 e N1-N2 implementadas, aguardando nova `vibe-review` e confirmação humana
 - **Analyze:** `analyze.md` aprovado, veredito `limpo`
 - **Pergunta da T10:** uma aprovação vigente libera a full somente quando plano, preview e fontes continuam com os mesmos hashes?
 
@@ -51,7 +51,7 @@
 
 - A T1 deixou uma CLI Python instalável, mas sem dependências de runtime, lockfile ou instalador.
 - O plano exige Python 3.11 x64 no Windows, `faster-whisper` sobre CTranslate2, FFmpeg local, modelos locais e gates de segredo/SCA.
-- O host atual expõe Python 3.12/3.13, FFmpeg 9.0.1 e gitleaks 8.30.1, mas não possui Python 3.11, o backend Whisper, modelos locais ou pip-audit. A task foi implementada para reportar esse estado sem tratá-lo como aprovado.
+- A primeira verificação ocorreu antes do provisionamento do venv operacional e encontrou somente Python 3.12/3.13 no PATH. Após o provisionamento explícito, o `.venv` passou a fornecer Python 3.11.15 x64, backend Whisper, modelo base e pip-audit para os gates do MVP.
 
 ### Codar
 
@@ -66,10 +66,10 @@
 
 - `python -m unittest discover -s tests -p "test_installation.py" -v` -> `Ran 6 tests ... OK`.
 - `python -m unittest discover -s tests -v` -> `Ran 10 tests ... OK`.
-- `pwsh -NoProfile -File scripts/install.ps1 -Verify` -> exit `1` esperado. O script reportou lockfile e FFmpeg/gitleaks disponíveis, Python 3.11, venv, backend, modelos e pip-audit ausentes, sem criar artefatos.
+- `pwsh -NoProfile -File scripts/install.ps1 -Verify` -> exit `0`, validando o lockfile, o `.venv` Python 3.11.15 x64, backend, modelo base, FFmpeg, gitleaks, CUDA opcional e `pip check`, sem instalar nem criar artefatos.
 - `gitleaks detect --source . --no-banner` -> exit `0`, `no leaks found`.
-- `python -m pip_audit -r requirements.lock` -> exit `1` porque pip-audit não está instalado; esse estado é reportado como bloqueio seguro pelo instalador.
-- `python -m pip check` -> exit `1` por conflito preexistente do Python global entre `inquirer 3.4.1` e o pacote local `editor 0.1.0`; o achado foi registrado em `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md` e não foi alterado.
+- `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` -> exit `0`, sem vulnerabilidades conhecidas.
+- `.venv\Scripts\python.exe -B -m pip check` -> exit `0`; o conflito observado no Python global permanece registrado em `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md`, fora do ambiente operacional.
 
 ### Simplificar e re-testar
 
@@ -93,16 +93,16 @@
 
 ### Codar
 
-- `src/editor/dependencies.py` concentra sondagem de executáveis com `shell=False`, timeout, versão do FFmpeg, pacotes Whisper, GPU/VRAM via `nvidia-smi`, memória do sistema e validação dos arquivos mínimos de modelos.
+- `src/editor/dependencies.py` concentra sondagem de executáveis com `shell=False`, timeout, versão do FFmpeg, encoders `libx264`/`aac`, pacotes Whisper, GPU/VRAM via `nvidia-smi`, runtime CUDA pelo CTranslate2, memória do sistema e validação dos arquivos mínimos de modelos.
 - `src/editor/capabilities.py` monta o inventário versionado de sistema, dependências, dispositivos, formatos, limites, operações e recomendação determinística. A ordem é `small` em CUDA, `base` em CPU e `tiny` como fallback local.
 - `src/editor/cli.py` registra `capabilities` e preserva `--json` antes ou depois do subcomando. O comando publica somente o envelope JSON.
-- `tests/test_capabilities.py` cobre o processo real, as duas posições de `--json`, a ordem da recomendação e o contrato de modelos do instalador.
+- `tests/test_capabilities.py` cobre o processo real, as duas posições de `--json`, a ordem da recomendação, o contrato de modelos, os encoders exigidos e o fallback quando o runtime CUDA não está utilizável.
 
 ### Testar
 
-- `python -m editor capabilities --json` -> exit `0`, envelope `capabilities` válido e stdout estruturado; o host atual reportou FFmpeg/FFprobe e GPU disponíveis, e backend Whisper/modelos ausentes sem bloquear a consulta.
-- `python -m unittest discover -s tests -p "test_capabilities.py" -v` -> `Ran 4 tests ... OK`.
-- `python -m unittest discover -s tests -v` -> `Ran 14 tests ... OK`.
+- `python -m editor capabilities --json` -> exit `0`, envelope `capabilities` válido e stdout estruturado; o host atual reportou FFmpeg/FFprobe, encoders de render, backend Whisper, modelo base e runtime local disponíveis.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_capabilities.py" -v` -> `Ran 5 tests ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> suíte completa verde após a correção pós-review.
 
 ### Simplificar e re-testar
 
@@ -391,34 +391,104 @@
 ### Codar
 
 - `src/editor/capabilities.py` passou a derivar os estados das operações implementadas a partir das dependências reais: `ffprobe` para plano/aprovação e FFmpeg/FFprobe para renders.
-- `tests/e2e/test_mvp_flow.py` executa `capabilities`, análise de áudio, transcrição CPU, extração de frames, validação do plano, preview, aprovação e full por subprocessos reais, conferindo envelopes JSON de uma linha, stderr vazio e ausência de prompts.
+- `tests/e2e/test_mvp_flow.py` executa `capabilities`, análise de áudio, transcrição CPU, extração de frames, validação do plano, preview, aprovação e full por subprocessos reais, conferindo envelopes JSON de uma linha, stderr vazio, ausência de prompts e falha explícita quando um pré-requisito não existe.
 - A mesma prova confere a existência dos artefatos, a duração/timeline de `2.0 s`, a igualdade do hash do plano entre aprovação e full, hashes das fontes e limpeza de `.tmp`.
 - Depois da full aprovada, a fixture de trabalho sofre uma mutação controlada em uma fonte. O novo `render full` precisa retornar `APPROVAL_STALE` e preservar a full e o approval anteriores.
-- `tests/fixtures/e2e/plan.json` e as fontes curtas `main.mp4`, `broll.mp4` e `music.mp3` materializam o cenário de vlog com b-roll, música e lettering `Paraty`.
+- `tests/fixtures/e2e/plan.json` e as fontes curtas `main.mp4`, `broll.mp4`, `music.mp3` e `speech.mp3.b64` materializam o cenário de vlog com b-roll, música, fala real e lettering `Paraty`.
 - `.vibeflow/REGRAS.md` foi sincronizado com a fixture E2E, o teste, a capacidade corrigida, as dependências locais, os limites e a estratégia de verificação.
 
 ### Testar
 
-- `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v` -> `Ran 1 test in 13.626s ... OK`; todos os oito comandos da jornada publicaram os artefatos esperados e a mutação retornou `APPROVAL_STALE` sem alterar a full vigente.
-- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 54 tests in 81.267s ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v` -> `Ran 1 test ... OK`; todos os oito comandos da jornada publicaram os artefatos esperados, a transcrição real retornou segmentos com words temporizadas e a mutação retornou `APPROVAL_STALE` sem alterar a full vigente.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> suíte completa verde após as correções pós-review.
 - `gitleaks detect --source . --no-banner` -> exit `0`, `no leaks found`.
 - `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` -> `No known vulnerabilities found`, com acesso direto autorizado à base do PyPI porque o proxy padrão foi recusado.
 
 ### Simplificar e re-testar
 
-- A prova reutiliza os subprocessos e os envelopes existentes, sem criar um segundo executor de comandos ou uma camada de fixture compartilhada; o único estado novo é o trabalho temporário do próprio teste.
+- A prova reutiliza os subprocessos e os envelopes existentes, sem criar um segundo executor de comandos ou uma camada de fixture compartilhada; o único estado novo é o trabalho temporário do próprio teste e a fixture Base64 mínima de fala.
 - A correção de capacidades ficou no ponto de origem, evitando que cada agente precise inferir disponibilidade a partir de mensagens de erro posteriores.
-- A revisão do plano também marcou como concluídos os aceites de T4 e T9 que já tinham prova verde documentada, mantendo as marcações de ambiente realmente bloqueadas sem alterá-las.
-- A suíte E2E e a suíte completa foram executadas novamente após a revisão, mantendo respectivamente `1` e `54` testes verdes.
+- A revisão do plano marcou como concluídos os aceites de T4 e T9 que já tinham prova verde documentada, e as correções pós-review fecharam os limites, alias, readiness de CUDA, parser estrito e watchdog sem duplicar regras.
+- A suíte E2E e a suíte completa foram executadas novamente após a revisão, mantendo a jornada real de transcrição com fala e todos os testes verdes.
 
 ### Registro
 
 - **Plan:** T11 marcada como concluída.
-- **Spec comprovada nesta fatia:** A1 a A12 e C1 a C5 pela jornada integrada, incluindo stdout JSON, processamento local, preservação de fontes, timeline aprovada e bloqueio de estado obsoleto.
+- **Spec comprovada nesta fatia:** A1 a A12 e C1 a C5 pela jornada integrada e pelos testes de hardening, incluindo stdout JSON, processamento local, rejeição de entradas fora dos limites, preservação de fontes, timeline aprovada e bloqueio de estado obsoleto.
 - **Arquivos:** `src/editor/capabilities.py`, `tests/e2e/test_mvp_flow.py`, `tests/fixtures/e2e/`, `.vibeflow/REGRAS.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/implement.md`.
 - **Decisões:** PROD-01, SCOPE-01, OPS-01, PRIV-01 e CONTRACT-01 comprovadas no fluxo completo.
 - **Mensagem de commit:** `task(T11): validate local mvp journey`
 
+## Correções pós-review R1-R9 e N1-N2
+
+### Reconhecer
+
+- A primeira review encontrou uma falha crítica de alias entre fontes e destinos, limites numéricos e operacionais incompletos, readiness de encoder/CUDA insuficiente, E2E permissivo, documentação divergente, watchdog bloqueável e dois nits de contrato.
+- A fila de T* estava vazia; a correção foi tratada como uma fatia de implementação derivada diretamente dos findings, sem criar uma task especulativa.
+
+### Codar
+
+- `src/editor/workdir.py`, `render/preview.py` e `render/full.py` passaram a rejeitar alias físico entre fontes e destinos antes do FFmpeg, preservando entradas e saídas vigentes.
+- `src/editor/analysis/audio.py` e `src/editor/plan/validation.py` passaram a limitar magnitude numérica, janelas, segmentos, overlays e duração total antes do processamento pesado; os limites também aparecem em `capabilities`.
+- `src/editor/dependencies.py`, `capabilities.py`, `whisper_backend.py` e `scripts/install.ps1` passaram a compartilhar a validação do runtime CUDA pelo CTranslate2, além da sondagem central de encoders.
+- `src/editor/process.py` passou a consumir PCM com watchdog independente da leitura bloqueante de stdout.
+- `contracts.py`, validação de plano e aprovação passaram a rejeitar chaves JSON duplicadas; o filtro de lettering passou a respeitar `[início, fim)`.
+- `scripts/install.ps1` passou a aceitar um venv Python 3.11 x64 já validado como runtime operacional durante `-Verify`, sem exigir um launcher base adicional quando o venv está íntegro.
+- `tests/e2e/test_mvp_flow.py` deixou de pular por dependência ausente e passou a exigir uma fixture local de fala, segmentos e palavras temporizadas no backend real.
+
+### Testar
+
+- Os testes focados de áudio, plano, capacidades, preview, full, transcrição e processo passaram.
+- A jornada E2E passou com fala real, oito comandos, envelopes JSON de uma linha, stderr vazio, artifacts publicados, hashes preservados e bloqueio `APPROVAL_STALE` após mutação.
+- `scripts/install.ps1 -Verify` passou no venv operacional Python 3.11.15 x64; `pip check`, gitleaks e pip-audit passaram.
+
+### Simplificar e re-testar
+
+- As correções reutilizam `workdir`, `dependencies` e os envelopes existentes; não foram adicionadas bibliotecas, serviços, modos de compatibilidade ou abstrações especulativas.
+- `REGRAS.md` não foi alterado nesta fatia, pois não houve decisão de vigência nova. A sincronização de decisões continua condicionada à aprovação humana explícita da review.
+
+### Registro
+
+- **Findings tratados:** R1, R2, R3, R4, R5, R6, R7, R8, R9, N1 e N2.
+- **Artefatos atualizados:** `spec.md`, `plan.md` e este `implement.md`; `review.md` será atualizado pela nova revisão.
+
+## Correções pós-review R10-R12
+
+### Reconhecer
+
+- A etapa 3 da review abriu R10 por validação incompleta de ancestrais reparse no instalador, R11 por NUL aceito em dados de overlay e R12 por arredondamento que podia ultrapassar o limite de janelas de áudio após o início do streaming.
+- A análise estava aprovada e a fila de T* vazia; os três findings eram a única fatia elegível e foram tratados diretamente, sem criar task especulativa.
+
+### Codar
+
+- `scripts/install.ps1` ganhou `Test-RegularPathChain`, que verifica todos os componentes existentes até `RepoRoot`; `Resolve-RepoPath`, `Resolve-LocalPath`, o venv, os modelos e os destinos fixos `.tools` passaram a reutilizar essa guarda antes de criar ou copiar arquivos.
+- `src/editor/plan/validation.py` passou a rejeitar NUL em `text` e `font` de overlays, preservando o envelope `PLAN_INVALID` antes do filtro FFmpeg.
+- `src/editor/analysis/audio.py` centralizou a quantização da janela em amostras e calcula a quantidade efetiva de janelas antes do processamento.
+- `tests/test_installation.py`, `tests/test_plan_validation.py` e `tests/test_audio_analysis.py` ganharam regressões para os três casos de fronteira.
+
+### Testar
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_installation tests.test_plan_validation tests.test_audio_analysis -v` -> `Ran 26 tests ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 69 tests ... OK`, sem testes pulados no host atual.
+- `scripts/install.ps1 -Verify` -> Python 3.11.15 x64, lockfile, backend, modelo, FFmpeg, gitleaks e `pip check` disponíveis; CUDA ausente reportada como opcional.
+- `gitleaks detect --source . --no-banner` -> exit `0`, nenhum segredo encontrado.
+- `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` -> `No known vulnerabilities found`.
+- `git diff --check` -> sem erros de whitespace; os avisos restantes são apenas normalização LF/CRLF do Git.
+
+### Simplificar e re-testar
+
+- A validação física foi centralizada em um helper, evitando três implementações independentes para venv, modelos e ferramentas locais.
+- A quantização de áudio é compartilhada entre a validação e o acumulador, eliminando divergência no cálculo do limite.
+- A rejeição de NUL ficou na borda do plano, sem alterar o escape de filtros ou adicionar uma camada de compatibilidade.
+
+### Registro
+
+- **Findings tratados:** R10, R11 e R12.
+- **Spec comprovada nesta fatia:** A3, A5, A7, A10, A12 e C2, com regressões focadas e suíte completa verde.
+- **Arquivos:** `scripts/install.ps1`, `src/editor/analysis/audio.py`, `src/editor/plan/validation.py`, `tests/test_audio_analysis.py`, `tests/test_installation.py`, `tests/test_plan_validation.py`, `.vibeflow/mvp/spec.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/review.md` e este `implement.md`.
+- **Decisões:** nenhuma decisão de produto nova; R10-R12 apenas fecham hardening já previsto em A3, A5, A7, A10, A12 e C2.
+- **Mensagens de commit:** `task(R10): protect installer path chain`, `task(R11): reject nul overlay input` e `task(R12): quantize audio window limits`.
+
 ## Handoff
 
-Fila após T11: nenhuma T elegível. Handoff para `vibe-review`.
+Fila após T11: nenhuma T elegível e nenhum R* aberto. Handoff para `vibe-review`.

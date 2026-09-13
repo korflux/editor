@@ -8,6 +8,7 @@ from typing import Any
 from ..integrity.approval import verify_approval
 from ..plan.validation import load_validated_plan
 from ..workdir import (
+    ensure_sources_do_not_alias_output,
     prepare_full_layout,
     publish_full_atomic,
     relative_artifact_path,
@@ -29,6 +30,11 @@ def render_full(workdir: str | Path) -> dict[str, Any]:
 
     document, validation = load_validated_plan(workdir)
     layout = prepare_full_layout(workdir)
+    ensure_sources_do_not_alias_output(
+        [Path(str(record["path"])) for record in validation["sources"]],
+        layout.destination,
+        "full",
+    )
     approval = verify_approval(workdir, validation)
 
     # O primeiro vídeo define a resolução final, enquanto o limite de 720 pixels

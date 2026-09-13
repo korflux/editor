@@ -152,6 +152,7 @@ editor render full --workdir <dir> --json
 ```
 
 - A timeline é a concatenação dos segmentos na ordem do array. A duração de cada segmento é `video.out_s - video.in_s`; não existem sobreposições, lacunas, transições ou camadas visuais simultâneas.
+- Para limitar custo de validação e renderização, o plano aceita no máximo 1.000 segmentos, 1.000 overlays e 3.600 segundos de timeline total. A análise de áudio aceita no máximo 250.000 janelas e uma janela individual de até 3.600 segundos; os limites são expostos por `capabilities`.
 - `video` define a imagem exibida. Um b-roll em tela cheia é representado por um segmento cujo `video.source_id` aponta para B, enquanto `audio.tracks` aponta para o áudio de A. O áudio embutido de B não é usado nesse caso.
 - `audio.mode` aceita `keep`, `mute`, `replace` e `mix`. `keep` exige uma faixa da própria fonte visual, `mute` exige lista vazia, `replace` exige uma faixa e `mix` exige pelo menos duas. Cada faixa usa ganho explícito em dB, limitado a `-60` a `+12`; `loop: true` repete somente o trecho da faixa para preencher o segmento e depois o corta no fim.
 - Para `keep` e `replace`, a faixa deve ter duração compatível com o segmento. Para `mix`, todas as faixas devem cobrir o segmento, por corte ou loop. Não há ducking automático.
@@ -180,17 +181,17 @@ editor render full --workdir <dir> --json
 - [x] A7: `render preview` publica exatamente `preview.mp4` em até 720 pixels na maior dimensão e substitui a preview anterior apenas após sucesso.
 - [x] A8: `approve` registra hashes do plano, preview e fontes; `render full` bloqueia plano, preview ou fonte alterados e libera a full quando todos coincidem.
 - [x] A9: Falhas de análise e renderização preservam originais, plano e análises, não publicam saída parcial e retornam erro JSON com exit code não zero.
-- [ ] A10: Entradas não suportadas, acima de 60 minutos, acima de 4 GiB, com caminho inválido ou dependência ausente são rejeitadas antes do processamento correspondente; diretório de trabalho ou destino com reparse point também é rejeitado.
-- [ ] A11: A CLI não interage por prompts, não executa shell intermediário e não usa rede durante análise, validação, aprovação ou renderização.
-- [ ] A12: O instalador PowerShell cria o ambiente Python reproduzível, valida dependências e modelos e só instala componentes externos quando solicitado explicitamente.
+- [x] A10: Entradas não suportadas, acima de 60 minutos, acima de 4 GiB, com caminho inválido ou dependência ausente são rejeitadas antes do processamento correspondente; diretório de trabalho ou destino com reparse point também é rejeitado.
+- [x] A11: A CLI não interage por prompts, não executa shell intermediário e não usa rede durante análise, validação, aprovação ou renderização.
+- [x] A12: O instalador PowerShell cria o ambiente Python reproduzível, valida dependências e modelos e só instala componentes externos quando solicitado explicitamente.
 
 ### Critérios de sucesso
 
-- [ ] C1: O cenário de vlog de viagens percorre `capabilities`, entrevista na conversa, análise, plano, preview, aprovação e full com uma única timeline.
-- [ ] C2: Um agente consegue consumir todos os resultados de máquina por `stdout` JSON sem interpretar mensagens humanas ou stack traces.
+- [x] C1: O cenário de vlog de viagens percorre `capabilities`, entrevista na conversa, análise, plano, preview, aprovação e full com uma única timeline.
+- [x] C2: Um agente consegue consumir todos os resultados de máquina por `stdout` JSON sem interpretar mensagens humanas ou stack traces.
 - [x] C3: A full aprovada é renderizada a partir do mesmo plano e das mesmas fontes verificadas, sem nova decisão editorial dentro da CLI.
 - [x] C4: Nenhuma execução altera ou remove as fontes originais, e nenhuma saída parcial é confundível com uma saída publicada.
-- [ ] C5: A execução continua local quando as dependências e o modelo estão instalados, sem upload, telemetria ou fallback silencioso para serviço externo.
+- [x] C5: A execução continua local quando as dependências e o modelo estão instalados, sem upload, telemetria ou fallback silencioso para serviço externo.
 
 ## Implementação
 
@@ -222,6 +223,8 @@ tests/                         # testes de contrato, integridade e cenário pont
 - Passar processos externos como arrays de argumentos, sem concatenar entrada externa em comandos, e registrar apenas diagnósticos seguros em `stderr`.
 - Usar arquivos temporários dentro do trabalho e publicação atômica. `ponytail: o MVP mantém um único trabalho ativo por processo, trocar por isolamento por job quando houver execução concorrente real`.
 - Rejeitar campos desconhecidos do plano e entradas fora da allowlist na borda. A lógica interna pode lançar exceções tipadas de domínio, convertidas em erro público somente no handler central da CLI.
+- Rejeitar NUL em texto ou fonte de overlay antes da canonicalização e da construção de argumentos para subprocessos.
+- Calcular limites temporais depois da mesma quantização em amostras usada pelo acumulador, para que a validação anteceda o streaming real.
 - Não registrar tokens, caminhos desnecessários, conteúdo transcrito completo ou dados pessoais em logs técnicos.
 
 ### Contratos e módulos
@@ -231,6 +234,12 @@ tests/                         # testes de contrato, integridade e cenário pont
 - Exit codes estáveis: `0` sucesso; `1` erro interno inesperado; `2` argumento, caminho ou permissão inválida; `3` mídia não suportada ou limite excedido; `4` dependência, modelo, dispositivo ou fonte auxiliar ausente; `5` plano, estado ou aprovação inválida; `6` falha de análise, renderização ou publicação.
 - Códigos mínimos de borda: `ARGUMENT_INVALID`, `PATH_INVALID`, `PERMISSION_DENIED`, `MEDIA_UNSUPPORTED`, `MEDIA_LIMIT_EXCEEDED`, `DEPENDENCY_MISSING`, `MODEL_MISSING`, `DEVICE_UNAVAILABLE`, `PLAN_INVALID`, `APPROVAL_REQUIRED`, `APPROVAL_STALE`, `ANALYSIS_FAILED`, `RENDER_FAILED` e `OUTPUT_PUBLISH_FAILED`.
 - `approval.json` deve conter `schema_version`, `approved_at`, `plan_sha256`, `preview_sha256` e uma lista ordenada de `{source_id, sha256}`. Os hashes são sempre SHA-256 dos bytes relevantes, e o plano usa sua forma JSON canônica.
+
+### Hardening comprovado pós-review
+
+- O instalador percorre os ancestrais físicos de destinos configuráveis e fixos, rejeitando reparse points antes de criar ou copiar componentes.
+- Texto e fonte de overlay com NUL falham como `PLAN_INVALID`, sem chegar ao argumento do filtro FFmpeg.
+- O limite de 250.000 janelas de áudio considera a janela convertida para amostras antes de iniciar o processamento.
 
 ## Como provar
 
@@ -246,7 +255,7 @@ tests/                         # testes de contrato, integridade e cenário pont
 
 - Unitário: parser estrito, allowlists, normalização de caminhos, limites, intervalos, validação do plano, JSON canônico, hashes e mapeamento de erros para exit codes.
 - Integração: fixtures curtas MP4 H.264/AAC, MP3, WAV e uma fonte de b-roll, com FFmpeg local e modelo Whisper instalado; verificar os JSONs e metadados dos renders.
-- E2E: vlog de viagens com corte, junção, b-roll em tela cheia mantendo a narração, música de fundo, normalização, limiter e lettering, seguido de preview, aprovação e full.
+- E2E: vlog de viagens com corte, junção, b-roll em tela cheia mantendo a narração, música de fundo, normalização, limiter e lettering, seguido de preview, aprovação e full. O gate exige FFmpeg, backend e modelo locais, não permite `SkipTest` por ausência de pré-requisito e usa uma fixture de fala para comprovar segmentos com palavras e timestamps reais.
 - Manual: abrir os artefatos no diretório do trabalho, conferir os timestamps dos frames e da transcrição, reproduzir a preview e verificar que a full corresponde ao plano aprovado.
 
 ### Comandos

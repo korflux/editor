@@ -31,8 +31,8 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 | Risco | Impacto | Mitigação |
 |---|---|---|
 | Variação entre FFmpeg, faster-whisper, CUDA e modelos locais | médio | T2 e T3 expõem capacidades, estados `missing`/`unsupported` e recomendação determinística; nenhum download silencioso durante o trabalho. |
-| Python 3.11 x64 não está disponível no ambiente atual, que expõe 3.12 e 3.13 | médio | T2 trata o runtime como pré-requisito explícito do instalador e bloqueia a execução fora do alvo suportado. |
-| `pip-audit` não está disponível no ambiente atual | médio | T2 aloca a instalação e a execução do gate SCA junto ao lockfile; `gitleaks 8.30.1` já foi validado. |
+| O venv operacional pode existir sem um interpretador base disponível no PATH | médio | T2 valida primeiro um `.venv` Python 3.11 x64 íntegro; quando o venv não existe, o provisionamento ainda exige um Python base compatível explicitamente informado. |
+| Gates de segurança precisam usar o ambiente operacional correto | médio | T2 executa `pip check` e `pip-audit` pelo `.venv` validado, mantendo gitleaks como ferramenta local explícita. |
 | Locks de arquivo do Windows durante renderização ou substituição | médio | Todas as saídas passam por `.tmp`, são fechadas e validadas antes da substituição atômica; falhas preservam o destino anterior. |
 | Alteração de plano, preview ou fonte após aprovação | alto | T9 grava hashes canônicos e T10 recalcula todos antes de publicar `full.mp4`. |
 
@@ -77,16 +77,16 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
   - [x] `pip-audit` e `gitleaks` são verificados antes dos gates; quando ausentes, a validação falha com instrução segura e não reporta o gate como aprovado. A instalação de qualquer ferramenta é explícita.
   - [x] O gate de segredo com gitleaks e o gate SCA com pip-audit são executáveis a partir do repositório e bloqueiam a validação quando encontram um problema.
 - **Verificação:**
-  - [x] `pwsh -NoProfile -File scripts/install.ps1 -Verify` -> exit `1` esperado no host atual, reportando Python 3.11, venv, backend, modelos e pip-audit ausentes sem criar arquivos; o comportamento de bloqueio é coberto pela suíte.
-  - [ ] `python -m pip check` -> exit `1` por conflito preexistente do Python global (`inquirer 3.4.1` exige `editor>=1.6.0` e o pacote local está em `0.1.0`); registrado em `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md`.
+  - [x] `pwsh -NoProfile -File scripts/install.ps1 -Verify` -> exit `0`, validando lockfile, venv Python 3.11.15 x64, backend, modelo base, FFmpeg, gitleaks, CUDA opcional e `pip check`, sem instalar nem criar artefatos.
+  - [x] `.venv\Scripts\python.exe -B -m pip check` -> exit `0`, sem dependências quebradas no ambiente operacional do MVP. O conflito observado no Python global permanece registrado fora deste fluxo.
   - [x] `gitleaks detect --source . --no-banner` -> exit `0`, `no leaks found`.
-  - [x] `python -m pip_audit -r requirements.lock` -> exit `1` porque a ferramenta não está instalada; `-Verify` bloqueia com instrução para executar `-Install`, sem declarar o gate como aprovado.
+  - [x] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` -> exit `0`, sem vulnerabilidades conhecidas.
   - [x] `python -m unittest discover -s tests -p "test_installation.py" -v` -> `Ran 6 tests ... OK`.
 - **Deps:** T1
 - **Arquivos:** `requirements.lock`, `scripts/install.ps1`, `tests/test_installation.py`
 - **Arquivos adicionais necessários:** `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md`
-- **Prova:** lockfile resolvido para Python 3.11 x64 com 50 pacotes e 648 hashes SHA-256; `-Verify` é somente leitura; instalação de FFmpeg, gitleaks, CUDA e modelos exige caminhos locais explícitos.
-- **Limitação de ambiente:** o host disponível expõe Python 3.12/3.13, não possui Python 3.11, backend Whisper, modelos locais ou pip-audit; por isso a verificação completa de instalação não pode ser aprovada neste host e permanece bloqueada até provisionamento explícito.
+- **Prova:** lockfile resolvido para Python 3.11 x64 com 50 pacotes e 648 hashes SHA-256; `-Verify` é somente leitura e passou usando o venv operacional; instalação de FFmpeg, gitleaks, CUDA e modelos exige caminhos locais explícitos.
+- **Limitação de ambiente:** a criação de um novo venv ainda depende de um Python base 3.11 x64 fornecido pelo operador; o venv provisionado do MVP foi validado integralmente.
 - **Size:** medium, 6/10, runtime, dependências externas, verificação de instalação e gates operacionais
 - **Risk:** medium, a máquina precisa do runtime Python 3.11 x64 e do tooling SCA para executar o gate completo
 
@@ -101,9 +101,9 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
   - [x] A ausência de FFmpeg, CUDA ou modelo não impede a consulta; apenas operações dependentes ficam marcadas como indisponíveis, sem fallback remoto ou download.
   - [x] A recomendação escolhe `base` no CPU quando instalado, `small` no CUDA quando instalado e `tiny` como fallback local determinístico; override indisponível fica explícito.
 - **Verificação:**
-  - [x] `python -m editor capabilities --json` -> exit `0`, envelope `capabilities` válido; no host atual FFmpeg/FFprobe e GPU foram detectados, enquanto backend Whisper e modelos ficaram explicitamente como ausentes.
-  - [x] `python -m unittest discover -s tests -p "test_capabilities.py" -v` -> `Ran 4 tests ... OK`.
-- **Prova:** a descoberta usa somente APIs locais e subprocessos estruturados com `shell=False`, e o fixture de modelos confirmou `base` disponível e `tiny` incompleto como `unsupported`.
+  - [x] `python -m editor capabilities --json` -> exit `0`, envelope `capabilities` válido; o host atual reportou FFmpeg/FFprobe, encoders de render e runtime local disponíveis, com backend Whisper e modelo base disponíveis.
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_capabilities.py" -v` -> `Ran 5 tests ... OK`.
+- **Prova:** a descoberta usa somente APIs locais e subprocessos estruturados com `shell=False`, confere `libx264` e `aac` antes de anunciar render, exige enumeração CUDA pelo CTranslate2 para readiness e mantém o inventário de modelos local.
 - **Deps:** T1, T2
 - **Arquivos:** `src/editor/capabilities.py`, `src/editor/dependencies.py`, `tests/test_capabilities.py`
 - **Size:** medium, 5/10, descoberta local, subprocesso de FFmpeg, estados de dependência e teste de contrato
@@ -253,20 +253,35 @@ O MVP será entregue como uma CLI Python local, instalável no Windows, que cons
 - [x] T11 concluída
 - **Spec:** A1 a A12, C1 a C5
 - **Decisões:** PROD-01 (aceita vlog de viagens em 16:9), SCOPE-01 (fecha análise e edição linear ponta a ponta), OPS-01 (mantém um trabalho por vez), PRIV-01 (mantém execução local sem telemetria), CONTRACT-01 (confirma envelopes JSON puros e estados de operação coerentes)
-- **O quê:** Consolidar fixtures curtas de vlog, b-roll, música e lettering para executar a jornada completa `capabilities` → análise → plano → preview → aprovação explícita → full. A task também registra no Documento Vivo a stack, os pontos de entrada e os módulos realmente criados, além das limitações verificadas.
+- **O quê:** Consolidar fixtures curtas de vlog, b-roll, música, fala e lettering para executar a jornada completa `capabilities` → análise → plano → preview → aprovação explícita → full. A task também registra no Documento Vivo a stack, os pontos de entrada e os módulos realmente criados, além das limitações verificadas.
 - **Aceite:**
   - [x] O cenário E2E percorre todos os comandos do contrato, produz os artefatos esperados e confirma que a full usa a mesma timeline aprovada.
   - [x] A prova confirma `stdout` JSON, diagnósticos técnicos somente em `stderr`, ausência de prompts, execução offline com modelo local, originais intactos e ausência de publicação parcial no bloqueio por mutação de fonte.
   - [x] `REGRAS.md` fica sincronizado com a stack, estrutura, ferramentas, contratos, limitações conhecidas e estratégia de verificação implementados.
 - **Verificação:**
-  - [x] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v` -> `Ran 1 test in 13.626s ... OK`; a jornada publicou áudio, transcrição, frames, preview, `approval.json` e `full.mp4`, e a mutação da fonte retornou `APPROVAL_STALE` sem alterar a full vigente.
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_mvp_flow -v` -> `Ran 1 test ... OK`; a jornada publicou áudio, transcrição com segmentos e words não vazios, frames, preview, `approval.json` e `full.mp4`, e a mutação da fonte retornou `APPROVAL_STALE` sem alterar a full vigente.
   - [x] `gitleaks detect --source . --no-banner` -> exit `0`, nenhum segredo encontrado.
   - [x] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` -> `No known vulnerabilities found`; a execução usou acesso direto autorizado à base do PyPI porque o proxy padrão do ambiente recusou a conexão.
-- **Prova:** a capacidade local passou a refletir os comandos implementados, o E2E executou oito operações com stdout de uma linha JSON e stderr vazio, preservou os hashes das fontes versionadas e limpou `.tmp` após a falha de aprovação obsoleta.
+- **Prova:** a capacidade local passou a refletir os comandos implementados, o E2E estrito executou oito operações com stdout de uma linha JSON e stderr vazio, confirmou timestamps por palavra em uma fixture local de fala, preservou os hashes das fontes versionadas e limpou `.tmp` após a falha de aprovação obsoleta.
 - **Deps:** T3, T5, T6, T7, T8, T9, T10
 - **Arquivos:** `src/editor/capabilities.py`, `tests/e2e/test_mvp_flow.py`, `tests/fixtures/e2e/`, `.vibeflow/REGRAS.md`, `.vibeflow/mvp/plan.md`, `.vibeflow/mvp/implement.md`
 - **Size:** high, 8/10, jornada E2E, dependências locais, verificação de falhas, gates de segurança e sincronização de governança
 - **Risk:** medium, a prova depende de fixtures de mídia e de modelo local compatíveis com o runtime alvo
+
+## Correções pós-review R1-R9 e N1-N2
+
+- R1: `workdir.ensure_sources_do_not_alias_output` agora rejeita alias físicos entre qualquer fonte e o destino de `preview.mp4` ou `full.mp4`; preview e full têm regressões reais que preservam a fonte e a saída vigente.
+- R2 e R8: análise de áudio e validação de plano aplicam limites operacionais antes do processamento pesado, incluindo janela, quantidade de janelas, segmentos, overlays e duração total; `capabilities` expõe todos esses limites.
+- R3 e N2: números não representáveis e objetos JSON com chaves duplicadas são convertidos em erro público `PLAN_INVALID` antes da execução de mídia, tanto no plano quanto na aprovação.
+- R4 e R5: a sondagem de encoders é centralizada em `dependencies`, e CUDA só fica disponível quando o CTranslate2 enumera um dispositivo utilizável; `capabilities`, o backend e o `-Verify` do instalador usam essa mesma condição, e a seleção automática faz fallback determinístico para CPU.
+- R6: o E2E não usa `SkipTest` para pré-requisitos ausentes, materializa `speech.mp3` a partir de fixture versionada e exige segmentos com palavras temporizadas no backend real.
+- R7: spec, plan e implement foram reconciliados com o estado comprovado. `REGRAS.md` não foi alterado, pois nenhuma decisão vigente mudou e sua sincronização aguarda aprovação humana explícita.
+- R9: `stream_pcm` mantém um watchdog independente da leitura de stdout e possui regressão para processo bloqueado.
+- N1: o filtro de overlay respeita intervalos `[início, fim)` com `gte` no início e `lt` no fim.
+- R10: `scripts/install.ps1` percorre todos os componentes físicos existentes até a raiz do repositório e reutiliza a guarda nos destinos configuráveis e nas pastas fixas `.tools`; junctions ancestrais são rejeitadas antes de qualquer escrita.
+- R11: a validação do plano rejeita NUL em texto e fonte de overlay antes do hash e da construção do filtro, retornando `PLAN_INVALID` pelo envelope central.
+- R12: a análise de áudio calcula o limite de janelas com a contagem de amostras quantizada, rejeitando a fronteira que excederia as 250.000 janelas antes do streaming.
+- **Provas pós-review:** `tests.e2e.test_mvp_flow` passou com fala real; os testes focados de instalação, plano e áudio passaram com 26 casos; a suíte completa passou com 69 testes; `scripts/install.ps1 -Verify`, `pip check`, gitleaks, pip-audit e `git diff --check` passaram no host atual.
 
 ## Conferência
 

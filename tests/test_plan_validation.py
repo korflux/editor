@@ -87,6 +87,24 @@ def fake_inspect_source(
     )
 
 
+def fake_long_video_source(path: Path, *, require_audio: bool, require_video: bool) -> MediaMetadata:
+    """Fornece uma fonte longa determinística para testar o limite da timeline."""
+
+    return MediaMetadata(
+        path=path,
+        container="mp4",
+        audio_codec="aac",
+        video_codec="h264",
+        duration_seconds=3_600.0,
+        size_bytes=path.stat().st_size,
+        sample_rate=48_000,
+        channels=1,
+        video_width=320,
+        video_height=180,
+        video_frame_rate=25.0,
+    )
+
+
 class PlanValidationTests(unittest.TestCase):
     """Garante que somente planos explícitos e temporalmente consistentes sejam aceitos."""
 
@@ -170,6 +188,107 @@ class PlanValidationTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "PLAN_INVALID")
             inspect.assert_not_called()
 
+    def test_huge_numeric_value_returns_plan_invalid_envelope(self) -> None:
+        """Confirma que um inteiro JSON não conversível não cai em erro interno."""
+
+        document = load_workflow_plan()
+        document["segments"][0]["video"]["in_s"] = 10**1000
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            result = run_module(
+                "plan",
+                "validate",
+                "--workdir",
+                str(workdir),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 5)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(payload["error"]["code"], "PLAN_INVALID")
+
+    def test_duplicate_json_keys_are_rejected(self) -> None:
+        """Confirma que objetos JSON ambíguos falham antes de qualquer inspeção de mídia."""
+
+        with workspace_tempdir() as workdir:
+            (workdir / "plan.json").write_text(
+                '{"schema_version":1,"schema_version":1}',
+                encoding="utf-8",
+            )
+            with patch("editor.plan.validation.media.inspect_source") as inspect:
+                with self.assertRaises(CliError) as raised:
+                    validate_plan(workdir)
+
+            self.assertEqual(raised.exception.code, "PLAN_INVALID")
+            inspect.assert_not_called()
+
+    def test_segment_count_limit_is_rejected(self) -> None:
+        """Confirma que uma lista compacta de segmentos não amplia o custo sem limite."""
+
+        document = load_workflow_plan()
+        document["segments"] = document["segments"] * 334
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            result = run_module(
+                "plan",
+                "validate",
+                "--workdir",
+                str(workdir),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 5)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(payload["error"]["code"], "PLAN_INVALID")
+
+    def test_timeline_duration_limit_is_rejected(self) -> None:
+        """Confirma que a timeline total não ultrapassa o limite operacional do MVP."""
+
+        document = {
+            "schema_version": 1,
+            "profile": {"aspect_ratio": "16:9"},
+            "sources": [
+                {
+                    "id": "main",
+                    "kind": "video",
+                    "path": str(WORKFLOW_SOURCES / "main.mp4"),
+                }
+            ],
+            "segments": [
+                {
+                    "video": {
+                        "source_id": "main",
+                        "in_s": 0,
+                        "out_s": 3_600,
+                        "fit": "preserve",
+                    },
+                    "audio": {"mode": "mute", "tracks": []},
+                },
+                {
+                    "video": {
+                        "source_id": "main",
+                        "in_s": 0,
+                        "out_s": 1,
+                        "fit": "preserve",
+                    },
+                    "audio": {"mode": "mute", "tracks": []},
+                },
+            ],
+            "overlays": [],
+        }
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            with patch(
+                "editor.plan.validation.media.inspect_source",
+                side_effect=fake_long_video_source,
+            ):
+                with self.assertRaises(CliError) as raised:
+                    validate_plan(workdir)
+
+        self.assertEqual(raised.exception.code, "PLAN_INVALID")
+
     def test_broll_cannot_keep_audio_from_a_different_source(self) -> None:
         """Confirma a regra que exige áudio explícito de A quando B ocupa a imagem."""
 
@@ -201,7 +320,7 @@ class PlanValidationTests(unittest.TestCase):
                 with self.assertRaises(CliError) as raised:
                     validate_plan(workdir)
 
-            self.assertEqual(raised.exception.code, "PLAN_INVALID")
+        self.assertEqual(raised.exception.code, "PLAN_INVALID")
 
     def test_nul_in_overlay_returns_plan_invalid_envelope(self) -> None:
         """Confirma que controle NUL falha na validação antes de alcançar o filtro FFmpeg."""
