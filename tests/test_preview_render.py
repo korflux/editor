@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from array import array
 from contextlib import contextmanager
 import hashlib
 import json
@@ -140,6 +141,72 @@ def mean_frame_difference(first: bytes, second: bytes) -> float:
     return sum(abs(left - right) for left, right in zip(first, second)) / len(first)
 
 
+def extract_mono_samples(path: Path) -> list[int]:
+    """Extrai PCM mono para medir a presença de áudio em janelas temporais reais."""
+
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "s16le",
+            "-",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout:
+        raise AssertionError(result.stderr.decode(errors="replace"))
+    samples = array("h")
+    samples.frombytes(result.stdout)
+    if sys.byteorder == "big":
+        samples.byteswap()
+    return samples.tolist()
+
+
+def mean_audio_level(samples: list[int], start_s: float, end_s: float) -> float:
+    """Calcula o nível médio absoluto de uma janela sem depender de bibliotecas de áudio."""
+
+    start = int(start_s * 48_000)
+    end = min(len(samples), int(end_s * 48_000))
+    window = samples[start:end]
+    if not window:
+        return 0.0
+    return sum(abs(sample) for sample in window) / len(window)
+
+
+def configure_j_l_audio_plan(workdir: Path, *, with_cuts: bool) -> None:
+    """Prepara planos comparáveis, mantendo áudio no primeiro grupo e isolando a fronteira L."""
+
+    document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+    document["segments"][2]["audio"] = {"mode": "mute", "tracks": []}
+    document["audio_processing"] = {
+        "normalize_loudness": False,
+        "target_lufs": -16,
+        "limiter": {"enabled": False, "ceiling_dbfs": -1},
+        "ducking": False,
+    }
+    if with_cuts:
+        document["segments"][1]["audio"]["tracks"][0]["in_s"] = 0.5
+        document["segments"][1]["audio"]["tracks"][0]["out_s"] = 1.4
+        document["cuts"] = [
+            {"after_segment": 1, "type": "j", "duration_s": 0.2},
+            {"after_segment": 2, "type": "l", "duration_s": 0.2},
+        ]
+    else:
+        document["cuts"] = []
+    (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+
+
 class PreviewRenderTests(unittest.TestCase):
     """Garante composição linear, áudio explícito e ausência de publicação parcial."""
 
@@ -216,6 +283,77 @@ class PreviewRenderTests(unittest.TestCase):
         self.assertIn("amix=inputs=2:duration=longest:dropout_transition=0:normalize=0", graph.filter_complex)
         self.assertIn("loudnorm=I=-16", graph.filter_complex)
         self.assertIn("alimiter=", graph.filter_complex)
+
+    def test_real_cli_positions_j_and_l_audio_on_global_timeline(self) -> None:
+        """Confirma por janelas reais a antecipação J, a extensão L e a mixagem sem ducking."""
+
+        with workspace_tempdir() as workdir:
+            cut_workdir = workdir / "cuts"
+            static_workdir = workdir / "static"
+            cut_workdir.mkdir()
+            static_workdir.mkdir()
+            copy_workflow(cut_workdir)
+            copy_workflow(static_workdir)
+            configure_j_l_audio_plan(cut_workdir, with_cuts=True)
+            configure_j_l_audio_plan(static_workdir, with_cuts=False)
+
+            cut_result = run_module(
+                "render",
+                "preview",
+                "--workdir",
+                str(cut_workdir.resolve()),
+                "--json",
+            )
+            static_result = run_module(
+                "render",
+                "preview",
+                "--workdir",
+                str(static_workdir.resolve()),
+                "--json",
+            )
+            cut_payload = json.loads(cut_result.stdout)
+            static_payload = json.loads(static_result.stdout)
+
+            self.assertEqual(cut_result.returncode, 0, cut_result.stderr)
+            self.assertEqual(static_result.returncode, 0, static_result.stderr)
+            self.assertEqual(cut_payload["data"]["cut_count"], 2)
+            self.assertEqual(cut_payload["data"]["timeline_duration_seconds"], 2.0)
+            self.assertTrue(cut_payload["data"]["audio"]["present"])
+            self.assertAlmostEqual(
+                inspect_source(
+                    cut_workdir / "preview.mp4",
+                    require_audio=True,
+                    require_video=True,
+                ).duration_seconds,
+                2.0,
+                places=1,
+            )
+
+            _, validation = load_validated_plan(cut_workdir)
+            graph = build_ffmpeg_graph(
+                json.loads((cut_workdir / "plan.json").read_text(encoding="utf-8")),
+                validation,
+                canvas_width=320,
+                canvas_height=180,
+            )
+            self.assertIn("adelay=550|550", graph.filter_complex)
+            self.assertIn(
+                "amix=inputs=2:duration=longest:dropout_transition=0:normalize=0",
+                graph.filter_complex,
+            )
+            self.assertIn("atrim=start=0:end=2", graph.filter_complex)
+            self.assertNotIn("acrossfade", graph.filter_complex)
+            self.assertNotIn("sidechaincompress", graph.filter_complex)
+
+            cut_samples = extract_mono_samples(cut_workdir / "preview.mp4")
+            static_samples = extract_mono_samples(static_workdir / "preview.mp4")
+            cut_early = mean_audio_level(cut_samples, 0.60, 0.70)
+            static_early = mean_audio_level(static_samples, 0.60, 0.70)
+            cut_late = mean_audio_level(cut_samples, 1.30, 1.40)
+            static_late = mean_audio_level(static_samples, 1.30, 1.40)
+
+            self.assertGreater(cut_early, static_early * 1.4)
+            self.assertGreater(cut_late, max(static_late * 4, 100))
 
     def test_real_cli_interpolates_motion_without_changing_canvas_or_duration(self) -> None:
         """Confirma por frames que o movimento altera o enquadramento sem remover o vídeo-base."""

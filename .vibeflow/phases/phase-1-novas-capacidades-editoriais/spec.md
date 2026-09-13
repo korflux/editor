@@ -316,7 +316,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
 - [x] A4: O movimento usa `from` e `to`, interpola linearmente por frame, respeita
   `zoom` entre `0.5` e `4.0`, mantém `fit` separado e produz frames verificáveis
   em aproximação, afastamento e deslocamento.
-- [ ] A5: Um plano com J e L válidos antecipa ou prolonga o áudio exatamente pela
+- [x] A5: Um plano com J e L válidos antecipa ou prolonga o áudio exatamente pela
   duração declarada, mistura somente os grupos ativos e preserva a duração visual
   final; fronteiras ou coberturas inválidas falham na validação.
 - [ ] A6: Camadas de texto, imagem e vídeo respeitam intervalo, caixa, fit,
@@ -340,7 +340,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
   lettering por coordenadas e o áudio explícito do MVP.
 - [x] C2: A prova de frames confirma em timestamps distintos que o movimento
   muda o enquadramento e que a imagem-base continua presente sob as camadas.
-- [ ] C3: A prova de áudio confirma o início antecipado do J, a extensão do L e a
+- [x] C3: A prova de áudio confirma o início antecipado do J, a extensão do L e a
   duração final exata sem ducking ou crossfade implícito.
 - [x] C4: A execução repetida de `init` não altera hashes nem bytes dos artefatos
   existentes e não cria `plan.json`, `approval.json`, `preview.mp4` ou `full.mp4`.

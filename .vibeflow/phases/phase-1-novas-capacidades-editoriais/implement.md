@@ -1,7 +1,7 @@
 # Implement: Novas capacidades editoriais e preparação de trabalhos
 # Alvo: phase-1-novas-capacidades-editoriais
 # Status: aprovado
-# Route: high · modo A · T3
+# Route: high · modo A · T4
 
 ## Reconhecimento
 
@@ -148,7 +148,60 @@
 - `tests/test_plan_validation.py`
 - `tests/test_preview_render.py`
 
+## T4: Montar áudio global para cortes J/L
+
+#### Reconhecimento
+
+- A fila recalculada após T3 tinha T4 e T9 elegíveis. A T4 foi escolhida
+  explicitamente pelo operador.
+- `_validate_cuts_structure()` já protegia a forma básica de `cuts[]`, mas não
+  conhecia a quantidade de segmentos, as durações adjacentes, o modo de áudio
+  afetado ou a cobertura real das faixas.
+- `build_ffmpeg_graph()` concatenava vídeo e áudio por segmento. Isso impedia
+  posicionar um grupo antes ou depois da fronteira sem deslocar a timeline
+  visual.
+
+#### Implementação
+
+- Adicionada a resolução centralizada das janelas globais de áudio, com
+  rejeição de fronteira inexistente, duplicada, duração incompatível, extensão
+  de segmento em mute e cobertura insuficiente.
+- A timeline validada passa a expor `audio_start_s`, `audio_end_s` e
+  `audio_duration_s`; a duração visual e o hash canônico permanecem separados
+  e inalterados.
+- O grafo mantém a concatenação somente do vídeo, monta cada grupo de áudio
+  com sua duração necessária, aplica `adelay` para J/L e mistura os grupos
+  posicionados com `normalize=0` e `dropout_transition=0`.
+- O áudio global é recortado para `[0, timeline_duration)`. Segmentos mute não
+  geram silêncio artificial e, quando todos estão mute, a saída continua sem
+  stream de áudio.
+- A cobertura existente de `loop: true` foi preservada, agora aplicada à
+  janela estendida do grupo. A prova reutiliza as fontes reais do fixture de
+  workflow, sem criar fixture binário nova.
+
+#### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  -> `Ran 29 tests ... OK`.
+- A prova real compara J+L com o mesmo plano sem cortes, confirma antecipação
+  em 0,60–0,70 s, extensão em 1,30–1,40 s, duração visual de 2 s e stream AAC.
+- A inspeção do grafo confirma `adelay`, mixagem sem normalização automática e
+  ausência de `acrossfade` ou `sidechaincompress`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
+  -> `Ran 87 tests ... OK`.
+- `git diff --check` passou.
+
+#### Arquivos
+
+- `src/editor/plan/validation.py`
+- `src/editor/render/ffmpeg_graph.py`
+- `tests/test_plan_validation.py`
+- `tests/test_preview_render.py`
+- `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`
+- `.vibeflow/phases/phase-1-novas-capacidades-editoriais/spec.md`
+
 ## Handoff
 
-Próximas T* elegíveis: T4 e T9. Recomenda-se T4 como próxima fatia e novo chat
-para manter o isolamento da implementação.
+Próximas T* elegíveis: T5 e T9. T6, T7, T8 e T10 permanecem bloqueadas pelas
+dependências declaradas no `plan.md`. Recomenda-se T5 como próxima fatia, em
+novo chat, mantendo o isolamento da implementação.

@@ -268,6 +268,7 @@ def _validate_cuts_structure(value: Any) -> list[dict[str, Any]]:
     """Valida a forma explícita dos cortes sem ainda calcular sua sobreposição temporal."""
 
     cuts = require_array(value, "cuts")
+    normalized: list[dict[str, Any]] = []
     for cut_value in cuts:
         cut = require_object(cut_value, "cuts[]")
         reject_unknown_fields(cut, CUT_FIELDS, "cuts[]")
@@ -284,7 +285,14 @@ def _validate_cuts_structure(value: Any) -> list[dict[str, Any]]:
         duration = _finite_number(cut.get("duration_s"), "cuts[].duration_s")
         if not 0 < duration <= 30:
             raise plan_error("A duração do corte deve estar entre zero e trinta segundos.")
-    return cuts
+        normalized.append(
+            {
+                "after_segment": after_segment,
+                "type": cut_type,
+                "duration_s": _rounded(duration),
+            }
+        )
+    return normalized
 
 
 def _validate_layer_geometry(layer: dict[str, Any], location: str) -> None:
@@ -483,10 +491,10 @@ def _validate_video(
 def _validate_track(
     value: Any,
     source_map: dict[str, dict[str, Any]],
-    segment_duration: float,
+    required_duration: float,
     location: str,
 ) -> dict[str, Any]:
-    """Valida intervalo, ganho e cobertura de uma faixa de áudio do segmento."""
+    """Valida intervalo, ganho e cobertura de uma faixa na janela global do grupo."""
 
     track = require_object(value, location)
     reject_unknown_fields(track, TRACK_FIELDS, location)
@@ -508,8 +516,8 @@ def _validate_track(
         raise plan_error("O ganho de cada faixa deve estar entre -60 e +12 dB.")
     if not isinstance(loop, bool):
         raise plan_error("O campo loop da faixa deve ser booleano.")
-    if not loop and end - start + ASPECT_TOLERANCE < segment_duration:
-        raise plan_error("A faixa de áudio não cobre a duração do segmento.")
+    if not loop and end - start + ASPECT_TOLERANCE < required_duration:
+        raise plan_error("A faixa de áudio não cobre a duração necessária do grupo.")
     return track
 
 
@@ -517,10 +525,10 @@ def _validate_audio(
     value: Any,
     source_map: dict[str, dict[str, Any]],
     video_source_id: str,
-    segment_duration: float,
+    required_duration: float,
     location: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Valida o modo de áudio e garante a regra de narração do b-roll."""
+    """Valida o modo de áudio e a cobertura necessária da janela global do grupo."""
 
     audio = require_object(value, location)
     reject_unknown_fields(audio, AUDIO_FIELDS, location)
@@ -537,7 +545,7 @@ def _validate_audio(
     if mode == "mix" and len(tracks) < 2:
         raise plan_error("Um segmento mix deve declarar ao menos duas faixas.")
     validated_tracks = [
-        _validate_track(track, source_map, segment_duration, f"{location}.tracks[]")
+        _validate_track(track, source_map, required_duration, f"{location}.tracks[]")
         for track in tracks
     ]
     if mode == "keep" and validated_tracks[0].get("source_id") != video_source_id:
@@ -545,18 +553,69 @@ def _validate_audio(
     return audio, validated_tracks
 
 
+def _resolve_audio_windows(
+    cuts: list[dict[str, Any]],
+    visual_segments: list[dict[str, Any]],
+) -> list[tuple[float, float]]:
+    """Calcula janelas globais de áudio e rejeita cortes incompatíveis com os segmentos."""
+
+    audio_starts = [float(item["start_s"]) for item in visual_segments]
+    audio_ends = [float(item["end_s"]) for item in visual_segments]
+    seen_boundaries: set[int] = set()
+
+    for cut in cuts:
+        boundary = int(cut["after_segment"])
+        if boundary >= len(visual_segments):
+            raise plan_error("O corte referencia uma fronteira inexistente entre segmentos.")
+        if boundary in seen_boundaries:
+            raise plan_error("Cada fronteira de segmentos pode declarar somente um corte.")
+        seen_boundaries.add(boundary)
+
+        duration = float(cut["duration_s"])
+        previous_duration = float(visual_segments[boundary - 1]["duration_s"])
+        next_duration = float(visual_segments[boundary]["duration_s"])
+        if (
+            duration + ASPECT_TOLERANCE >= previous_duration
+            or duration + ASPECT_TOLERANCE >= next_duration
+        ):
+            raise plan_error(
+                "A duração do corte deve ser menor que a duração dos dois segmentos adjacentes."
+            )
+
+        if cut["type"] == "j":
+            target_index = boundary
+            if visual_segments[target_index]["segment"]["audio"]["mode"] == "mute":
+                raise plan_error("Um corte J não pode estender um segmento em mute.")
+            audio_starts[target_index] = _rounded(
+                float(visual_segments[target_index]["start_s"]) - duration
+            )
+        else:
+            target_index = boundary - 1
+            if visual_segments[target_index]["segment"]["audio"]["mode"] == "mute":
+                raise plan_error("Um corte L não pode estender um segmento em mute.")
+            audio_ends[target_index] = _rounded(
+                float(visual_segments[target_index]["end_s"]) + duration
+            )
+
+    return [
+        (_rounded(start), _rounded(end))
+        for start, end in zip(audio_starts, audio_ends, strict=True)
+    ]
+
+
 def _validate_segments(
     value: Any,
     source_map: dict[str, dict[str, Any]],
+    cuts: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], float]:
-    """Valida segmentos em ordem e calcula a timeline concatenada sem lacunas ou sobreposições."""
+    """Valida a timeline visual e depois aplica as janelas globais de áudio dos cortes."""
 
     segments = require_array(value, "segments")
     if not segments:
         raise plan_error("O plano deve declarar ao menos um segmento.")
     if len(segments) > MAX_SEGMENTS:
         raise plan_error("O plano excede o limite de segmentos permitido.")
-    timeline_segments: list[dict[str, Any]] = []
+    visual_segments: list[dict[str, Any]] = []
     timeline_end = 0.0
     for index, item in enumerate(segments, start=1):
         segment = require_object(item, "segments[]")
@@ -565,18 +624,42 @@ def _validate_segments(
         duration = float(video["out_s"]) - float(video["in_s"])
         if timeline_end + duration > MAX_TIMELINE_DURATION_SECONDS + ASPECT_TOLERANCE:
             raise plan_error("A timeline excede a duração máxima permitida.")
+        visual_segments.append(
+            {
+                "segment": segment,
+                "video": video,
+                "index": index,
+                "start_s": _rounded(timeline_end),
+                "end_s": _rounded(timeline_end + duration),
+                "duration_s": _rounded(duration),
+            }
+        )
+        timeline_end += duration
+
+    audio_windows = _resolve_audio_windows(cuts, visual_segments)
+    timeline_segments: list[dict[str, Any]] = []
+    for visual_segment, (audio_start, audio_end) in zip(
+        visual_segments,
+        audio_windows,
+        strict=True,
+    ):
+        segment = visual_segment["segment"]
+        video = visual_segment["video"]
         audio, tracks = _validate_audio(
             segment.get("audio"),
             source_map,
             str(video["source_id"]),
-            duration,
+            audio_end - audio_start,
             "segments[].audio",
         )
         timeline_segment = {
-            "index": index,
-            "start_s": _rounded(timeline_end),
-            "end_s": _rounded(timeline_end + duration),
-            "duration_s": _rounded(duration),
+            "index": visual_segment["index"],
+            "start_s": visual_segment["start_s"],
+            "end_s": visual_segment["end_s"],
+            "duration_s": visual_segment["duration_s"],
+            "audio_start_s": audio_start,
+            "audio_end_s": audio_end,
+            "audio_duration_s": _rounded(audio_end - audio_start),
             "video_source_id": video["source_id"],
             "fit": video["fit"],
             "audio_mode": audio["mode"],
@@ -585,7 +668,6 @@ def _validate_segments(
         if "motion" in video:
             timeline_segment["motion"] = video["motion"]
         timeline_segments.append(timeline_segment)
-        timeline_end += duration
     return timeline_segments, _rounded(timeline_end)
 
 
@@ -641,7 +723,11 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
     _validate_profile(document.get("profile"))
     cut_definitions, layer_definitions, audio_processing = _validate_plan_structure(document)
     source_map, source_records = _inspect_sources(root, document.get("sources"))
-    timeline_segments, timeline_duration = _validate_segments(document.get("segments"), source_map)
+    timeline_segments, timeline_duration = _validate_segments(
+        document.get("segments"),
+        source_map,
+        cut_definitions,
+    )
     _validate_layer_intervals(layer_definitions, timeline_duration)
     return {
         "plan_path": str(plan_path),

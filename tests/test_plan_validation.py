@@ -150,6 +150,78 @@ class PlanValidationTests(unittest.TestCase):
         self.assertEqual(len(data["plan_sha256"]), 64)
         self.assertEqual(json.loads(data["canonical_json"])["schema_version"], 2)
 
+    def test_j_and_l_define_global_audio_windows(self) -> None:
+        """Confirma que J antecipa e L prolonga a janela do grupo sem mudar a timeline visual."""
+
+        document = load_workflow_plan()
+        document["segments"][1]["audio"]["tracks"][0]["out_s"] = 1.65
+        document["cuts"] = [
+            {"after_segment": 1, "type": "j", "duration_s": 0.2},
+            {"after_segment": 2, "type": "l", "duration_s": 0.2},
+        ]
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+            with patch(
+                "editor.plan.validation.media.inspect_source",
+                side_effect=fake_inspect_source,
+            ):
+                result = validate_plan(workdir)
+
+        timeline = result["timeline"]["segments"]
+        self.assertEqual(result["cut_count"], 2)
+        self.assertEqual(result["timeline"]["duration_seconds"], 2.0)
+        self.assertEqual(
+            (timeline[1]["audio_start_s"], timeline[1]["audio_end_s"]),
+            (0.55, 1.45),
+        )
+        self.assertEqual(timeline[1]["audio_duration_s"], 0.9)
+
+    def test_invalid_j_l_definitions_are_rejected(self) -> None:
+        """Confirma fronteiras, sobreposição, mute e cobertura inválidos como PLAN_INVALID."""
+
+        cases = {
+            "unknown_type": [{"after_segment": 1, "type": "x", "duration_s": 0.2}],
+            "zero_duration": [{"after_segment": 1, "type": "j", "duration_s": 0}],
+            "missing_boundary": [{"after_segment": 3, "type": "j", "duration_s": 0.2}],
+            "duplicate_boundary": [
+                {"after_segment": 1, "type": "j", "duration_s": 0.2},
+                {"after_segment": 1, "type": "l", "duration_s": 0.2},
+            ],
+            "adjacent_duration": [{"after_segment": 1, "type": "j", "duration_s": 0.5}],
+            "mute_j": [{"after_segment": 1, "type": "j", "duration_s": 0.2}],
+            "mute_l": [{"after_segment": 1, "type": "l", "duration_s": 0.2}],
+            "insufficient_coverage": [{"after_segment": 1, "type": "j", "duration_s": 0.2}],
+        }
+        for name, cuts in cases.items():
+            with self.subTest(name=name):
+                document = load_workflow_plan()
+                document["cuts"] = cuts
+                if name == "mute_j":
+                    document["segments"][1]["audio"] = {
+                        "mode": "mute",
+                        "tracks": [],
+                    }
+                elif name == "mute_l":
+                    document["segments"][0]["audio"] = {
+                        "mode": "mute",
+                        "tracks": [],
+                    }
+
+                with workspace_tempdir() as workdir:
+                    write_plan(workdir, document)
+                    shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+                    with patch(
+                        "editor.plan.validation.media.inspect_source",
+                        side_effect=fake_inspect_source,
+                    ) as inspect:
+                        with self.assertRaises(CliError) as raised:
+                            validate_plan(workdir)
+
+                self.assertEqual(raised.exception.code, "PLAN_INVALID")
+                if name in {"unknown_type", "zero_duration"}:
+                    inspect.assert_not_called()
+
     def test_canonical_hash_ignores_json_formatting(self) -> None:
         """Confirma que espaços e ordem textual não alteram o hash do plano semântico."""
 

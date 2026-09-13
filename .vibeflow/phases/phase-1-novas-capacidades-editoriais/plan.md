@@ -104,18 +104,19 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T4: Montar áudio global para cortes J/L
 
-- [ ] T4 concluída
+- [x] T4 concluída
 - **Spec:** A5, C3
 - **Decisões:** CUT-01 (cria cortes declarados na fronteira e sobreposição temporal explícita)
 - **O quê:** Validar `cuts[]` por fronteira, tipo, duração, adjacência e cobertura de áudio, e substituir a concatenação implícita por grupos de áudio posicionados na timeline global. Os grupos ativos devem ser mixados apenas durante a sobreposição, mantendo ganhos explícitos e sem crossfade, ducking ou ganho automático.
 - **Aceite:**
-  - [ ] J inicia o grupo seguinte em `b - duration_s` e L prolonga o grupo anterior até `b + duration_s`; fronteiras duplicadas, índices inválidos, mute incompatível e cobertura insuficiente falham como `PLAN_INVALID` antes do FFmpeg.
-  - [ ] A saída mistura os grupos ativos, recorta o áudio para `[0, timeline_duration)`, mantém duração visual exata e permanece sem stream de áudio quando todos os segmentos estão em mute.
-  - [ ] A prova com fixture real identifica, por janelas de áudio, a antecipação do J, a extensão do L e a ausência de ducking ou crossfade implícito.
+  - [x] J inicia o grupo seguinte em `b - duration_s` e L prolonga o grupo anterior até `b + duration_s`; fronteiras duplicadas, índices inválidos, mute incompatível e cobertura insuficiente falham como `PLAN_INVALID` antes do FFmpeg.
+  - [x] A saída mistura os grupos ativos, recorta o áudio para `[0, timeline_duration)`, mantém duração visual exata e permanece sem stream de áudio quando todos os segmentos estão em mute.
+  - [x] A prova com fixture real identifica, por janelas de áudio, a antecipação do J, a extensão do L e a ausência de ducking ou crossfade implícito.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
 - **Deps:** T2
-- **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `tests/fixtures/phase-1/`
+- **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` -> `Ran 29 tests ... OK`; `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 87 tests ... OK`; `git diff --check` passou
+- **Arquivos:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`
 - **Size:** `high, 8/10, validação de fronteiras e montagem de áudio global com integração FFmpeg real`
 - **Risk:** `high, deslocamento incorreto pode alterar fala, duração ou sincronização de todos os segmentos seguintes`
 

@@ -202,15 +202,15 @@ def _audio_track_filter(
     input_indexes: Mapping[str, int],
     segment_index: int,
     track_index: int,
-    segment_duration: float,
+    required_duration: float,
 ) -> str:
-    """Corta, repete quando solicitado, aplica ganho e padroniza cada faixa de áudio."""
+    """Corta, repete quando solicitado, aplica ganho e cobre a janela global do grupo."""
 
     source_id = str(track["source_id"])
     input_index = input_indexes[source_id]
     start = _number(track["in_s"])
     end = _number(track["out_s"])
-    duration = _number(segment_duration)
+    duration = _number(required_duration)
     gain = _number(track["gain_db"])
     filters = [
         f"atrim=start={start}:end={end}",
@@ -241,15 +241,15 @@ def _audio_segment_filter(
     segment: Mapping[str, Any],
     input_indexes: Mapping[str, int],
     segment_index: int,
-    segment_duration: float,
+    required_duration: float,
 ) -> str:
-    """Monta o áudio de um segmento sem incluir implicitamente o áudio do vídeo exibido."""
+    """Monta o grupo de áudio sem incluir implicitamente o áudio do vídeo exibido."""
 
     audio = segment["audio"]
     tracks = list(audio["tracks"])
     output_label = f"aseg{segment_index}"
     if not tracks:
-        duration = _number(segment_duration)
+        duration = _number(required_duration)
         return (
             f"anullsrc=r=48000:cl=stereo,atrim=duration={duration},"
             f"asetpts=PTS-STARTPTS[{output_label}]"
@@ -264,7 +264,7 @@ def _audio_segment_filter(
                 input_indexes,
                 segment_index,
                 track_index,
-                segment_duration,
+                required_duration,
             )
         )
         track_labels.append(f"a{segment_index}t{track_index}")
@@ -278,6 +278,45 @@ def _audio_segment_filter(
             f"dropout_transition=0:normalize=0[{output_label}]"
         )
     return ";".join(parts)
+
+
+def _position_audio_group(input_label: str, start_s: float, group_index: int) -> str:
+    """Desloca um grupo para a timeline global sem alterar seu ganho explícito."""
+
+    if start_s < 0:
+        raise ValueError("janela de áudio negativa")
+    output_label = f"apos{group_index}"
+    if start_s <= 0:
+        return f"[{input_label}]anull[{output_label}]"
+    delay = _number(start_s * 1000)
+    return f"[{input_label}]adelay={delay}|{delay}[{output_label}]"
+
+
+def _global_audio_filter(
+    group_labels: list[str],
+    timeline_duration: float,
+) -> tuple[list[str], str]:
+    """Mixa grupos posicionados e recorta o resultado exatamente à timeline visual."""
+
+    if not group_labels:
+        raise ValueError("nenhum grupo de áudio para mixar")
+
+    parts: list[str] = []
+    if len(group_labels) == 1:
+        mixed_label = group_labels[0]
+    else:
+        mixed_label = "aglobalmix"
+        inputs = "".join(f"[{label}]" for label in group_labels)
+        parts.append(
+            f"{inputs}amix=inputs={len(group_labels)}:duration=longest:"
+            f"dropout_transition=0:normalize=0[{mixed_label}]"
+        )
+    output_label = "aglobal"
+    parts.append(
+        f"[{mixed_label}]atrim=start=0:end={_number(timeline_duration)},"
+        f"asetpts=PTS-STARTPTS[{output_label}]"
+    )
+    return parts, output_label
 
 
 def _audio_processing_filters(
@@ -392,7 +431,7 @@ def build_ffmpeg_graph(
     has_audio = any(segment["audio"]["mode"] != "mute" for segment in segments)
     parts: list[str] = []
     video_labels: list[str] = []
-    audio_labels: list[str] = []
+    audio_group_labels: list[str] = []
 
     for segment_index, (segment, timeline_segment) in enumerate(
         zip(segments, timeline_segments, strict=True)
@@ -410,29 +449,28 @@ def build_ffmpeg_graph(
             )
         )
         video_labels.append(f"v{segment_index}")
-        if has_audio:
+        if has_audio and segment["audio"]["mode"] != "mute":
             parts.append(
                 _audio_segment_filter(
                     segment,
                     input_indexes,
                     segment_index,
-                    float(timeline_segment["duration_s"]),
+                    float(timeline_segment["audio_duration_s"]),
                 )
             )
-            audio_labels.append(f"aseg{segment_index}")
+            parts.append(
+                _position_audio_group(
+                    f"aseg{segment_index}",
+                    float(timeline_segment["audio_start_s"]),
+                    segment_index,
+                )
+            )
+            audio_group_labels.append(f"apos{segment_index}")
 
-    concat_inputs = "".join(
-        f"[{video_label}]" + (f"[{audio_label}]" if has_audio else "")
-        for video_label, audio_label in zip(video_labels, audio_labels or [None] * len(video_labels))
-    )
+    concat_inputs = "".join(f"[{video_label}]" for video_label in video_labels)
     concat_video_label = "vconcat"
-    concat_audio_label = "aconcat" if has_audio else None
-    concat_outputs = f"[{concat_video_label}]"
-    if concat_audio_label:
-        concat_outputs += f"[{concat_audio_label}]"
     parts.append(
-        f"{concat_inputs}concat=n={len(video_labels)}:v=1:a={1 if has_audio else 0}"
-        f"{concat_outputs}"
+        f"{concat_inputs}concat=n={len(video_labels)}:v=1:a=0[{concat_video_label}]"
     )
 
     video_label = concat_video_label
@@ -448,8 +486,13 @@ def build_ffmpeg_graph(
         )
         video_label = f"vtext{overlay_index}"
 
-    audio_label: str | None = concat_audio_label
-    if audio_label:
+    audio_label: str | None = None
+    if has_audio:
+        global_audio_filters, audio_label = _global_audio_filter(
+            audio_group_labels,
+            float(validation["timeline"]["duration_seconds"]),
+        )
+        parts.extend(global_audio_filters)
         processing_filters, audio_label = _audio_processing_filters(
             audio_label,
             validation["audio_processing"],
