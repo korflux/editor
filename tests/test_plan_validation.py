@@ -318,6 +318,47 @@ class PlanValidationTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "PLAN_INVALID")
             inspect.assert_not_called()
 
+    def test_schema_version_requires_json_integer_before_media_probe(self) -> None:
+        """Confirma que formas numéricas equivalentes a 2 não substituem o inteiro JSON exigido."""
+
+        for raw_version in ("2.0", "2e0"):
+            with self.subTest(raw_version=raw_version):
+                document = load_workflow_plan()
+                serialized = json.dumps(document).replace(
+                    '"schema_version": 2',
+                    f'"schema_version": {raw_version}',
+                    1,
+                )
+                with workspace_tempdir() as workdir:
+                    (workdir / "plan.json").write_text(serialized, encoding="utf-8")
+                    with patch("editor.plan.validation.media.inspect_source") as inspect:
+                        with self.assertRaises(CliError) as raised:
+                            validate_plan(workdir)
+
+                self.assertEqual(raised.exception.code, "PLAN_INVALID")
+                inspect.assert_not_called()
+
+    def test_audio_source_kind_rejects_mp4_via_real_cli(self) -> None:
+        """Confirma no processo real que áudio declarado não aceita contêiner audiovisual MP4."""
+
+        document = load_workflow_plan()
+        document["sources"][0]["kind"] = "audio"
+        with workspace_tempdir() as workdir:
+            shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+            write_plan(workdir, document)
+            result = run_module(
+                "plan",
+                "validate",
+                "--workdir",
+                str(workdir),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 5)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(payload["error"]["code"], "PLAN_INVALID")
+
     def test_legacy_overlays_are_rejected_before_media_probe(self) -> None:
         """Confirma que `overlays` não permanece como uma segunda interpretação do plano."""
 

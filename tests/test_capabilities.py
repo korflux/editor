@@ -117,6 +117,7 @@ class CapabilitiesTests(unittest.TestCase):
 
         self.assertNotIn("não possui `editor init`", combined)
         self.assertNotIn("`editor init` ainda não existe", combined)
+        self.assertNotIn("subcomandos de mídia ainda não existem", combined)
         self.assertNotIn("zoom/movimento, inserções em camada e cortes J/L", combined)
 
     def test_root_json_flag_is_preserved_before_subcommand(self) -> None:

@@ -116,7 +116,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Entrada:** argumentos de linha de comando; `--help`, `--version` e `--json` estão disponíveis nesta fatia.
 - **Saída:** ajuda ou versão para uso humano; sucesso e erro JSON versionados no `stdout` quando `--json` é informado, sem stack trace.
 - **Dependências:** Python >= 3.11 e biblioteca padrão; não faz rede nem executa processos externos.
-- **Limitação conhecida:** os subcomandos de mídia ainda não existem; `ponytail: adicionar cada operação somente na task correspondente, mantendo a fundação sem dispatcher especulativo`.
+- **Limitação conhecida:** a CLI permanece local e não interativa, sem upload ou decisão editorial automática; as operações de mídia e composição estão descritas nas seções específicas abaixo.
 - **Verificação:** `python -m pip install --no-deps -e .`, `python -m editor --help`, `editor --help` e `python -m unittest discover -s tests -p "test_cli_contract.py" -v`.
 
 ### Instalador local, T2

@@ -460,6 +460,8 @@ def _inspect_sources(root: Path, value: Any) -> tuple[dict[str, dict[str, Any]],
         if source_id in by_id or not isinstance(kind, str) or kind not in SOURCE_KINDS:
             raise plan_error("Cada fonte deve ter um ID único e um tipo suportado.")
         path = _resolve_plan_source(root, source.get("path"))
+        if kind == "audio" and path.suffix.lower() not in media.PLAN_AUDIO_SOURCE_EXTENSIONS:
+            raise plan_error("Uma fonte declarada como áudio deve usar MP3 ou WAV PCM S16LE.")
         metadata = by_path.get(path)
         if metadata is None:
             try:
@@ -784,7 +786,11 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
 
     reject_unknown_fields(document, ROOT_FIELDS, "raiz")
     schema_version = document.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != PLAN_SCHEMA_VERSION:
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != PLAN_SCHEMA_VERSION
+    ):
         raise plan_error(f"O plano deve usar schema_version {PLAN_SCHEMA_VERSION}.")
     _validate_profile(document.get("profile"))
     cut_definitions, layer_definitions, audio_processing = _validate_plan_structure(document)

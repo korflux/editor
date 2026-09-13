@@ -20,6 +20,8 @@ MAX_SOURCE_DURATION_SECONDS = 3_600
 MAX_IMAGE_SIZE_BYTES = 100 * 1024**2
 MAX_IMAGE_DIMENSION = 8_192
 SUPPORTED_SOURCE_EXTENSIONS = {".mp4", ".mp3", ".wav"}
+# O plano trata áudio como fonte somente de áudio, embora a análise genérica aceite MP4 audiovisual.
+PLAN_AUDIO_SOURCE_EXTENSIONS = frozenset({".mp3", ".wav"})
 IMAGE_FORMATS = {
     ".png": ("png_pipe", "png"),
     ".jpg": ("jpeg_pipe", "mjpeg"),

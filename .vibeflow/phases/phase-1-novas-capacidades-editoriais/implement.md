@@ -474,6 +474,37 @@ da prova E2E e dos gates finais.
   fixture consumida.
 - **Decisões:** SCOPE-01, INIT-01 e STATE-01 implementadas na prova ponta a ponta.
 
-## Handoff
+## Handoff da execução original
 
 Fila da phase concluída. Próximo passo: `vibe-review`.
+
+## Correções dos achados R1-R4
+
+### Reconhecimento
+
+- ROUTE: high, modo A, alvo `phase-1-novas-capacidades-editoriais`, fila de correções `R1`, `R2`, `R3` e `R4`; não havia T* aberta no `plan.md`.
+- Pergunta da fatia: quais achados Required ainda deixam o contrato v2 ou a governança da Phase 1 inconsistentes?
+- O fluxo foi rastreado de `_validate_loaded_plan` para `_inspect_sources`, `media.inspect_source`, a CLI real e os testes de contrato; a análise genérica continua aceitando MP4 para operações audiovisuais, enquanto `kind: "audio"` no plano exige uma fonte somente de áudio.
+
+### Implementação
+
+- R1: os três itens de aceite da T2 foram sincronizados com a T2 já marcada como concluída.
+- R2: `schema_version` agora exige um inteiro JSON exatamente igual à versão do plano, rejeitando `2.0` e `2e0` antes da inspeção de mídia.
+- R3: a allowlist de fontes de áudio do plano foi centralizada em `media.py`; `_inspect_sources` rejeita MP4 declarado como áudio antes do FFprobe, sem alterar a análise audiovisual genérica.
+- R4: a limitação histórica obsoleta foi substituída no Documento Vivo e recebeu uma asserção de regressão em `test_capabilities.py`.
+
+### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_cli_contract tests.test_plan_validation -v` -> `Ran 30 tests in 6.894s`, `OK`.
+- `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities -v` -> `Ran 7 tests in 2.023s`, `OK`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 101 tests in 202.520s`, `OK`.
+
+### Registro
+
+- **Plan:** os três aceites da T2 foram marcados como concluídos e a prova da correção foi anexada à seção da task.
+- **Review:** R1, R2, R3 e R4 foram corrigidos e aguardam revalidação pelo `vibe-review`.
+- **Arquivos:** `.vibeflow/REGRAS.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`, `src/editor/media.py`, `src/editor/plan/validation.py`, `tests/test_capabilities.py` e `tests/test_plan_validation.py`.
+
+## Handoff
+
+Fila da phase concluída. Correções R1-R4 registradas. Próximo passo: `vibe-review`.

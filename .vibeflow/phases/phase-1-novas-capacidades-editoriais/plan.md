@@ -72,12 +72,13 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 - **Decisões:** CONTRACT-01 (substitui o plano vigente por `schema_version: 2`), TEXT-01 (remove posições nomeadas do contrato v2)
 - **O quê:** Substituir a allowlist v1 por `schema_version`, `profile`, `sources`, `segments`, `cuts`, `layers` e `audio_processing`, mantendo `cuts` e `layers` explícitos e rejeitando `overlays`, v1 e campos desconhecidos antes de consultar mídia. Atualizar a versão do pacote e da CLI para o próximo major, `1.0.0`, e migrar o fixture linear e suas expectativas para v2 sem manter fallback. Os artefatos derivados do workflow serão regenerados na T8, junto com o grafo v2, preservando a versão própria de `approval.json`.
 - **Aceite:**
-  - [ ] Um plano v2 linear válido preserva a timeline e o hash canônico; a resposta expõe `cut_count` e `layer_count`, sem `overlay_count`.
-  - [ ] Plano v1, `overlays`, posições nomeadas, campos desconhecidos, números não finitos e listas ausentes ou inválidas falham como `PLAN_INVALID` antes do FFprobe quando a falha for estrutural.
-  - [ ] `pyproject.toml`, `CLI_VERSION`, testes e fixtures do plano deixam de declarar v1 como contrato vigente, enquanto o schema separado de `approval.json` permanece estável e nenhuma dependência Python nova é adicionada.
+  - [x] Um plano v2 linear válido preserva a timeline e o hash canônico; a resposta expõe `cut_count` e `layer_count`, sem `overlay_count`.
+  - [x] Plano v1, `overlays`, posições nomeadas, campos desconhecidos, números não finitos e listas ausentes ou inválidas falham como `PLAN_INVALID` antes do FFprobe quando a falha for estrutural.
+  - [x] `pyproject.toml`, `CLI_VERSION`, testes e fixtures do plano deixam de declarar v1 como contrato vigente, enquanto o schema separado de `approval.json` permanece estável e nenhuma dependência Python nova é adicionada.
 - **Verificação:**
   - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_cli_contract tests.test_plan_validation -v`
 - **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_cli_contract tests.test_plan_validation -v` -> `Ran 21 tests ... OK`; `git diff --check` passou
+- **Prova da correção:** `.venv\Scripts\python.exe -B -m unittest tests.test_cli_contract tests.test_plan_validation -v` -> `Ran 30 tests in 6.894s`, `OK`; `schema_version` decimal/exponencial e fonte MP4 declarada como áudio falham como `PLAN_INVALID`.
 - **Arquivos:** `pyproject.toml`, `src/editor/contracts.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `tests/test_cli_contract.py`, `tests/test_capabilities.py`, `tests/test_plan_validation.py`, `tests/fixtures/workflow/plan.json`
 - **Deps:** nenhuma
 - **Arquivos:** `pyproject.toml`, `src/editor/contracts.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `tests/test_cli_contract.py`, `tests/test_plan_validation.py`, `tests/fixtures/workflow/plan.json`
