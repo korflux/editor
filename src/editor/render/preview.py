@@ -411,7 +411,8 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
         "timeline_duration_seconds": expected_duration,
         "source_count": validation["source_count"],
         "segment_count": validation["segment_count"],
-        "overlay_count": validation["overlay_count"],
+        "cut_count": validation["cut_count"],
+        "layer_count": validation["layer_count"],
         "video": {
             "codec": metadata.video_codec,
             "width": metadata.video_width,

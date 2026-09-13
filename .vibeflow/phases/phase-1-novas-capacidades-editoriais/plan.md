@@ -86,18 +86,19 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T3: Interpolar movimento no vídeo-base
 
-- [ ] T3 concluída
+- [x] T3 concluída
 - **Spec:** A4, C2
 - **Decisões:** MOTION-01 (cria estados `from`/`to`, interpolação linear e limites de zoom)
 - **O quê:** Validar `video.motion` com estados completos, números finitos e limites declarados, e incorporar ao grafo compartilhado a transformação por tempo local do segmento. O movimento deve manter `fit` e duração separados, limitar o enquadramento em zoom maior ou igual a um e preencher com preto as áreas descobertas em zoom menor que um.
 - **Aceite:**
-  - [ ] Movimento ausente mantém o comportamento estático; movimento presente aceita somente `from` e `to` com `x`, `y` e `zoom` válidos, rejeitando valores fora dos limites antes do FFmpeg.
-  - [ ] A interpolação é linear por frame, reproduz aproximação, afastamento e deslocamento em frames distintos e não altera a duração nem o canvas 16:9.
-  - [ ] O teste real da preview demonstra mudança de enquadramento sem remover o vídeo-base e sem deixar saída parcial em caso de falha.
+  - [x] Movimento ausente mantém o comportamento estático; movimento presente aceita somente `from` e `to` com `x`, `y` e `zoom` válidos, rejeitando valores fora dos limites antes do FFmpeg.
+  - [x] A interpolação é linear por frame, reproduz aproximação, afastamento e deslocamento em frames distintos e não altera a duração nem o canvas 16:9.
+  - [x] O teste real da preview demonstra mudança de enquadramento sem remover o vídeo-base e sem deixar saída parcial em caso de falha.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+- **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` -> `Ran 26 tests ... OK`; `git diff --check` passou
 - **Deps:** T2
-- **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `tests/fixtures/phase-1/`
+- **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/render/preview.py`, `src/editor/render/full.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`
 - **Size:** `high, 8/10, validação temporal e filtro FFmpeg com prova por frames reais`
 - **Risk:** `high, erro de clamp ou interpolação altera o enquadramento de toda a composição`
 

@@ -25,6 +25,10 @@ from .schema import (
     LAYER_FIT_MODES,
     LAYER_TYPES,
     LIMITER_FIELDS,
+    MOTION_FIELDS,
+    MOTION_STATE_FIELDS,
+    MOTION_ZOOM_MAX,
+    MOTION_ZOOM_MIN,
     PROFILE_FIELDS,
     ROOT_FIELDS,
     SEGMENT_FIELDS,
@@ -188,6 +192,33 @@ def _validate_source_structure(value: Any) -> None:
     ids = [str(source["id"]) for source in sources]
     if len(ids) != len(set(ids)):
         raise plan_error("Cada fonte deve ter um ID único e um tipo suportado.")
+
+
+def _validate_motion(value: Any, location: str) -> dict[str, dict[str, float]]:
+    """Valida e normaliza os estados completos de movimento antes do uso no FFmpeg."""
+
+    motion = require_object(value, location)
+    reject_unknown_fields(motion, MOTION_FIELDS, location)
+    normalized: dict[str, dict[str, float]] = {}
+    for state_name in ("from", "to"):
+        state_location = f"{location}.{state_name}"
+        state = require_object(motion.get(state_name), state_location)
+        reject_unknown_fields(state, MOTION_STATE_FIELDS, state_location)
+        x = _finite_number(state.get("x"), f"{state_location}.x")
+        y = _finite_number(state.get("y"), f"{state_location}.y")
+        zoom = _finite_number(state.get("zoom"), f"{state_location}.zoom")
+        if not 0 <= x <= 1 or not 0 <= y <= 1:
+            raise plan_error("Os pontos x e y do movimento devem estar entre 0 e 1.")
+        if not MOTION_ZOOM_MIN <= zoom <= MOTION_ZOOM_MAX:
+            raise plan_error("O zoom do movimento deve estar entre 0.5 e 4.0.")
+        normalized[state_name] = {
+            "x": _rounded(x),
+            "y": _rounded(y),
+            "zoom": _rounded(zoom),
+        }
+    return normalized
+
+
 def _validate_segment_structure(value: Any) -> None:
     """Valida objetos e números dos segmentos antes de consultar suas fontes reais."""
 
@@ -211,6 +242,8 @@ def _validate_segment_structure(value: Any) -> None:
             raise plan_error("Cada vídeo deve declarar fit preserve, contain ou crop.")
         _finite_number(video.get("in_s"), "segments[].video.in_s")
         _finite_number(video.get("out_s"), "segments[].video.out_s")
+        if "motion" in video:
+            _validate_motion(video["motion"], "segments[].video.motion")
 
         audio = require_object(segment.get("audio"), "segments[].audio")
         reject_unknown_fields(audio, AUDIO_FIELDS, "segments[].audio")
@@ -422,6 +455,8 @@ def _validate_video(
 
     video = require_object(value, location)
     reject_unknown_fields(video, VIDEO_FIELDS, location)
+    if "motion" in video:
+        video = {**video, "motion": _validate_motion(video["motion"], f"{location}.motion")}
     source_id = video.get("source_id")
     if (
         not isinstance(source_id, str)
@@ -537,18 +572,19 @@ def _validate_segments(
             duration,
             "segments[].audio",
         )
-        timeline_segments.append(
-            {
-                "index": index,
-                "start_s": _rounded(timeline_end),
-                "end_s": _rounded(timeline_end + duration),
-                "duration_s": _rounded(duration),
-                "video_source_id": video["source_id"],
-                "fit": video["fit"],
-                "audio_mode": audio["mode"],
-                "audio_source_ids": [track["source_id"] for track in tracks],
-            }
-        )
+        timeline_segment = {
+            "index": index,
+            "start_s": _rounded(timeline_end),
+            "end_s": _rounded(timeline_end + duration),
+            "duration_s": _rounded(duration),
+            "video_source_id": video["source_id"],
+            "fit": video["fit"],
+            "audio_mode": audio["mode"],
+            "audio_source_ids": [track["source_id"] for track in tracks],
+        }
+        if "motion" in video:
+            timeline_segment["motion"] = video["motion"]
+        timeline_segments.append(timeline_segment)
         timeline_end += duration
     return timeline_segments, _rounded(timeline_end)
 

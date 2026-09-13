@@ -247,6 +247,70 @@ class PlanValidationTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "PLAN_INVALID")
             inspect.assert_not_called()
 
+    def test_motion_is_optional_and_normalized_in_timeline(self) -> None:
+        """Confirma movimento opcional, estados completos e valores normalizados no relatório."""
+
+        document = load_workflow_plan()
+        document["segments"][0]["video"]["motion"] = {
+            "from": {"x": 0.2, "y": 0.35, "zoom": 0.75},
+            "to": {"x": 0.8, "y": 0.65, "zoom": 1.75},
+        }
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+            with patch(
+                "editor.plan.validation.media.inspect_source",
+                side_effect=fake_inspect_source,
+            ):
+                result = validate_plan(workdir)
+
+        self.assertEqual(
+            result["timeline"]["segments"][0]["motion"],
+            {
+                "from": {"x": 0.2, "y": 0.35, "zoom": 0.75},
+                "to": {"x": 0.8, "y": 0.65, "zoom": 1.75},
+            },
+        )
+        self.assertNotIn("motion", result["timeline"]["segments"][1])
+
+    def test_invalid_motion_is_rejected_before_media_probe(self) -> None:
+        """Confirma que estrutura, finitude e limites do movimento falham antes do FFprobe."""
+
+        valid_from = {"x": 0.5, "y": 0.5, "zoom": 1.0}
+        valid_to = {"x": 0.5, "y": 0.5, "zoom": 1.0}
+        invalid_motions = {
+            "unknown_field": {
+                "from": valid_from,
+                "to": valid_to,
+                "easing": "linear",
+            },
+            "missing_state": {"from": valid_from},
+            "focus_outside_bounds": {
+                "from": {"x": 1.1, "y": 0.5, "zoom": 1.0},
+                "to": valid_to,
+            },
+            "zoom_outside_bounds": {
+                "from": valid_from,
+                "to": {"x": 0.5, "y": 0.5, "zoom": 4.1},
+            },
+            "non_finite_zoom": {
+                "from": valid_from,
+                "to": {"x": 0.5, "y": 0.5, "zoom": float("nan")},
+            },
+        }
+        for name, motion in invalid_motions.items():
+            with self.subTest(name=name):
+                document = load_workflow_plan()
+                document["segments"][0]["video"]["motion"] = motion
+                with workspace_tempdir() as workdir:
+                    write_plan(workdir, document)
+                    with patch("editor.plan.validation.media.inspect_source") as inspect:
+                        with self.assertRaises(CliError) as raised:
+                            validate_plan(workdir)
+
+                self.assertEqual(raised.exception.code, "PLAN_INVALID")
+                inspect.assert_not_called()
+
     def test_relative_source_cannot_escape_workdir(self) -> None:
         """Confirma que um caminho relativo com traversal falha antes da inspeção de mídia."""
 

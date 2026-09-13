@@ -1,7 +1,7 @@
 # Implement: Novas capacidades editoriais e preparação de trabalhos
 # Alvo: phase-1-novas-capacidades-editoriais
 # Status: aprovado
-# Route: high · modo A · T2
+# Route: high · modo A · T3
 
 ## Reconhecimento
 
@@ -96,6 +96,59 @@
 - `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`
 - `.vibeflow/phases/phase-1-novas-capacidades-editoriais/spec.md`
 
+## T3: Interpolar movimento no vídeo-base
+
+#### Reconhecimento
+
+- A fila recalculada após T2 tinha T3, T4 e T9 elegíveis. A T3 foi escolhida
+  explicitamente pelo operador.
+- O contrato estrutural do vídeo estava centralizado em
+  `src/editor/plan/schema.py` e `src/editor/plan/validation.py`, enquanto o
+  render compartilhado era construído por `src/editor/render/ffmpeg_graph.py`.
+- A validação ainda rejeitava `motion`, e o grafo só aplicava `fit`, portanto o
+  movimento precisava ser validado antes da inspeção de mídia e aplicado após a
+  normalização do vídeo no canvas.
+
+#### Implementação
+
+- Adicionado `video.motion` opcional com estados obrigatórios `from` e `to`,
+  campos estritos `x`, `y` e `zoom`, números finitos e limites normalizados de
+  foco e zoom entre `0.5` e `4.0`.
+- O relatório da timeline passa a expor os estados de movimento normalizados;
+  a ausência de movimento mantém o caminho estático existente.
+- O grafo aplica interpolação linear pelo tempo local do segmento, escala por
+  frame, canvas preto fixo até o zoom máximo e crop com limites nas bordas.
+  Assim, zoom maior ou igual a um não revela áreas fora da fonte e zoom menor
+  que um revela preto sem alterar a duração ou o canvas final.
+- Corrigida a saída residual da migração v2 em preview/full, que ainda buscava
+  `overlay_count` depois de o validador passar a produzir `cut_count` e
+  `layer_count`.
+- A prova visual gera uma fonte `testsrc2` somente no diretório temporário do
+  teste, comparando frames do mesmo instante com e sem movimento e verificando
+  o preenchimento preto no afastamento.
+
+#### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  -> `Ran 26 tests ... OK`.
+- A prova cobre estados opcionais e normalizados, campos desconhecidos, estado
+  incompleto, foco fora do intervalo, zoom fora do intervalo e NaN antes do
+  FFprobe.
+- A prova de preview confirma mudança real de pixels, canvas 320x180, duração
+  de 2 segundos e áreas pretas no zoom-out.
+- `git diff --check` passou.
+
+#### Arquivos
+
+- `src/editor/plan/schema.py`
+- `src/editor/plan/validation.py`
+- `src/editor/render/ffmpeg_graph.py`
+- `src/editor/render/preview.py`
+- `src/editor/render/full.py`
+- `tests/test_plan_validation.py`
+- `tests/test_preview_render.py`
+
 ## Handoff
 
-Próxima T* elegível: T3. Recomenda-se novo chat para a próxima fatia.
+Próximas T* elegíveis: T4 e T9. Recomenda-se T4 como próxima fatia e novo chat
+para manter o isolamento da implementação.

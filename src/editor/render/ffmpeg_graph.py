@@ -8,6 +8,8 @@ import math
 import textwrap
 from typing import Any
 
+from ..plan.schema import MOTION_ZOOM_MAX
+
 
 MIN_LIMITER_DBFS = 20 * math.log10(0.0625)
 """Menor teto representável diretamente pelo filtro `alimiter` do FFmpeg."""
@@ -85,12 +87,69 @@ def _position_expressions(position: str) -> tuple[str, str]:
     return positions[position]
 
 
+def _linear_motion_expression(start: object, end: object, duration: float) -> str:
+    """Gera uma expressão FFmpeg de interpolação linear pelo tempo local do segmento."""
+
+    progress = f"min(1\\,max(0\\,t/{_number(duration)}))"
+    return f"({_number(start)}+({_number(end)}-{_number(start)})*{progress})"
+
+
+def _motion_filter_graph(
+    input_label: str,
+    motion: Mapping[str, Any],
+    *,
+    segment_index: int,
+    segment_duration: float,
+    frame_rate: float | None,
+    canvas_width: int,
+    canvas_height: int,
+) -> tuple[str, str]:
+    """Transforma o quadro normalizado e retorna o grafo com canvas preto de dimensão fixa."""
+
+    start = motion["from"]
+    end = motion["to"]
+    focal_x = _linear_motion_expression(start["x"], end["x"], segment_duration)
+    focal_y = _linear_motion_expression(start["y"], end["y"], segment_duration)
+    zoom = _linear_motion_expression(start["zoom"], end["zoom"], segment_duration)
+    padded_width = int(canvas_width * MOTION_ZOOM_MAX)
+    padded_height = int(canvas_height * MOTION_ZOOM_MAX)
+    rate = _number(frame_rate if frame_rate and frame_rate > 0 else 25.0)
+    scaled_width = f"trunc(iw*{zoom}/2)*2"
+    scaled_height = f"trunc(ih*{zoom}/2)*2"
+    crop_x = f"min(max((iw-ow)*{focal_x}\\,0)\\,iw-ow)"
+    crop_y = f"min(max((ih-oh)*{focal_y}\\,0)\\,ih-oh)"
+    scaled_label = f"m{segment_index}s"
+    background_label = f"m{segment_index}b"
+    composited_label = f"m{segment_index}p"
+    output_label = f"m{segment_index}c"
+    graph = ";".join(
+        [
+            f"[{input_label}]scale=w={scaled_width}:h={scaled_height}:eval=frame[{scaled_label}]",
+            (
+                f"color=c=black:s={padded_width}x{padded_height}:r={rate}:"
+                f"d={_number(segment_duration)}[{background_label}]"
+            ),
+            (
+                f"[{background_label}][{scaled_label}]overlay="
+                f"x=(W-w)*{focal_x}:y=(H-h)*{focal_y}:eval=frame:shortest=1"
+                f"[{composited_label}]"
+            ),
+            (
+                f"[{composited_label}]crop=w={canvas_width}:h={canvas_height}:"
+                f"x={crop_x}:y={crop_y}[{output_label}]"
+            ),
+        ]
+    )
+    return graph, output_label
+
+
 def _video_segment_filter(
     segment: Mapping[str, Any],
     input_indexes: Mapping[str, int],
     segment_index: int,
     canvas_width: int,
     canvas_height: int,
+    frame_rate: float | None,
 ) -> str:
     """Corta um vídeo e normaliza sua imagem para o canvas 16:9 da preview."""
 
@@ -118,6 +177,21 @@ def _video_segment_filter(
                 f"scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=decrease",
                 f"pad={canvas_width}:{canvas_height}:(ow-iw)/2:(oh-ih)/2:color=black",
             ]
+        )
+    if "motion" in video:
+        base_label = f"v{segment_index}base"
+        motion_graph, motion_label = _motion_filter_graph(
+            base_label,
+            video["motion"],
+            segment_index=segment_index,
+            segment_duration=float(video["out_s"]) - float(video["in_s"]),
+            frame_rate=frame_rate,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+        )
+        return (
+            f"[{input_index}:v:0]{','.join(filters)}[{base_label}];"
+            f"{motion_graph};[{motion_label}]format=yuv420p[v{segment_index}]"
         )
     filters.append("format=yuv420p")
     return f"[{input_index}:v:0]{','.join(filters)}[v{segment_index}]"
@@ -308,12 +382,13 @@ def build_ffmpeg_graph(
     canvas_width: int,
     canvas_height: int,
 ) -> FfmpegGraph:
-    """Cria o grafo completo de vídeo, áudio, concatenação, overlays e processamento final."""
+    """Cria o grafo completo de vídeo, áudio, concatenação e processamento final."""
 
     input_source_ids = _used_source_ids(document)
     input_indexes = {source_id: index for index, source_id in enumerate(input_source_ids)}
     segments = list(document["segments"])
     timeline_segments = list(validation["timeline"]["segments"])
+    source_records = {str(record["id"]): record for record in validation["sources"]}
     has_audio = any(segment["audio"]["mode"] != "mute" for segment in segments)
     parts: list[str] = []
     video_labels: list[str] = []
@@ -322,6 +397,8 @@ def build_ffmpeg_graph(
     for segment_index, (segment, timeline_segment) in enumerate(
         zip(segments, timeline_segments, strict=True)
     ):
+        source_record = source_records[str(segment["video"]["source_id"])]
+        source_frame_rate = source_record["video_frame_rate"]
         parts.append(
             _video_segment_filter(
                 segment,
@@ -329,6 +406,7 @@ def build_ffmpeg_graph(
                 segment_index,
                 canvas_width,
                 canvas_height,
+                float(source_frame_rate) if source_frame_rate is not None else None,
             )
         )
         video_labels.append(f"v{segment_index}")

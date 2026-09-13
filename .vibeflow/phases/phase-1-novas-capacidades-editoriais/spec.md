@@ -313,7 +313,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
   coordenadas livres e camadas de imagem e vídeo, e rejeita v1, `overlays`,
   campos desconhecidos, coordenadas fora da caixa, fontes incompatíveis e limites
   excedidos antes do FFmpeg.
-- [ ] A4: O movimento usa `from` e `to`, interpola linearmente por frame, respeita
+- [x] A4: O movimento usa `from` e `to`, interpola linearmente por frame, respeita
   `zoom` entre `0.5` e `4.0`, mantém `fit` separado e produz frames verificáveis
   em aproximação, afastamento e deslocamento.
 - [ ] A5: Um plano com J e L válidos antecipa ou prolonga o áudio exatamente pela
@@ -338,7 +338,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
 - [ ] C1: O E2E da phase executa `init` e percorre validação, preview, aprovação e
   full com um único plano que combina movimento, J/L, camada de imagem ou vídeo,
   lettering por coordenadas e o áudio explícito do MVP.
-- [ ] C2: A prova de frames confirma em timestamps distintos que o movimento
+- [x] C2: A prova de frames confirma em timestamps distintos que o movimento
   muda o enquadramento e que a imagem-base continua presente sob as camadas.
 - [ ] C3: A prova de áudio confirma o início antecipado do J, a extensão do L e a
   duração final exata sem ducking ou crossfade implícito.
