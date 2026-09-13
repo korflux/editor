@@ -203,6 +203,25 @@ class PlanValidationTests(unittest.TestCase):
 
             self.assertEqual(raised.exception.code, "PLAN_INVALID")
 
+    def test_nul_in_overlay_returns_plan_invalid_envelope(self) -> None:
+        """Confirma que controle NUL falha na validação antes de alcançar o filtro FFmpeg."""
+        document = load_workflow_plan()
+        document["overlays"][0]["text"] = "texto\x00inválido"
+        with workspace_tempdir() as workdir:
+            write_plan(workdir, document)
+            result = run_module(
+                "plan",
+                "validate",
+                "--workdir",
+                str(workdir),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 5)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(payload["error"]["code"], "PLAN_INVALID")
+
     def test_cli_returns_plan_invalid_envelope_for_malformed_json(self) -> None:
         """Confirma que JSON malformado vira erro estruturado sem traceback no stdout."""
 

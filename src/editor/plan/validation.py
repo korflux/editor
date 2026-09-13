@@ -68,6 +68,13 @@ def _positive_integer(value: Any, location: str, maximum: int) -> int:
     return value
 
 
+def _reject_nul(value: str, location: str) -> None:
+    """Rejeita NUL em texto que será incorporado a argumentos de subprocessos."""
+
+    if "\x00" in value:
+        raise plan_error(f"O campo {location} contém caractere inválido.")
+
+
 def _rounded(value: float) -> float:
     """Arredonda tempos derivados para evitar ruído binário no resultado público."""
 
@@ -334,6 +341,7 @@ def _validate_overlays(value: Any, timeline_duration: float) -> int:
         text = overlay.get("text")
         if not isinstance(text, str) or not text.strip() or len(text) > 4_096:
             raise plan_error("O texto do overlay deve ser uma string não vazia.")
+        _reject_nul(text, "overlays[].text")
         start = _finite_number(overlay.get("start_s"), "overlays[].start_s")
         end = _finite_number(overlay.get("end_s"), "overlays[].end_s")
         if start < 0 or end <= start or end > timeline_duration + ASPECT_TOLERANCE:
@@ -346,6 +354,7 @@ def _validate_overlays(value: Any, timeline_duration: float) -> int:
         font = overlay.get("font")
         if not isinstance(font, str) or not font.strip() or len(font) > 128 or "/" in font or "\\" in font:
             raise plan_error("A fonte do overlay deve ser um nome instalado válido.")
+        _reject_nul(font, "overlays[].font")
         _positive_integer(overlay.get("size_px"), "overlays[].size_px", 512)
         color = overlay.get("color")
         if not isinstance(color, str) or not HEX_COLOR_PATTERN.fullmatch(color):
