@@ -61,6 +61,39 @@ function Test-RegularPath {
     return (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0)
 }
 
+# Verifica todos os componentes existentes de um caminho, pois checar só o destino
+# permite atravessar uma junction em um ancestral e escapar da raiz física esperada.
+function Test-RegularPathChain {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$StopAt
+    )
+
+    $current = [System.IO.DirectoryInfo]::new([System.IO.Path]::GetFullPath($Path))
+    $stopPath = if ($StopAt) {
+        [System.IO.Path]::GetFullPath($StopAt).TrimEnd('\')
+    } else {
+        $null
+    }
+
+    while ($current) {
+        $currentPath = $current.FullName
+        if ((Test-Path -LiteralPath $currentPath) -and -not (Test-RegularPath $currentPath)) {
+            return $false
+        }
+        if ($stopPath -and [System.String]::Equals(
+                $currentPath.TrimEnd('\'),
+                $stopPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            return $true
+        }
+        $current = $current.Parent
+    }
+
+    return $null -eq $stopPath
+}
+
 # Converte um caminho relativo ao repositório e impede que destinos operacionais escapem dele.
 function Resolve-RepoPath {
     param(
@@ -79,13 +112,7 @@ function Resolve-RepoPath {
         throw "O caminho deve permanecer dentro do repositório: $Path"
     }
 
-    $existingParent = $candidate
-    while (-not (Test-Path -LiteralPath $existingParent)) {
-        $parent = [System.IO.DirectoryInfo]::new($existingParent).Parent
-        if (-not $parent) { break }
-        $existingParent = $parent.FullName
-    }
-    if ((Test-Path -LiteralPath $existingParent) -and -not (Test-RegularPath $existingParent)) {
+    if (-not (Test-RegularPathChain -Path $candidate -StopAt $script:RepoRoot)) {
         throw "O caminho contém um componente linkado ou inválido: $Path"
     }
     if (-not $AllowMissing -and -not (Test-Path -LiteralPath $candidate)) {
@@ -105,7 +132,7 @@ function Resolve-LocalPath {
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "Origem local não encontrada: $Path"
     }
-    if (-not (Test-RegularPath $Path)) {
+    if (-not (Test-RegularPathChain -Path $Path)) {
         throw "Origem local linkada ou inválida: $Path"
     }
 
@@ -432,6 +459,7 @@ function Install-PythonEnvironment {
     } else {
         New-Item -ItemType Directory -Path $script:VenvAbsolutePath -Force | Out-Null
     }
+    [void](Resolve-RepoPath $script:VenvAbsolutePath -AllowMissing)
 
     $venvPython = Join-Path $script:VenvAbsolutePath 'Scripts\python.exe'
     if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
@@ -480,11 +508,9 @@ function Install-LocalFfmpeg {
         throw 'A origem local precisa conter ffmpeg.exe e ffprobe.exe regulares.'
     }
 
-    $destination = Join-Path $script:RepoRoot '.tools\ffmpeg'
-    if ((Test-Path -LiteralPath $destination) -and -not (Test-RegularPath $destination)) {
-        throw 'O destino local de FFmpeg é um reparse point.'
-    }
+    $destination = Resolve-RepoPath '.tools\ffmpeg' -AllowMissing
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    [void](Resolve-RepoPath $destination -AllowMissing)
     foreach ($target in @((Join-Path $destination 'ffmpeg.exe'), (Join-Path $destination 'ffprobe.exe'))) {
         if ((Test-Path -LiteralPath $target) -and -not (Test-RegularPath $target)) {
             throw 'O destino de FFmpeg contém um executável linkado.'
@@ -510,11 +536,9 @@ function Install-LocalGitleaks {
         throw "O gitleaks fornecido não é a versão $($script:GitleaksVersion)."
     }
 
-    $destination = Join-Path $script:RepoRoot '.tools\gitleaks'
-    if ((Test-Path -LiteralPath $destination) -and -not (Test-RegularPath $destination)) {
-        throw 'O destino local de gitleaks é um reparse point.'
-    }
+    $destination = Resolve-RepoPath '.tools\gitleaks' -AllowMissing
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    [void](Resolve-RepoPath $destination -AllowMissing)
     $target = Join-Path $destination 'gitleaks.exe'
     if ((Test-Path -LiteralPath $target) -and -not (Test-RegularPath $target)) {
         throw 'O destino de gitleaks contém um executável linkado.'
@@ -539,11 +563,12 @@ function Install-LocalModels {
     if ($sourceDirectories.Count -eq 0) {
         throw 'Nenhum modelo local completo foi encontrado na origem.'
     }
+    [void](Resolve-RepoPath $script:ModelAbsolutePath -AllowMissing)
     if (-not (Test-Path -LiteralPath $script:ModelAbsolutePath)) {
         New-Item -ItemType Directory -Path $script:ModelAbsolutePath -Force | Out-Null
     }
     foreach ($model in $sourceDirectories) {
-        $destination = Join-Path $script:ModelAbsolutePath $model.Name
+        $destination = Resolve-RepoPath (Join-Path $script:ModelAbsolutePath $model.Name) -AllowMissing
         if ((Test-Path -LiteralPath $destination) -and -not (Test-RegularPath $destination)) {
             throw "O destino do modelo $($model.Name) é um reparse point."
         }

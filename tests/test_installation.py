@@ -142,6 +142,61 @@ class InstallationContractTests(unittest.TestCase):
             for filename in ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt"):
                 self.assertTrue((destination / "base" / filename).is_file())
 
+    def test_install_models_rejects_reparse_ancestor_before_writing(self) -> None:
+        """Confirma que uma junction ancestral não consegue redirecionar a instalação de modelos."""
+        with self.workspace_tempdir() as temporary_path:
+            source = temporary_path / "source"
+            model = source / "base"
+            model.mkdir(parents=True)
+            for filename in ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt"):
+                (model / filename).write_bytes(b"fixture")
+
+            target = temporary_path / "physical-target"
+            (target / "deep").mkdir(parents=True)
+            link = temporary_path / "link"
+            quoted_link = "'" + str(link).replace("'", "''") + "'"
+            quoted_target = "'" + str(target).replace("'", "''") + "'"
+            create = subprocess.run(
+                [
+                    self.pwsh,
+                    "-NoProfile",
+                    "-Command",
+                    f"New-Item -ItemType Junction -Path {quoted_link} -Target {quoted_target} | Out-Null",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+            self.assertEqual(create.returncode, 0, create.stdout + create.stderr)
+            try:
+                result = self.run_installer(
+                    "-InstallModels",
+                    "-ModelSource",
+                    str(source),
+                    "-ModelDir",
+                    str(link / "deep" / "models"),
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("componente linkado", result.stdout + result.stderr)
+                self.assertFalse((target / "deep" / "models").exists())
+            finally:
+                subprocess.run(
+                    [
+                        self.pwsh,
+                        "-NoProfile",
+                        "-Command",
+                        f"if (Test-Path -LiteralPath {quoted_link}) {{ Remove-Item -LiteralPath {quoted_link} -Force }}",
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=False,
+                )
+
     def test_no_action_is_not_an_implicit_install(self) -> None:
         """Confirma que omitir uma opção explícita não altera o ambiente nem dispara instalação."""
         result = self.run_installer()
