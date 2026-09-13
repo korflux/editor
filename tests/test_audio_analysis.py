@@ -11,10 +11,11 @@ import subprocess
 import sys
 import unittest
 from collections.abc import Iterator
+from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
-from editor.analysis.audio import analyze_audio
+from editor.analysis.audio import MAX_AUDIO_WINDOWS, analyze_audio
 from editor.contracts import CliError
 from editor import dependencies
 
@@ -103,6 +104,65 @@ class AudioAnalysisTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "ARGUMENT_INVALID")
             run_tool.assert_not_called()
             self.assertFalse((workdir / "analysis").exists())
+
+    def test_unrepresentable_window_is_rejected_before_media_probe(self) -> None:
+        """Confirma que valores enorme e subnormal não chegam ao processamento de áudio."""
+
+        for value in (1e308, 1e-300):
+            with self.subTest(window_seconds=value):
+                with workspace_tempdir() as workdir:
+                    with patch("editor.analysis.audio.media.inspect_source") as inspect:
+                        with self.assertRaises(CliError) as raised:
+                            analyze_audio(
+                                workdir,
+                                "main",
+                                MEDIA_FIXTURE,
+                                window_seconds=value,
+                            )
+
+                    self.assertEqual(raised.exception.code, "ARGUMENT_INVALID")
+                    inspect.assert_not_called()
+
+    def test_window_count_limit_is_rejected_before_processing(self) -> None:
+        """Confirma que uma janela pequena não cria um artefato temporal desproporcional."""
+
+        with workspace_tempdir() as workdir:
+            with patch(
+                "editor.analysis.audio.media.inspect_source",
+                return_value=SimpleNamespace(duration_seconds=3_600.0),
+            ), patch("editor.analysis.audio.media.sha256_file") as sha256_file:
+                with self.assertRaises(CliError) as raised:
+                    analyze_audio(
+                        workdir,
+                        "main",
+                        MEDIA_FIXTURE,
+                        window_seconds=0.001,
+                    )
+
+            self.assertEqual(raised.exception.code, "ARGUMENT_INVALID")
+            sha256_file.assert_not_called()
+
+    def test_window_count_limit_accounts_for_sample_rounding(self) -> None:
+        """Confirma que o limite usa a janela quantizada em amostras na fronteira exata."""
+        boundary_window = 3_600.0 / MAX_AUDIO_WINDOWS
+        with workspace_tempdir() as workdir:
+            with patch(
+                "editor.analysis.audio.media.inspect_source",
+                return_value=SimpleNamespace(duration_seconds=3_600.0),
+            ), patch("editor.analysis.audio.media.sha256_file") as sha256_file, patch(
+                "editor.analysis.audio.process.stream_pcm"
+            ) as stream_pcm:
+                with self.assertRaises(CliError) as raised:
+                    analyze_audio(
+                        workdir,
+                        "main",
+                        MEDIA_FIXTURE,
+                        window_seconds=boundary_window,
+                    )
+
+            self.assertEqual(raised.exception.code, "ARGUMENT_INVALID")
+            sha256_file.assert_not_called()
+            stream_pcm.assert_not_called()
 
     def test_unsupported_extension_is_rejected_before_ffmpeg(self) -> None:
         """Confirma que formatos fora da allowlist falham antes de qualquer subprocesso."""

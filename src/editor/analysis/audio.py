@@ -26,7 +26,15 @@ from ..workdir import (
 PCM_SAMPLE_RATE = 48_000
 SILENCE_THRESHOLD_DBFS = -45.0
 SILENCE_MIN_DURATION_SECONDS = 0.3
+MAX_AUDIO_WINDOW_SECONDS = float(media.MAX_SOURCE_DURATION_SECONDS)
+MAX_AUDIO_WINDOWS = 250_000
 _METRIC_PATTERN = r"([-+]?(?:\d+(?:\.\d+)?|\.\d+)|[-+]?inf)"
+
+
+def _window_sample_count(window_seconds: float) -> int:
+    """Converte a janela para amostras usando a mesma quantização do acumulador."""
+
+    return int(round(window_seconds * PCM_SAMPLE_RATE))
 
 
 def _dbfs(amplitude: float) -> float:
@@ -123,7 +131,8 @@ class _AudioAccumulator:
     def __init__(self, window_seconds: float, duration_seconds: float) -> None:
         """Inicializa acumuladores alinhados ao sample rate de análise."""
 
-        self.window_sample_count = max(1, int(round(window_seconds * PCM_SAMPLE_RATE)))
+        _validate_window_seconds(window_seconds, duration_seconds)
+        self.window_sample_count = _window_sample_count(window_seconds)
         self.duration_seconds = duration_seconds
         self.pending = bytearray()
         self.sample_count = 0
@@ -263,6 +272,38 @@ def _run_windows(
     return accumulator.result()
 
 
+def _validate_window_seconds(
+    window_seconds: float,
+    duration_seconds: float | None = None,
+) -> None:
+    """Valida a janela antes do processamento e limita o volume do artefato temporal."""
+
+    if (
+        not math.isfinite(window_seconds)
+        or window_seconds <= 0
+        or window_seconds > MAX_AUDIO_WINDOW_SECONDS
+        or window_seconds * PCM_SAMPLE_RATE < 1
+    ):
+        raise CliError(
+            code="ARGUMENT_INVALID",
+            message=(
+                "A janela deve ser finita, representar ao menos uma amostra e não exceder "
+                f"{MAX_AUDIO_WINDOW_SECONDS:g} segundos."
+            ),
+            exit_code=EXIT_CODES["ARGUMENT"],
+        )
+    if duration_seconds is not None:
+        sample_count = _window_sample_count(window_seconds)
+        total_samples = math.ceil(duration_seconds * PCM_SAMPLE_RATE)
+        estimated_windows = (total_samples + sample_count - 1) // sample_count
+        if estimated_windows > MAX_AUDIO_WINDOWS:
+            raise CliError(
+                code="ARGUMENT_INVALID",
+                message="A janela produziria mais janelas do que o limite permitido.",
+                exit_code=EXIT_CODES["ARGUMENT"],
+            )
+
+
 def _serialize_artifact(artifact: dict[str, Any]) -> bytes:
     """Serializa o artefato em UTF-8 canônico para leitura e hashing posteriores."""
 
@@ -284,14 +325,10 @@ def analyze_audio(
 
     validate_workdir(workdir)
     validate_source_id(source_id)
-    if not math.isfinite(window_seconds) or window_seconds <= 0:
-        raise CliError(
-            code="ARGUMENT_INVALID",
-            message="A janela deve ser um número finito maior que zero.",
-            exit_code=EXIT_CODES["ARGUMENT"],
-        )
+    _validate_window_seconds(window_seconds)
 
     source = media.inspect_source(input_path)
+    _validate_window_seconds(window_seconds, source.duration_seconds)
     source_hash = media.sha256_file(source.path)
     layout: WorkdirLayout = prepare_layout(workdir, source_id)
     timeout_seconds = max(60.0, min(7_200.0, source.duration_seconds * 4 + 30))
