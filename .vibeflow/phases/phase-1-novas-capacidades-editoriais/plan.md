@@ -122,18 +122,19 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T5: Renderizar texto em caixas normalizadas
 
-- [ ] T5 concluída
+- [x] T5 concluída
 - **Spec:** A6, A7
 - **Decisões:** TEXT-01 (usa `x`, `y`, `width` e `height` normalizados com origem superior esquerda), LAYER-01 (preserva ordem da lista)
 - **O quê:** Implementar a camada discriminada `type: "text"` com caixa normalizada, fonte, tamanho, cor, alinhamento e quebra de linha. O texto deve ser desenhado somente no intervalo declarado, recortado na caixa quando exceder seus limites e aplicado sobre o vídeo-base sem alterar a timeline.
 - **Aceite:**
-  - [ ] `x`, `y`, `width` e `height` respeitam os limites normalizados, dimensões positivas e a caixa; posições nomeadas ou campos alternativos são rejeitados.
-  - [ ] Texto, fonte, tamanho, cor, alinhamento e `wrap` obedecem aos limites existentes, com NUL e fonte inválida bloqueados antes da construção do filtro.
-  - [ ] Preview real confirma posição, intervalo, recorte da caixa e preservação do vídeo-base, e o resultado informa `layer_count`.
+  - [x] `x`, `y`, `width` e `height` respeitam os limites normalizados, dimensões positivas e a caixa; posições nomeadas ou campos alternativos são rejeitados.
+  - [x] Texto, fonte, tamanho, cor, alinhamento e `wrap` obedecem aos limites existentes, com NUL e fonte inválida bloqueados antes da construção do filtro.
+  - [x] Preview real confirma posição, intervalo, recorte da caixa e preservação do vídeo-base, e o resultado informa `layer_count`.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+- **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` -> `Ran 31 tests ... OK`; `.venv\Scripts\python.exe -B -m unittest tests.test_full_render -v` -> `Ran 6 tests ... OK`; `git diff --check` passou
 - **Deps:** T4
-- **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/render/preview.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `tests/fixtures/phase-1/`
+- **Arquivos:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/implement.md`
 - **Size:** `high, 8/10, camada temporal e espacial integrada ao grafo e verificada em frames reais`
 - **Risk:** `medium, erro de expressão ou escape pode deslocar texto ou alterar a sintaxe do filtro`
 

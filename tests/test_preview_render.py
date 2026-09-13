@@ -141,6 +141,20 @@ def mean_frame_difference(first: bytes, second: bytes) -> float:
     return sum(abs(left - right) for left, right in zip(first, second)) / len(first)
 
 
+def mean_region_difference(
+    first: bytes, second: bytes, left: int, top: int, right: int, bottom: int
+) -> float:
+    """Mede a alteração real em uma região do canvas 320x180 para provar o recorte."""
+
+    differences = (
+        abs(first[(row * 320 + column) * 3 + channel] - second[(row * 320 + column) * 3 + channel])
+        for row in range(top, bottom)
+        for column in range(left, right)
+        for channel in range(3)
+    )
+    return sum(differences) / ((right - left) * (bottom - top) * 3)
+
+
 def extract_mono_samples(path: Path) -> list[int]:
     """Extrai PCM mono para medir a presença de áudio em janelas temporais reais."""
 
@@ -265,6 +279,76 @@ class PreviewRenderTests(unittest.TestCase):
                 source_hashes,
             )
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_text_layer_respects_box_interval_and_underlying_video(self) -> None:
+        """Prova por frames que texto longo fica na caixa e só aparece no intervalo declarado."""
+
+        with workspace_tempdir() as workdir:
+            layered = workdir / "layered"
+            baseline = workdir / "baseline"
+            layered.mkdir()
+            baseline.mkdir()
+            for target in (layered, baseline):
+                copy_workflow(target)
+                use_video_only_motion_fixture(target)
+            document = json.loads((layered / "plan.json").read_text(encoding="utf-8"))
+            document["layers"] = [{
+                "type": "text", "start_s": 0.5, "end_s": 1.25,
+                "x": 0.1, "y": 0.2, "width": 0.25, "height": 0.2,
+                "text": "MMMMMMMMMMMMMMMM\nSECOND-LINE", "font": "Arial",
+                "size_px": 42, "color": "#FFFFFF", "align": "left", "wrap": False,
+            }]
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            baseline_document = json.loads((baseline / "plan.json").read_text(encoding="utf-8"))
+            baseline_document["layers"] = []
+            (baseline / "plan.json").write_text(json.dumps(baseline_document), encoding="utf-8")
+
+            layered_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            baseline_result = run_module("render", "preview", "--workdir", str(baseline.resolve()), "--json")
+            self.assertEqual(layered_result.returncode, 0, layered_result.stderr)
+            self.assertEqual(baseline_result.returncode, 0, baseline_result.stderr)
+            self.assertEqual(json.loads(layered_result.stdout)["data"]["layer_count"], 1)
+
+            active = extract_rgb_frame(layered / "preview.mp4", 0.75)
+            plain = extract_rgb_frame(baseline / "preview.mp4", 0.75)
+            self.assertGreater(mean_region_difference(active, plain, 36, 40, 105, 66), 5)
+            self.assertLess(mean_region_difference(active, plain, 125, 40, 200, 66), 2)
+            self.assertLess(mean_region_difference(active, plain, 36, 85, 105, 110), 2)
+            self.assertLess(mean_region_difference(active, plain, 240, 120, 300, 160), 2)
+            for timestamp in (0.25, 1.5):
+                self.assertLess(
+                    mean_frame_difference(
+                        extract_rgb_frame(layered / "preview.mp4", timestamp),
+                        extract_rgb_frame(baseline / "preview.mp4", timestamp),
+                    ),
+                    2,
+                )
+
+            document["layers"][0].update({
+                "text": "ONE TWO THREE FOUR FIVE SIX", "size_px": 24,
+                "height": 0.4, "wrap": True, "align": "right",
+            })
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            wrapped_document, wrapped_validation = load_validated_plan(layered)
+            wrapped_graph = build_ffmpeg_graph(
+                wrapped_document, wrapped_validation, canvas_width=320, canvas_height=180
+            )
+            self.assertIn("x=w-text_w", wrapped_graph.filter_complex)
+            wrapped_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            self.assertEqual(wrapped_result.returncode, 0, wrapped_result.stderr)
+            self.assertGreater(
+                mean_region_difference(
+                    extract_rgb_frame(layered / "preview.mp4", 0.75), plain,
+                    36, 75, 105, 105,
+                ),
+                3,
+            )
+            document["layers"][0].update({
+                "text": "A:B,C;[x]'\\z", "wrap": False, "align": "center",
+            })
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            escaped_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            self.assertEqual(escaped_result.returncode, 0, escaped_result.stderr)
 
     def test_graph_does_not_use_broll_audio_and_keeps_processing_explicit(self) -> None:
         """Confirma no grafo que B fornece somente imagem e o áudio controla a mixagem."""

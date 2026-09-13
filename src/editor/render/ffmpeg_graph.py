@@ -43,23 +43,26 @@ def _escape_filter_value(value: str) -> str:
     escaped: list[str] = []
     for character in value.replace("\r\n", "\n").replace("\r", "\n"):
         if character == "\n":
-            escaped.append("\\n")
-        elif character in {"\\", "'", ":", ",", ";", "[", "]"}:
+            escaped.append("\n")
+        elif character == "'":
+            escaped.append("'\\''")
+        elif character in {"\\", ":", ",", ";", "[", "]"}:
             escaped.append(f"\\{character}")
         else:
             escaped.append(character)
     return "".join(escaped)
 
 
-def _overlay_text(value: str, *, wrap: bool, size_px: int, canvas_width: int) -> str:
-    """Aplica quebra de linha simples e determinística dentro da margem visual segura."""
+def _layer_text(value: str, *, wrap: bool, size_px: int, box_width: int) -> str:
+    """Quebra linhas pela largura da caixa, preservando quebras explícitas."""
 
     normalized = value.replace("\r\n", "\n").replace("\r", "\n")
     if not wrap:
         return normalized
 
+    # ponytail: largura média aproxima fontes proporcionais; medir glifos quando a quebra precisa for necessária.
     character_width = max(1.0, size_px * 0.6)
-    max_characters = max(1, int(canvas_width * 0.9 / character_width))
+    max_characters = max(1, int(box_width / character_width))
     lines: list[str] = []
     for line in normalized.split("\n"):
         lines.extend(
@@ -72,19 +75,6 @@ def _overlay_text(value: str, *, wrap: bool, size_px: int, canvas_width: int) ->
             or [""]
         )
     return "\n".join(lines)
-
-
-def _position_expressions(position: str) -> tuple[str, str]:
-    """Converte posições nomeadas do plano em expressões com margem de cinco por cento."""
-
-    positions = {
-        "top-left": ("w*0.05", "h*0.05"),
-        "top-center": ("(w-text_w)/2", "h*0.05"),
-        "center": ("(w-text_w)/2", "(h-text_h)/2"),
-        "bottom-center": ("(w-text_w)/2", "h-text_h-h*0.05"),
-        "bottom-right": ("w-text_w-w*0.05", "h-text_h-h*0.05"),
-    }
-    return positions[position]
 
 
 def _linear_motion_expression(start: object, end: object, duration: float) -> str:
@@ -369,33 +359,51 @@ def _audio_processing_filters(
     return filters, current
 
 
-def _overlay_filter(
+def _text_layer_filter(
     input_label: str,
-    overlay: Mapping[str, Any],
-    overlay_index: int,
+    layer: Mapping[str, Any],
+    layer_index: int,
     canvas_width: int,
     canvas_height: int,
-) -> str:
-    """Desenha um lettering estático somente no intervalo declarado pelo plano."""
+) -> tuple[str, str]:
+    """Desenha texto em uma superfície transparente limitada à caixa e a sobrepõe no intervalo."""
 
-    x, y = _position_expressions(str(overlay["position"]))
-    text = _overlay_text(
-        str(overlay["text"]),
-        wrap=bool(overlay["wrap"]),
-        size_px=int(overlay["size_px"]),
-        canvas_width=canvas_width,
+    left = min(canvas_width - 1, int(float(layer["x"]) * canvas_width))
+    top = min(canvas_height - 1, int(float(layer["y"]) * canvas_height))
+    right = min(
+        canvas_width, math.ceil((float(layer["x"]) + float(layer["width"])) * canvas_width)
     )
-    font = _escape_filter_value(str(overlay["font"]))
+    bottom = min(
+        canvas_height, math.ceil((float(layer["y"]) + float(layer["height"])) * canvas_height)
+    )
+    box_width = max(1, right - left)
+    box_height = max(1, bottom - top)
+    text = _layer_text(
+        str(layer["text"]),
+        wrap=bool(layer["wrap"]),
+        size_px=int(layer["size_px"]),
+        box_width=box_width,
+    )
+    font = _escape_filter_value(str(layer["font"]))
     escaped_text = _escape_filter_value(text)
-    start = _number(overlay["start_s"])
-    end = _number(overlay["end_s"])
-    output_label = f"vtext{overlay_index}"
-    return (
-        f"[{input_label}]drawtext=font='{font}':fontsize={int(overlay['size_px'])}:"
-        f"fontcolor={overlay['color']}:text='{escaped_text}':expansion=none:"
-        f"text_align={overlay['align']}:x={x}:y={y}:fix_bounds=1:"
+    start = _number(layer["start_s"])
+    end = _number(layer["end_s"])
+    align_x = {"left": "0", "center": "(w-text_w)/2", "right": "w-text_w"}[
+        str(layer["align"])
+    ]
+    layer_label = f"textlayer{layer_index}"
+    output_label = f"vtext{layer_index}"
+    surface = (
+        f"color=c=black@0:s={box_width}x{box_height}:r=25:d={end},format=rgba,"
+        f"drawtext=font='{font}':fontsize={int(layer['size_px'])}:"
+        f"fontcolor={layer['color']}:text='{escaped_text}':expansion=none:"
+        f"text_align={layer['align']}:x={align_x}:y=0[{layer_label}]"
+    )
+    composite = (
+        f"[{input_label}][{layer_label}]overlay=x={left}:y={top}:eof_action=pass:"
         f"enable='gte(t\\,{start})*lt(t\\,{end})'[{output_label}]"
     )
+    return surface + ";" + composite, output_label
 
 
 def _used_source_ids(document: Mapping[str, Any]) -> tuple[str, ...]:
@@ -474,17 +482,12 @@ def build_ffmpeg_graph(
     )
 
     video_label = concat_video_label
-    for overlay_index, overlay in enumerate(document.get("overlays", [])):
-        parts.append(
-            _overlay_filter(
-                video_label,
-                overlay,
-                overlay_index,
-                canvas_width,
-                canvas_height,
+    for layer_index, layer in enumerate(document["layers"]):
+        if layer["type"] == "text":
+            filter_part, video_label = _text_layer_filter(
+                video_label, layer, layer_index, canvas_width, canvas_height
             )
-        )
-        video_label = f"vtext{overlay_index}"
+            parts.append(filter_part)
 
     audio_label: str | None = None
     if has_audio:

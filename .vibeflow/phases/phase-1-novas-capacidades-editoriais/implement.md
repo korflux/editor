@@ -1,7 +1,7 @@
 # Implement: Novas capacidades editoriais e preparação de trabalhos
 # Alvo: phase-1-novas-capacidades-editoriais
 # Status: aprovado
-# Route: high · modo A · T4
+# Route: high · modo A · T5
 
 ## Reconhecimento
 
@@ -200,8 +200,49 @@
 - `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`
 - `.vibeflow/phases/phase-1-novas-capacidades-editoriais/spec.md`
 
+## T5: Renderizar texto em caixas normalizadas
+
+#### Reconhecimento
+
+- O plano v2 já validava geometria e campos de texto, mas o grafo compartilhado
+  ainda percorria `overlays` e exigia `position`, ambos removidos na T2.
+- A preview e a full usam o mesmo `build_ffmpeg_graph()`. A correção precisava
+  acontecer nessa origem, preservando a timeline e o áudio existentes.
+
+#### Implementação
+
+- `layers[]` de texto agora são desenhadas na ordem declarada sobre o vídeo-base.
+  Cada texto usa uma superfície transparente do tamanho da caixa normalizada,
+  com alinhamento interno e sobreposição somente em `[start_s, end_s)`.
+- Quebras explícitas e `wrap: true` são transmitidos como novas linhas reais ao
+  FFmpeg. A área fora da caixa é recortada pela própria superfície, sem mover o
+  vídeo-base ou alterar a duração.
+- A validação rejeita famílias de fonte não instaladas antes da inspeção de
+  mídia. O escape do filtro trata apóstrofos e pontuação sem quebrar o grafo.
+- A estimativa de largura usada em `wrap` segue registrada como limitação
+  `ponytail` até haver necessidade de medição exata de glifos.
+
+#### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  -> `Ran 31 tests ... OK` após a simplificação.
+- Frames reais confirmam caixa, recorte horizontal e vertical, intervalo,
+  preservação do vídeo-base e quebra de linha. O teste também renderiza texto
+  com pontuação e apóstrofo.
+- `.venv\Scripts\python.exe -B -m unittest tests.test_full_render -v`
+  -> `Ran 6 tests ... OK`, cobrindo o consumidor compartilhado do grafo.
+- `git diff --check` passou.
+
+#### Arquivos
+
+- `src/editor/plan/validation.py`
+- `src/editor/render/ffmpeg_graph.py`
+- `tests/test_plan_validation.py`
+- `tests/test_preview_render.py`
+- `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`
+- `.vibeflow/phases/phase-1-novas-capacidades-editoriais/implement.md`
+
 ## Handoff
 
-Próximas T* elegíveis: T5 e T9. T6, T7, T8 e T10 permanecem bloqueadas pelas
-dependências declaradas no `plan.md`. Recomenda-se T5 como próxima fatia, em
-novo chat, mantendo o isolamento da implementação.
+Próximas T* elegíveis: T6 e T9. T7, T8 e T10 permanecem bloqueadas pelas
+dependências declaradas no `plan.md`. Recomenda-se T6 como próxima fatia.

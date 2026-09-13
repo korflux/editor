@@ -305,6 +305,32 @@ class PlanValidationTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "PLAN_INVALID")
             inspect.assert_not_called()
 
+    def test_text_box_and_font_fail_before_media_probe(self) -> None:
+        """Bloqueia caixa fora do canvas, campos legados e fonte ausente na fronteira do plano."""
+
+        invalid_changes = (
+            {"x": 0.9, "width": 0.2},
+            {"height": 0},
+            {"font": "FonteInexistenteParaTeste123"},
+            {"font": "Arial\x00"},
+            {"size_px": 513},
+            {"wrap": "yes"},
+            {"align": "top"},
+            {"color": "red"},
+            {"margin": 5},
+        )
+        for changes in invalid_changes:
+            with self.subTest(changes=changes):
+                document = load_workflow_plan()
+                document["layers"][0].update(changes)
+                with workspace_tempdir() as workdir:
+                    write_plan(workdir, document)
+                    with patch("editor.plan.validation.media.inspect_source") as inspect:
+                        with self.assertRaises(CliError) as raised:
+                            validate_plan(workdir)
+                    self.assertEqual(raised.exception.code, "PLAN_INVALID")
+                    inspect.assert_not_called()
+
     def test_non_finite_layer_number_is_rejected_before_media_probe(self) -> None:
         """Confirma que NaN é rejeitado pelo parser antes de qualquer sondagem de mídia."""
 

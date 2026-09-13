@@ -6,6 +6,9 @@ import json
 import math
 import os
 import re
+import subprocess
+import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +94,43 @@ def _reject_nul(value: str, location: str) -> None:
 
     if "\x00" in value:
         raise plan_error(f"O campo {location} contém caractere inválido.")
+
+
+@lru_cache(maxsize=128)
+def _font_is_installed(name: str) -> bool:
+    """Consulta fontes locais sem aceitar um caminho fornecido pelo plano nem executar shell."""
+
+    wanted = name.casefold()
+    if sys.platform == "win32":
+        import winreg
+
+        registry_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                with winreg.OpenKey(hive, registry_path) as key:
+                    for index in range(winreg.QueryInfoKey(key)[1]):
+                        registered = winreg.EnumValue(key, index)[0]
+                        family = re.sub(r"\s*\([^)]*\)$", "", registered).casefold()
+                        if wanted == family:
+                            return True
+            except OSError:
+                continue
+        return False
+    try:
+        result = subprocess.run(
+            ["fc-list", "-f", "%{family}\n"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and any(
+        wanted == family.strip().casefold()
+        for line in result.stdout.splitlines()
+        for family in line.split(",")
+    )
 
 
 def _rounded(value: float) -> float:
@@ -355,6 +395,8 @@ def _validate_layers_structure(value: Any) -> list[dict[str, Any]]:
             ):
                 raise plan_error("A fonte da camada deve ser um nome instalado válido.")
             _reject_nul(font, "layers[].font")
+            if not _font_is_installed(font):
+                raise plan_error("A fonte da camada não está instalada localmente.")
             _positive_integer(layer.get("size_px"), "layers[].size_px", 512)
             color = layer.get("color")
             if not isinstance(color, str) or not HEX_COLOR_PATTERN.fullmatch(color):
