@@ -73,15 +73,31 @@ Depois confirme a visão que será consumida pelo agente:
 .venv\Scripts\python.exe -B -m editor capabilities --json
 ```
 
+Ao iniciar um trabalho novo, use um diretório absoluto aprovado pelo usuário e
+prepare sua estrutura técnica:
+
+```powershell
+.venv\Scripts\python.exe -B -m editor init --workdir "<workdir>" --json
+```
+
+O comando é idempotente e cria somente `.tmp`, `analysis/audio`,
+`analysis/transcription` e `frames`. Ele não escolhe fontes nem cria plano,
+preview, aprovação ou full.
+
 Se uma operação estiver marcada como indisponível, não tente contorná-la com
 serviço remoto. Informe ao usuário exatamente qual componente local falta e leia
 novamente esta referência para orientar a instalação.
 
-## Limitações atuais
+## Contrato atual e limites editoriais
 
-- `editor init` ainda não existe. O agente precisa usar ou preparar manualmente um
-  diretório de trabalho local.
-- A edição aceita apenas o conjunto de formatos e codecs informado por
-  `capabilities`.
-- O trabalho é local, linear e processado um por vez.
-- A skill não instala componentes globais sem autorização explícita do usuário.
+- O plano usa schema v2, com `cuts` e `layers` explícitos na raiz. A timeline visual
+  continua linear, e a composição aceita movimento, cortes J/L e camadas de texto,
+  imagem ou vídeo.
+- Fontes de imagem aceitas são PNG, JPEG/JPG e WebP estáticos, com até 100 MiB e
+  8.192 pixels por dimensão. Vídeo e áudio continuam restritos aos formatos e
+  codecs informados por `capabilities`.
+- Movimento usa `from` e `to`, interpolação linear e `zoom` entre `0.5` e `4.0`.
+  Cortes J/L usam duração explícita de até 30 segundos, sujeita à validação dos
+  segmentos adjacentes.
+- O trabalho é local, linear e processado um por vez. A skill não instala
+  componentes globais sem autorização explícita do usuário.

@@ -19,6 +19,7 @@ ROOT_FIELDS = frozenset(
         "audio_processing",
     }
 )
+PLAN_SCHEMA_VERSION = 2
 PROFILE_FIELDS = frozenset({"aspect_ratio"})
 SOURCE_FIELDS = frozenset({"id", "kind", "path"})
 SEGMENT_FIELDS = frozenset({"video", "audio"})
@@ -27,6 +28,7 @@ MOTION_FIELDS = frozenset({"from", "to"})
 MOTION_STATE_FIELDS = frozenset({"x", "y", "zoom"})
 MOTION_ZOOM_MIN = 0.5
 MOTION_ZOOM_MAX = 4.0
+MAX_CUT_DURATION_SECONDS = 30.0
 AUDIO_FIELDS = frozenset({"mode", "tracks"})
 TRACK_FIELDS = frozenset({"source_id", "in_s", "out_s", "gain_db", "loop"})
 CUT_FIELDS = frozenset({"after_segment", "type", "duration_s"})

@@ -1,7 +1,7 @@
 # Implement: Novas capacidades editoriais e preparação de trabalhos
 # Alvo: phase-1-novas-capacidades-editoriais
 # Status: aprovado
-# Route: high · modo A · T8
+# Route: high · modo A · T9
 
 ## Reconhecimento
 
@@ -354,6 +354,63 @@
 - `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`, `spec.md` e
   `implement.md`.
 
+## T9: Atualizar capacidades e documentação do agente
+
+### Reconhecer
+
+- A T8 já havia fechado a composição v2, mas `capabilities.py` ainda publicava
+  `max_overlays` e não anunciava `init`, imagens raster, cortes, movimento ou os
+  limites específicos do novo contrato.
+- `skills/vibe-editor/SKILL.md` ainda orientava preparação manual do trabalho e
+  restringia o plano a um fluxo sem camadas; as referências continham um exemplo
+  estrutural desatualizado e não descreviam todos os limites v2.
+- `REGRAS.md` já listava parte dos módulos novos, mas mantinha descrições antigas
+  na validação, no fluxo da skill e no mapa de fixtures. O teste de capacidades
+  não verificava o conteúdo documental.
+
+### Codar
+
+- `src/editor/capabilities.py` passou a consumir os limites e allowlists dos
+  módulos existentes, informar `plan.schema_version: 2`, tipos de fonte,
+  movimento linear, cortes `j`/`l`, camadas `text`/`image`/`video`, formatos
+  raster e limites de plano, cortes, camadas, movimento e imagens.
+- A operação `init` foi adicionada ao inventário como disponível sem dependências,
+  porque ela só prepara a estrutura técnica local e não depende de FFmpeg ou
+  modelos.
+- `PLAN_SCHEMA_VERSION` e `CUT_DURATION_MAX` foram centralizados em
+  `plan/schema.py`; o validador e o inventário usam os mesmos valores.
+- A skill e suas referências passaram a executar `init` antes de um trabalho novo,
+  usar o schema v2, declarar cortes J/L e camadas normalizadas, e conservar a
+  aprovação humana explícita antes da full.
+- `REGRAS.md` foi sincronizado com o mapa de módulos, fixtures, comandos,
+  limitações e o fluxo documental da Phase 1.
+- `tests/test_capabilities.py` ganhou asserções do inventário v2 e uma checagem
+  textual dos marcadores obrigatórios e da ausência de declarações documentais
+  legadas nos quatro arquivos atualizados.
+
+### Testar
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities -v` -> `Ran 7 tests ... OK`.
+- `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor` -> `Skill is valid!`.
+- `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 99 tests in 233.326s ... OK`.
+- `git diff --check` passou.
+
+### Simplificar e re-testar
+
+- O inventário reutiliza as constantes de `media`, `plan.schema` e `plan.validation`
+  sem criar um segundo catálogo manual dos limites operacionais.
+- A checagem documental concentra os caminhos da skill e do Documento Vivo em uma
+  única lista, mantendo a regressão textual no mesmo teste de processo.
+- A versão do plano e o limite de corte J/L deixaram de ser literais duplicados,
+  reduzindo o risco de capacidade e validador divergirem.
+
+### Registro
+
+- **Plan:** T9 marcada como concluída.
+- **Spec comprovada nesta fatia:** A10 e C6 foram exercitados no escopo de capacidades e documentação; a migração da fixture E2E e os gates completos permanecem para T10.
+- **Arquivos:** `src/editor/capabilities.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `tests/test_capabilities.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/installation.md`, `skills/vibe-editor/references/youtube-editing.md`, `.vibeflow/REGRAS.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/implement.md`.
+- **Decisões:** SCOPE-01 e CONTRACT-01 implementadas para o inventário e o fluxo documental v2.
+
 ## Handoff
 
-Próxima T* elegível: T9. T10 depende de T8 e T9.
+Próxima T* elegível: T10. A fila da phase fica bloqueada até a prova E2E e os gates finais.

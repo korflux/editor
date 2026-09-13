@@ -22,6 +22,7 @@ from .schema import (
     AUDIO_MODES,
     AUDIO_PROCESSING_FIELDS,
     CUT_FIELDS,
+    MAX_CUT_DURATION_SECONDS,
     CUT_TYPES,
     FIT_MODES,
     IMAGE_LAYER_FIELDS,
@@ -32,6 +33,7 @@ from .schema import (
     MOTION_STATE_FIELDS,
     MOTION_ZOOM_MAX,
     MOTION_ZOOM_MIN,
+    PLAN_SCHEMA_VERSION,
     PROFILE_FIELDS,
     ROOT_FIELDS,
     SEGMENT_FIELDS,
@@ -52,9 +54,6 @@ from .schema import (
 MAX_PLAN_BYTES = 2 * 1024 * 1024
 MAX_SEGMENTS = 1_000
 MAX_LAYERS = 1_000
-# Mantém o símbolo interno consumido pelo inventário até a task de documentação
-# trocar o nome público do limite, sem aceitar `overlays` no plano v2.
-MAX_OVERLAYS = MAX_LAYERS
 MAX_TIMELINE_DURATION_SECONDS = float(media.MAX_SOURCE_DURATION_SECONDS)
 ASPECT_RATIO = 16 / 9
 ASPECT_TOLERANCE = 1e-6
@@ -323,7 +322,7 @@ def _validate_cuts_structure(value: Any) -> list[dict[str, Any]]:
         if not isinstance(cut_type, str) or cut_type not in CUT_TYPES:
             raise plan_error("O tipo do corte deve ser j ou l.")
         duration = _finite_number(cut.get("duration_s"), "cuts[].duration_s")
-        if not 0 < duration <= 30:
+        if not 0 < duration <= MAX_CUT_DURATION_SECONDS:
             raise plan_error("A duração do corte deve estar entre zero e trinta segundos.")
         normalized.append(
             {
@@ -785,8 +784,8 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
 
     reject_unknown_fields(document, ROOT_FIELDS, "raiz")
     schema_version = document.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != 2:
-        raise plan_error("O plano deve usar schema_version 2.")
+    if isinstance(schema_version, bool) or schema_version != PLAN_SCHEMA_VERSION:
+        raise plan_error(f"O plano deve usar schema_version {PLAN_SCHEMA_VERSION}.")
     _validate_profile(document.get("profile"))
     cut_definitions, layer_definitions, audio_processing = _validate_plan_structure(document)
     source_map, source_records = _inspect_sources(root, document.get("sources"))
@@ -799,7 +798,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
     return {
         "plan_path": str(plan_path),
         "relative_plan_path": "plan.json",
-        "schema_version": 2,
+        "schema_version": PLAN_SCHEMA_VERSION,
         "plan_sha256": canonical_sha256(document),
         "canonical_json": canonical_json(document),
         "source_count": len(source_records),

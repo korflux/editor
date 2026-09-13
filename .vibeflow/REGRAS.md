@@ -61,7 +61,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `src/editor/analysis/frames.py`: seleção temporal, extração de PNGs e manifesto de frames efetivos.
 - `src/editor/analysis/transcription.py`: validação da resposta do Whisper e publicação de transcrição com timestamps por palavra.
 - `src/editor/plan/schema.py`: allowlist estrutural e opções suportadas do schema v2 do plano.
-- `src/editor/plan/validation.py`: validação de fontes, segmentos, áudio, overlays e timeline linear.
+- `src/editor/plan/validation.py`: validação de fontes, segmentos, áudio, movimento, cortes J/L, camadas e timeline linear.
 - `src/editor/plan/canonical.py`: serialização UTF-8 canônica e SHA-256 do plano.
 - `src/editor/integrity/hashes.py`: hashing em blocos de artefatos locais para registros de integridade.
 - `src/editor/integrity/approval.py`: validação do plano, cálculo de hashes e publicação atômica de `approval.json`.
@@ -71,16 +71,16 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `src/editor/whisper_backend.py`: seleção local de modelo/dispositivo e ponte lazy com faster-whisper sem download.
 - `tests/test_audio_analysis.py`: processo real da CLI, validação precoce e preservação em falha de FFmpeg.
 - `tests/test_frame_extraction.py`: seleção explícita/regular, timestamps efetivos, PNGs e preservação em falha de FFmpeg.
-- `tests/test_plan_validation.py`: schema estrito, timeline do cenário de vlog, regras de áudio, overlays e hash canônico.
+- `tests/test_plan_validation.py`: schema v2 estrito, movimento, timeline do cenário de vlog, regras de áudio, cortes, camadas e hash canônico.
 - `tests/test_preview_render.py`: composição real da preview, áudio explícito do b-roll, perfil, mute e preservação em falha.
 - `tests/test_approval.py`: aprovação real por hashes, ordenação das fontes, invariância de formatação e preservação do estado vigente.
 - `tests/test_full_render.py`: full real com aprovação vigente, bloqueio por mutação, aprovação inválida e preservação em falha de FFmpeg.
 - `tests/test_transcription.py`: contrato canônico, seleção CPU/CUDA, timestamps obrigatórios e erros seguros da transcrição.
 - `tests/fixtures/media/main.mp4`: fixture curta H.264/AAC com trechos silenciosos para o contrato de áudio.
-- `tests/fixtures/workflow/`: plan.json, fontes locais, preview e aprovação do cenário de validação do MVP.
+- `tests/fixtures/workflow/`: plan.json v2, fontes locais, preview, aprovação e full do cenário de validação do MVP.
 - `tests/test_cli_contract.py`: smoke test dos dois pontos de entrada e dos envelopes JSON.
 - `tests/test_installation.py`: testes do lockfile, do modo somente leitura, dos gates e da cópia de modelos locais.
-- `tests/test_capabilities.py`: teste de processo do inventário e da recomendação determinística.
+- `tests/test_capabilities.py`: teste de processo do inventário v2, limites, operação init, documentação e recomendação determinística.
 - `tests/e2e/test_mvp_flow.py`: jornada E2E dos comandos locais, artefatos publicados, saída JSON e bloqueio por aprovação obsoleta.
 - `tests/fixtures/e2e/`: plano curto de vlog, b-roll, música e lettering usado pela prova ponta a ponta.
 - `tests/fixtures/phase-1/images/`: raster estático, alpha e animações rejeitadas na prova de camadas da Phase 1.
@@ -94,7 +94,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `skills/vibe-editor/`: skill que ensina agentes a conduzir o fluxo de edição de vídeo local, incluindo verificação do ambiente, análise, preview, aprovação e full.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: pyproject.toml, src/editor/* implementados na T1; lockfile e instalador verificados na T2 em 2026-09-10; capacidades locais adicionadas na T3, análise de áudio na T4, transcrição local na T5, extração de frames na T6, validação de plano na T7, renderização de preview na T8, aprovação por hashes na T9, renderização final na T10 e jornada E2E na T11 em 2026-09-12 -->
+<!-- evidência: MVP implementado até a jornada E2E em 2026-09-12; Phase 1 T1 a T8 implementadas e T9 de capacidades/documentação verificada em 2026-09-13. -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -128,13 +128,22 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Limitação conhecida:** o instalador não baixa FFmpeg, CUDA, gitleaks ou pesos Whisper e exige suas origens locais; `ponytail: usar um catálogo assinado de artefatos quando o provisionamento precisar ser automatizado fora da máquina local`.
 - **Verificação:** `pwsh -NoProfile -File scripts/install.ps1 -Verify`, `python -m pip check`, `gitleaks detect --source . --no-banner`, `python -m pip_audit -r requirements.lock` e `python -m unittest discover -s tests -p "test_installation.py" -v`.
 
+### Preparação segura de trabalhos, Phase 1 T1
+
+- **Propósito:** criar ou completar a estrutura técnica de um trabalho sem selecionar fontes ou criar estado editorial.
+- **Entrada:** `editor init --workdir <caminho-absoluto> --json`; o diretório final e seus componentes devem ser regulares, seguros e graváveis.
+- **Saída:** envelope JSON com `command: "init"`, `state: "ready"`, listas `created` e `existing` e artefatos preservados; a estrutura contém `.tmp`, `analysis/audio`, `analysis/transcription` e `frames`.
+- **Dependências:** biblioteca padrão; não faz rede, não copia fontes e não cria `plan.json`, `preview.mp4`, `approval.json` ou `full.mp4`.
+- **Limitação conhecida:** a criação aceita somente o último componente inexistente e rejeita links, junctions, reparse points e destinos inseguros; `ponytail: suportar provisionamento de árvores novas mais profundas somente quando houver necessidade operacional real`.
+- **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.test_init tests.test_cli_contract -v`.
+
 ### Capacidades locais, T3
 
-- **Propósito:** expor o inventário local consumível por agentes antes de iniciar análise ou edição.
+- **Propósito:** expor o inventário local consumível por agentes antes de iniciar análise ou edição, incluindo o contrato editorial da Phase 1.
 - **Entrada:** `editor capabilities --json`; o comando também preserva a saída estruturada quando `--json` é omitido.
-- **Saída:** envelope JSON com sistema, CPU, memória, GPU/VRAM, FFmpeg/FFprobe, backend Whisper, modelos locais, dispositivos, formatos, limites, operações e recomendação.
+- **Saída:** envelope JSON com sistema, CPU, memória, GPU/VRAM, FFmpeg/FFprobe, backend Whisper, modelos locais, dispositivos, formatos de vídeo, áudio e imagem, plano schema v2, limites, operações incluindo `init` e recomendação.
 - **Dependências:** biblioteca padrão; FFmpeg/FFprobe, `nvidia-smi`, faster-whisper, CTranslate2 e modelos são sondados somente quando fornecidos localmente.
-- **Limitação conhecida:** GPU é detectada via `nvidia-smi` e a recomendação só usa modelos `tiny`, `base` ou `small` com os arquivos CTranslate2 mínimos; `ponytail: adicionar adaptadores para outros fornecedores de GPU ou catálogos de modelos somente quando houver necessidade real`.
+- **Limitação conhecida:** GPU é detectada via `nvidia-smi` e a recomendação só usa modelos `tiny`, `base` ou `small` com os arquivos CTranslate2 mínimos; movimento usa interpolação linear, cortes J/L têm duração máxima de 30 segundos, e imagens aceitas são PNG, JPEG/JPG e WebP estáticos até 100 MiB e 8.192 pixels por dimensão; `ponytail: adicionar adaptadores para outros fornecedores de GPU ou catálogos de modelos somente quando houver necessidade real`.
 - **Verificação:** `python -m editor capabilities --json` e `python -m unittest discover -s tests -p "test_capabilities.py" -v`.
 
 ### Análise de áudio, T4
@@ -166,20 +175,20 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 
 ### Validação de plano linear, T7
 
-- **Propósito:** validar o único `plan.json` do trabalho antes de qualquer renderização, garantindo schema estrito, metadados de mídia, timeline linear, áudio explícito, overlays e perfil 16:9.
+- **Propósito:** validar o único `plan.json` do trabalho antes de qualquer renderização, garantindo schema v2 estrito, metadados de mídia, timeline linear, movimento, áudio explícito, cortes J/L, camadas e perfil 16:9.
 - **Entrada:** `editor plan validate --workdir <caminho-absoluto> --json`; fontes relativas são resolvidas no trabalho e fontes absolutas locais continuam permitidas como originais de entrada.
-- **Saída:** envelope JSON em `stdout` com metadados das fontes, timeline concatenada, processamento de áudio, JSON canônico e SHA-256; nenhum arquivo de saída é criado ou renderizado.
+- **Saída:** envelope JSON em `stdout` com metadados das fontes, timeline concatenada, estados de movimento, processamento de áudio, `cut_count`, `layer_count`, JSON canônico e SHA-256; nenhum arquivo de saída é criado ou renderizado.
 - **Dependências:** Python 3.11 x64, biblioteca padrão e FFprobe local para validar contêiner, codecs, duração e proporção.
-- **Limitação conhecida:** a timeline é linear, sem transições, camadas visuais simultâneas ou decisão editorial automática; `ponytail: ampliar o schema somente quando uma operação real do MVP exigir composição fora da timeline explícita`.
+- **Limitação conhecida:** a timeline é linear, sem transições, easing, keyframes arbitrários ou decisão editorial automática; `ponytail: ampliar o schema somente quando uma operação real do MVP exigir composição fora da timeline explícita`.
 - **Verificação:** `.venv\Scripts\python.exe -B -m editor plan validate --workdir <caminho-absoluto> --json`, `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_plan_validation.py" -v` e `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`.
 
 ### Renderização de preview, T8
 
-- **Propósito:** transformar um plano validado em uma única preview linear com cortes, junções, b-roll, áudio explícito, processamento e lettering.
+- **Propósito:** transformar um plano v2 validado em uma única preview linear com cortes, junções, movimento, b-roll, áudio explícito, processamento e camadas de texto, imagem e vídeo.
 - **Entrada:** `editor render preview --workdir <caminho-absoluto> --json`, usando somente o `plan.json` e as fontes locais declaradas.
 - **Saída:** envelope JSON em `stdout` e `<workdir>/preview.mp4`, publicado somente depois de o arquivo temporário ser validado como MP4 H.264/AAC, 16:9, até 720 pixels e com a duração da timeline.
 - **Dependências:** Python 3.11 x64, FFmpeg/FFprobe locais com encoders `libx264` e `aac`; nenhum processo usa shell intermediário ou rede.
-- **Limitação conhecida:** a preview usa um único canvas 16:9 derivado da largura do primeiro vídeo e codificação H.264 `libx264` com preset `veryfast`; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.
+- **Limitação conhecida:** a preview usa um único canvas 16:9 derivado da largura do primeiro vídeo e codificação H.264 `libx264` com preset `veryfast`; camadas de vídeo não têm loop, freeze, áudio implícito ou alteração de velocidade; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.
 - **Verificação:** `python -m editor render preview --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_preview_render.py" -v`.
 
 ### Aprovação por hashes, T9
@@ -213,10 +222,18 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 
 - **Propósito:** ensinar agentes compatíveis a reconhecer pedidos de edição de vídeo e conduzir o trabalho do briefing até a `full.mp4` aprovada, usando a CLI local; quando o destino é YouTube, aplica boas práticas de edição.
 - **Entrada:** pedido do usuário para editar, montar, cortar, juntar, sonorizar, legendar ou exportar vídeo com fontes locais.
-- **Saída:** execução guiada de capacidades, análises, `plan.json`, `preview.mp4`, aprovação explícita e `full.mp4`, sem upload ou fallback remoto.
+- **Saída:** execução guiada de `capabilities`, `init`, análises, plano schema v2, `preview.mp4`, aprovação explícita e `full.mp4`, sem upload ou fallback remoto.
 - **Dependências:** o ambiente local descrito em `skills/vibe-editor/references/installation.md` e as práticas de YouTube em `skills/vibe-editor/references/youtube-editing.md`.
-- **Limitação conhecida:** a skill registra como parciais ou ausentes legendas sincronizadas, zoom/movimento, inserções em camada e cortes J/L de primeira classe; `ponytail: implementar essas capacidades somente na fase posterior ao MVP, com contrato e verificação próprios`.
+- **Limitação conhecida:** a skill ainda não produz legendas sincronizadas, easing, keyframes arbitrários, rotação, tracking ou transições; `ponytail: adicionar essas capacidades somente quando uma necessidade editorial real exigir contrato e verificação próprios`.
 - **Verificação:** `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor` e revisão dos comandos documentados contra `scripts/install.ps1` e `src/editor/cli.py`.
+
+### Contrato editorial v2 da Phase 1
+
+- **Capacidades:** `capabilities --json` informa o plano schema v2, a operação `init`, fontes de vídeo, áudio e imagem, camadas `text`, `image` e `video`, cortes `j` e `l`, movimento linear e formatos raster PNG, JPEG/JPG e WebP.
+- **Limites:** o inventário expõe até 1.000 segmentos, 1.000 camadas, 999 cortes, 30 segundos por corte, `zoom` entre `0.5` e `4.0`, imagens de até 100 MiB e 8.192 pixels por dimensão, além dos limites de mídia já vigentes.
+- **Fluxo:** o agente executa `init` em um trabalho novo, fecha o briefing, escreve e valida `plan.json`, gera a preview, obtém aprovação humana explícita e somente então chama `render full`.
+- **Segurança:** `init` é idempotente e não cria estado editorial; fontes e artefatos vigentes são preservados, e a aprovação por hash continua obrigatória para a full.
+- **Verificação:** `.venv\Scripts\python.exe -B -m editor capabilities --json`, `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities -v` e o `quick_validate.py` da skill.
 
 ### Camadas raster estáticas, Phase 1 T6
 

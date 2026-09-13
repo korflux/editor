@@ -196,19 +196,20 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T9: Atualizar capacidades e documentação do agente
 
-- [ ] T9 concluída
+- [x] T9 concluída
 - **Spec:** A10, C6
 - **Decisões:** SCOPE-01 (mantém as cinco capacidades no mesmo fluxo documentado), CONTRACT-01 (documenta v2 como contrato vigente)
 - **O quê:** Atualizar `capabilities --json`, a skill `vibe-editor`, suas referências e o Documento Vivo para refletir `init`, schema v2, movimento, J/L, camadas, formatos raster e limites. Remover declarações de ausência ou exemplos v1 sem criar dependência nova. Estender `tests/test_capabilities.py` com uma checagem textual dos marcadores v2 obrigatórios e da ausência de declarações legadas em toda a documentação atualizada.
 - **Aceite:**
-  - [ ] O inventário reporta `init`, schema v2, formatos e limites de camadas, cortes, movimento e imagens, mantendo a sondagem local sem efeitos colaterais.
-  - [ ] A skill orienta `init` antes de um trabalho novo, descreve o plano v2, as camadas e J/L, e mantém aprovação humana explícita antes da full.
-  - [ ] `REGRAS.md` registra os módulos, fixtures, comandos e limitações novas sem declarar v1, `overlays` ou capacidades implementadas como ausentes.
+  - [x] O inventário reporta `init`, schema v2, formatos e limites de camadas, cortes, movimento e imagens, mantendo a sondagem local sem efeitos colaterais.
+  - [x] A skill orienta `init` antes de um trabalho novo, descreve o plano v2, as camadas e J/L, e mantém aprovação humana explícita antes da full.
+  - [x] `REGRAS.md` registra os módulos, fixtures, comandos e limitações novas sem declarar o contrato anterior ou capacidades implementadas como ausentes.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities -v`
-  - [ ] `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities -v` -> `Ran 7 tests ... OK`.
+  - [x] `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor` -> `Skill is valid!`.
 - **Deps:** T2
-- **Arquivos:** `src/editor/capabilities.py`, `tests/test_capabilities.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/installation.md`, `skills/vibe-editor/references/youtube-editing.md`, `.vibeflow/REGRAS.md`
+- **Prova:** o inventário real publicou `init` sem dependências, schema v2, formatos raster `png/jpg/jpeg/webp`, camadas `text/image/video`, cortes `j/l`, movimento linear, limites de `zoom`, cortes e imagens, sem alterar arquivos. A checagem textual cobriu os quatro documentos operacionais e rejeita o contrato anterior; a validação estrutural da skill passou.
+- **Arquivos:** `src/editor/capabilities.py`, `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `tests/test_capabilities.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/installation.md`, `skills/vibe-editor/references/youtube-editing.md`, `.vibeflow/REGRAS.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`, `.vibeflow/phases/phase-1-novas-capacidades-editoriais/implement.md`
 - **Size:** `medium, 5/10, contrato operacional distribuído entre inventário, skill e Documento Vivo`
 - **Risk:** `low, documentação e saída de descoberta podem divergir do comportamento implementado se não forem verificadas juntas`
 

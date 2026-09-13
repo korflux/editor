@@ -39,7 +39,15 @@ Usar o inventário local antes de começar:
 
 Esse comando confirma quais ferramentas e modelos estão disponíveis. Depois, usar
 um diretório de trabalho absoluto, com uma pasta própria para aquele vídeo, e
-preservar os arquivos originais.
+preservar os arquivos originais. Para um trabalho novo, preparar a estrutura antes
+de analisar ou escrever o plano:
+
+```text
+.venv\Scripts\python.exe -B -m editor init --workdir "<workdir>" --json
+```
+
+O `init` é idempotente, não cria estado editorial e não substitui artefatos já
+publicados.
 
 ### 1.3 Analisar fala, áudio e imagem
 
@@ -87,7 +95,7 @@ Um exemplo reduzido de plano com gancho, corte e b-roll em tela cheia:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "profile": {"aspect_ratio": "16:9"},
   "sources": [
     {"id": "main", "kind": "video", "path": "sources/main.mp4"},
@@ -108,7 +116,7 @@ Um exemplo reduzido de plano com gancho, corte e b-roll em tela cheia:
       "audio": {
         "mode": "replace",
         "tracks": [
-          {"source_id": "main", "in_s": 12, "out_s": 15, "gain_db": 0, "loop": false}
+          {"source_id": "main", "in_s": 12, "out_s": 15.2, "gain_db": 0, "loop": false}
         ]
       }
     },
@@ -122,12 +130,19 @@ Um exemplo reduzido de plano com gancho, corte e b-roll em tela cheia:
       }
     }
   ],
-  "overlays": [
+  "cuts": [
+    {"after_segment": 1, "type": "j", "duration_s": 0.20}
+  ],
+  "layers": [
     {
-      "text": "O erro que deixa seu vídeo lento",
+      "type": "text",
       "start_s": 0.2,
       "end_s": 3.5,
-      "position": "top-center",
+      "x": 0.08,
+      "y": 0.08,
+      "width": 0.60,
+      "height": 0.16,
+      "text": "O erro que deixa seu vídeo lento",
       "font": "Arial",
       "size_px": 48,
       "color": "#FFFFFF",
@@ -199,8 +214,8 @@ Como escolher:
    essencial.
 4. Conferir a leitura na preview em uma tela pequena.
 
-No plano, o gancho é um item de `overlays`. O comando que verifica e aplica a
-decisão é o fluxo normal do plano:
+No plano, o gancho é uma camada `type: "text"` com caixa normalizada. O comando que
+verifica e aplica a decisão é o fluxo normal do plano:
 
 ```text
 .venv\Scripts\python.exe -B -m editor plan validate --workdir "<workdir>" --json
@@ -269,7 +284,7 @@ Como montar:
 4. Manter a fala principal no áudio enquanto o b-roll aparece.
 5. Voltar para a imagem principal quando a informação visual deixar de ajudar.
 
-No plano atual, um b-roll em tela cheia é um novo `segment` de vídeo. A faixa de
+No plano v2, um b-roll em tela cheia é um novo `segment` de vídeo. A faixa de
 áudio pode continuar vindo do vídeo principal, usando `mode: replace`, como no
 exemplo da seção 1.4. Depois, usar:
 
@@ -279,10 +294,11 @@ exemplo da seção 1.4. Depois, usar:
 ```
 
 Para uma inserção em camada, como picture-in-picture ou uma imagem menor sobre o
-vídeo, registrar no plano a posição, o tamanho e o intervalo da inserção conforme o
-contrato visual da versão do editor. A regra editorial continua a mesma: a camada
-deve explicar ou reforçar a fala, e não competir com ela. Validar e revisar na
-preview antes de gerar a full.
+vídeo, registrar `type`, `start_s`, `end_s`, `x`, `y`, `width` e `height` na lista
+`layers[]`. Imagens podem ser PNG, JPEG/JPG ou WebP estáticos, e vídeos em camada
+usam `fit: contain` ou `fit: crop` sem áudio implícito. A regra editorial continua
+a mesma: a camada deve explicar ou reforçar a fala, e não competir com ela. Validar
+e revisar na preview antes de gerar a full.
 
 ### 2.4 Zoom e movimento
 
@@ -311,6 +327,9 @@ Como decidir a intensidade:
 O movimento deve ser declarado no plano, separado do ajuste de enquadramento. Não
 usar `fit: crop` como sinônimo de zoom: `crop` define como a imagem cabe no canvas,
 enquanto o movimento editorial precisa ter início, fim e comportamento próprios.
+No schema v2, ele fica em `video.motion` com estados `from` e `to`, cada um com
+`x`, `y` e `zoom`; os valores de `zoom` ficam entre `0.5` e `4.0` e a interpolação
+é linear, sem easing.
 Após incluir o movimento no contrato do plano, os comandos de verificação e revisão
 continuam sendo:
 
@@ -351,7 +370,9 @@ Como aplicar:
 4. Ouvir a transição na preview, principalmente com fones.
 
 O intervalo de áudio e o intervalo visual devem ser registrados explicitamente no
-plano. Depois de alterar esses intervalos, executar:
+plano. Em uma fronteira entre segmentos, declare o corte em `cuts[]` com
+`after_segment`, `type: "j"` ou `type: "l"` e `duration_s`. Depois de alterar esses
+intervalos, executar:
 
 ```text
 .venv\Scripts\python.exe -B -m editor plan validate --workdir "<workdir>" --json
@@ -395,8 +416,11 @@ nomes estáveis:
 
 ```text
 <workdir>\
+  .tmp\
   sources\
   analysis\
+    audio\
+    transcription\
   frames\
   plan.json
   preview.mp4
@@ -416,6 +440,7 @@ Regras práticas:
 Comandos que materializam esse fluxo:
 
 ```text
+.venv\Scripts\python.exe -B -m editor init --workdir "<workdir>" --json
 .venv\Scripts\python.exe -B -m editor capabilities --json
 .venv\Scripts\python.exe -B -m editor plan validate --workdir "<workdir>" --json
 .venv\Scripts\python.exe -B -m editor render preview --workdir "<workdir>" --json

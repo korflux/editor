@@ -9,13 +9,29 @@ from typing import Any
 from . import dependencies
 from .analysis.audio import MAX_AUDIO_WINDOW_SECONDS, MAX_AUDIO_WINDOWS
 from .contracts import CLI_VERSION
-from .media import MAX_SOURCE_DURATION_SECONDS, MAX_SOURCE_SIZE_BYTES
+from .media import (
+    IMAGE_FORMATS,
+    MAX_IMAGE_DIMENSION,
+    MAX_IMAGE_SIZE_BYTES,
+    MAX_SOURCE_DURATION_SECONDS,
+    MAX_SOURCE_SIZE_BYTES,
+)
+from .plan.schema import (
+    CUT_TYPES,
+    LAYER_FIT_MODES,
+    LAYER_TYPES,
+    MAX_CUT_DURATION_SECONDS,
+    MOTION_ZOOM_MAX,
+    MOTION_ZOOM_MIN,
+    PLAN_SCHEMA_VERSION,
+    SOURCE_KINDS,
+)
 from .plan.validation import (
-    MAX_OVERLAYS,
+    MAX_LAYERS,
+    MAX_PLAN_BYTES,
     MAX_SEGMENTS,
     MAX_TIMELINE_DURATION_SECONDS,
 )
-
 
 def default_model_root() -> Path:
     """Seleciona o diretório de modelos configurado ou o padrão local do repositório."""
@@ -138,15 +154,21 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
     models = dependencies.discover_models(model_dir or default_model_root())
     recommendation = choose_recommendation(models, cuda["status"])
 
-    # A capacidade reportada precisa refletir os comandos existentes, mas sem
-    # declarar operações que ainda não têm a dependência externa necessária.
+    # O inventário precisa refletir o contrato v2 e os comandos reais, mas sem
+    # declarar como disponíveis operações que dependem de componentes ausentes.
     ffprobe_status = ffmpeg["tools"]["ffprobe"]["status"]
     render_status = _combine_statuses(ffmpeg["status"], ffmpeg["encoders"]["status"])
     render_requires = ["ffmpeg", "ffprobe", *dependencies.RENDER_ENCODERS]
+    max_cut_boundaries = max(0, MAX_SEGMENTS - 1)
 
     transcribe_status = _combine_statuses(whisper["status"], models["status"])
     operations = {
         "capabilities": _operation("available", [], "consulta local sem efeitos colaterais"),
+        "init": _operation(
+            "available",
+            [],
+            "prepara a estrutura técnica do trabalho sem criar estado editorial",
+        ),
         "analyze_transcribe": _operation(
             transcribe_status,
             ["faster-whisper", "ctranslate2", "modelo local"],
@@ -218,18 +240,47 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "status": "available",
             "video": ["mp4"],
             "audio": ["mp3", "wav"],
+            "image": [suffix.removeprefix(".") for suffix in IMAGE_FORMATS],
             "codecs": {
                 "video": ["h264"],
                 "audio": ["aac", "mp3", "pcm_s16le"],
+                "image": ["png", "mjpeg", "webp"],
+            },
+        },
+        "plan": {
+            "schema_version": PLAN_SCHEMA_VERSION,
+            "source_kinds": sorted(SOURCE_KINDS),
+            "motion": {
+                "status": "available",
+                "interpolation": "linear",
+                "zoom_min": MOTION_ZOOM_MIN,
+                "zoom_max": MOTION_ZOOM_MAX,
+            },
+            "cuts": {
+                "types": sorted(CUT_TYPES),
+                "max_boundaries": max_cut_boundaries,
+                "max_duration_seconds": MAX_CUT_DURATION_SECONDS,
+            },
+            "layers": {
+                "types": sorted(LAYER_TYPES),
+                "fit_modes": sorted(LAYER_FIT_MODES),
+                "max_count": MAX_LAYERS,
             },
         },
         "limits": {
+            "max_plan_bytes": MAX_PLAN_BYTES,
             "max_source_size_bytes": MAX_SOURCE_SIZE_BYTES,
             "max_source_duration_seconds": MAX_SOURCE_DURATION_SECONDS,
             "max_audio_window_seconds": MAX_AUDIO_WINDOW_SECONDS,
             "max_audio_windows": MAX_AUDIO_WINDOWS,
             "max_segments": MAX_SEGMENTS,
-            "max_overlays": MAX_OVERLAYS,
+            "max_layers": MAX_LAYERS,
+            "max_cuts": max_cut_boundaries,
+            "max_cut_duration_seconds": MAX_CUT_DURATION_SECONDS,
+            "motion_zoom_min": MOTION_ZOOM_MIN,
+            "motion_zoom_max": MOTION_ZOOM_MAX,
+            "max_image_size_bytes": MAX_IMAGE_SIZE_BYTES,
+            "max_image_dimension": MAX_IMAGE_DIMENSION,
             "max_timeline_duration_seconds": MAX_TIMELINE_DURATION_SECONDS,
             "jobs_in_parallel": 1,
         },

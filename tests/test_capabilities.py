@@ -17,6 +17,12 @@ from editor.capabilities import choose_recommendation, collect_capabilities
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DOCUMENTATION_PATHS = (
+    PROJECT_ROOT / "skills" / "vibe-editor" / "SKILL.md",
+    PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "installation.md",
+    PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "youtube-editing.md",
+    PROJECT_ROOT / ".vibeflow" / "REGRAS.md",
+)
 
 
 def run_module(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -71,7 +77,47 @@ class CapabilitiesTests(unittest.TestCase):
         ):
             self.assertIn(key, data)
         self.assertEqual(data["operations"]["capabilities"]["status"], "available")
+        self.assertEqual(data["operations"]["init"]["status"], "available")
+        self.assertEqual(data["plan"]["schema_version"], 2)
+        self.assertEqual(data["formats"]["image"], ["png", "jpg", "jpeg", "webp"])
+        self.assertEqual(data["limits"]["max_layers"], 1_000)
+        self.assertEqual(data["limits"]["max_cuts"], 999)
+        self.assertEqual(data["limits"]["max_cut_duration_seconds"], 30.0)
+        self.assertEqual(data["limits"]["motion_zoom_min"], 0.5)
+        self.assertEqual(data["limits"]["motion_zoom_max"], 4.0)
+        self.assertEqual(data["limits"]["max_image_size_bytes"], 100 * 1024**2)
+        self.assertEqual(data["limits"]["max_image_dimension"], 8_192)
+        self.assertNotIn("max_overlays", data["limits"])
         self.assertIn(data["recommendation"]["status"], {"recommended", "missing"})
+
+    def test_documentation_describes_only_the_v2_contract(self) -> None:
+        """Impede que a descoberta e o fluxo do agente voltem a documentar o contrato antigo."""
+
+        contents = {path: path.read_text(encoding="utf-8") for path in DOCUMENTATION_PATHS}
+        combined = "\n".join(contents.values())
+
+        for marker in (
+            "schema v2",
+            "editor init",
+            "cuts",
+            "layers",
+            "J/L",
+            "0.5",
+            "4.0",
+            "PNG",
+            "WebP",
+            "100 MiB",
+            "8.192",
+        ):
+            self.assertIn(marker, combined)
+
+        for path, content in contents.items():
+            self.assertNotIn('"schema_version": 1', content, str(path))
+            self.assertNotIn('"overlays"', content, str(path))
+
+        self.assertNotIn("não possui `editor init`", combined)
+        self.assertNotIn("`editor init` ainda não existe", combined)
+        self.assertNotIn("zoom/movimento, inserções em camada e cortes J/L", combined)
 
     def test_root_json_flag_is_preserved_before_subcommand(self) -> None:
         """Confirma as duas posições aceitas para `--json` sem alterar o envelope."""

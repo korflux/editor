@@ -31,9 +31,10 @@ Se o ambiente ainda não tiver sido verificado, se uma dependência estiver ause
 ou se o comando não estiver disponível, leia
 [references/installation.md](references/installation.md) antes de orientar o usuário.
 
-O editor atual não possui `editor init`. Prepare ou use um diretório de trabalho
-local, absoluto, regular e aprovado pelo usuário. Não invente um caminho de fonte
-ou de saída. Prefira executar a CLI pelo Python do ambiente virtual do repositório:
+O editor possui `editor init` para preparar a estrutura técnica sem criar estado
+editorial. Use um diretório de trabalho local, absoluto, regular e aprovado pelo
+usuário. Não invente um caminho de fonte ou de saída. Prefira executar a CLI pelo
+Python do ambiente virtual do repositório:
 
 ```text
 .venv\Scripts\python.exe -B -m editor <comando>
@@ -61,6 +62,17 @@ Entenda, em linguagem simples:
 
 Se os arquivos não estiverem acessíveis localmente, peça ao usuário que os coloque
 em uma pasta acessível ao agente. Não substitua essa etapa por uma URL ou upload.
+
+Para um trabalho novo, depois de confirmar o diretório absoluto com o usuário,
+prepare a estrutura antes de analisar as fontes:
+
+```text
+.venv\Scripts\python.exe -B -m editor init --workdir "<workdir>" --json
+```
+
+`init` é idempotente, cria somente `.tmp`, `analysis/audio`,
+`analysis/transcription` e `frames`, e preserva qualquer plano, análise, preview,
+aprovação ou full já existente. Não crie `plan.json` ou fontes nessa etapa.
 
 ### 2. Consultar as capacidades locais
 
@@ -138,13 +150,22 @@ escrever o plano.
 
 ### 5. Escrever e validar o plano
 
-Escreva `<workdir>\plan.json` apenas com decisões confirmadas. O plano deve
-descrever explicitamente a timeline linear, os cortes, b-roll, faixas de áudio,
-ganhos, música, normalização, limiter e letterings.
+Escreva `<workdir>\plan.json` apenas com decisões confirmadas. O contrato vigente
+é o schema v2: a raiz exige `schema_version: 2`, `profile`, `sources`, `segments`,
+`cuts`, `layers` e `audio_processing`. `cuts` e `layers` devem ser listas explícitas,
+mesmo quando vazias.
 
-O perfil do MVP é horizontal 16:9. Use `fit: contain` ou `fit: crop` quando uma
-fonte tiver proporção diferente. Não acrescente transições, camadas, animações,
-picture-in-picture ou campos fora do contrato.
+O plano deve descrever explicitamente a timeline linear, as faixas de áudio, ganhos,
+música, normalização, limiter e letterings. Use `video.motion` opcional com estados
+`from` e `to`, cada um com `x`, `y` e `zoom` entre `0.5` e `4.0`, interpolados
+linearmente. Declare cortes J/L em `cuts[]`, com `type` `j` ou `l` e sua duração.
+
+O perfil é horizontal 16:9. `layers[]` é a composição visual ordenada sobre o
+vídeo-base e aceita `type: "text"`, `type: "image"` e `type: "video"`, sempre com
+`start_s`, `end_s`, `x`, `y`, `width` e `height` normalizados. Imagens aceitas são
+PNG, JPEG/JPG e WebP estáticos, até 100 MiB e 8.192 pixels por dimensão. Use
+`fit: contain` ou `fit: crop` nas camadas e nas fontes quando necessário. Não use
+campos fora do contrato.
 
 Valide antes de renderizar:
 
@@ -193,6 +214,8 @@ trabalho para inspeção:
 
 ```text
 <workdir>\
+  .tmp\
+  analysis\
   plan.json
   approval.json
   preview.mp4
