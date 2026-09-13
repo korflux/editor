@@ -615,6 +615,33 @@ class PlanValidationTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "PLAN_INVALID")
 
+    def test_video_layer_requires_matching_source_duration_and_fit(self) -> None:
+        """Rejeita referências e trechos inválidos antes de construir qualquer render."""
+
+        document = load_workflow_plan()
+        layer = {
+            "type": "video", "start_s": 0.5, "end_s": 1.0,
+            "x": 0.1, "y": 0.2, "width": 0.4, "height": 0.5,
+            "source_id": "main", "in_s": 0.25, "out_s": 0.75, "fit": "contain",
+        }
+        document["layers"] = [layer]
+        with workspace_tempdir() as workdir:
+            shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+            write_plan(workdir, document)
+            with patch("editor.plan.validation.media.inspect_source", side_effect=fake_inspect_source):
+                self.assertEqual(validate_plan(workdir)["layer_count"], 1)
+                for change in (
+                    {"source_id": "music-01"}, {"in_s": -0.1}, {"out_s": 2.5},
+                    {"out_s": 0.8}, {"fit": "preserve"}, {"x": 0.8},
+                    {"start_s": 1.5, "end_s": 2.5}, {"loop": True},
+                ):
+                    with self.subTest(change=change):
+                        document["layers"] = [{**layer, **change}]
+                        write_plan(workdir, document)
+                        with self.assertRaises(CliError) as raised:
+                            validate_plan(workdir)
+                        self.assertEqual(raised.exception.code, "PLAN_INVALID")
+
     def test_nul_in_layer_returns_plan_invalid_envelope(self) -> None:
         """Confirma que controle NUL falha na validação antes de alcançar o filtro FFmpeg."""
         document = load_workflow_plan()

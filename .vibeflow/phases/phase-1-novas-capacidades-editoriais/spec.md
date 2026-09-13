@@ -309,7 +309,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
 - [x] A2: `init` rejeita caminho relativo, arquivo no destino, componente
   linkado, reparse point e destino não gravável com envelope seguro, sem deixar
   arquivo editorial ou estado de aprovação parcial.
-- [ ] A3: `plan validate` aceita um plano v2 com movimento, J/L, texto em
+- [x] A3: `plan validate` aceita um plano v2 com movimento, J/L, texto em
   coordenadas livres e camadas de imagem e vídeo, e rejeita v1, `overlays`,
   campos desconhecidos, coordenadas fora da caixa, fontes incompatíveis e limites
   excedidos antes do FFmpeg.
@@ -319,7 +319,7 @@ resolução, taxa de quadros e limite de dimensão próprios de cada artefato.
 - [x] A5: Um plano com J e L válidos antecipa ou prolonga o áudio exatamente pela
   duração declarada, mistura somente os grupos ativos e preserva a duração visual
   final; fronteiras ou coberturas inválidas falham na validação.
-- [ ] A6: Camadas de texto, imagem e vídeo respeitam intervalo, caixa, fit,
+- [x] A6: Camadas de texto, imagem e vídeo respeitam intervalo, caixa, fit,
   transparência, ordem do array e ausência de áudio implícito. Camadas não
   substituem o vídeo-base.
 - [x] A7: O texto v2 usa `x`, `y`, `width` e `height` normalizados, e posições

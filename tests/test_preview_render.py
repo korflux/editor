@@ -94,6 +94,26 @@ def create_motion_source(workdir: Path) -> Path:
     return output_path
 
 
+def create_layer_video_source(workdir: Path) -> Path:
+    """Gera clipe quadrado vermelho/verde com áudio para provar recorte e descarte do som."""
+
+    output_path = workdir / "sources" / "layer.mp4"
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=c=red:size=160x160:rate=25:duration=1",
+            "-f", "lavfi", "-i", "color=c=green:size=160x160:rate=25:duration=1",
+            "-f", "lavfi", "-i", "sine=frequency=1000:duration=2",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-shortest", "-y", str(output_path),
+        ], capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr.decode(errors="replace"))
+    return output_path
+
+
 def use_video_only_motion_fixture(workdir: Path) -> None:
     """Troca a fonte-base pela fixture espacial e remove áudio para isolar a prova visual."""
 
@@ -407,6 +427,71 @@ class PreviewRenderTests(unittest.TestCase):
             self.assertEqual(stacked_result.returncode, 0, stacked_result.stderr)
             stacked = extract_rgb_frame(layered / "preview.mp4", 0.75)
             self.assertGreater(mean_region_difference(stacked, crop, 40, 58, 50, 65), 5)
+
+    def test_video_layer_preserves_base_timing_fit_order_and_explicit_audio(self) -> None:
+        """Compara frames reais e confirma que o áudio da camada não chega à preview."""
+
+        with workspace_tempdir() as workdir:
+            layered = workdir / "layered"
+            baseline = workdir / "baseline"
+            layered.mkdir()
+            baseline.mkdir()
+            for target in (layered, baseline):
+                copy_workflow(target)
+                use_video_only_motion_fixture(target)
+            create_layer_video_source(layered)
+            document = json.loads((layered / "plan.json").read_text(encoding="utf-8"))
+            document["sources"].append({"id": "layer", "kind": "video", "path": "sources/layer.mp4"})
+            video_layer = {
+                "type": "video", "start_s": 0.5, "end_s": 1.25,
+                "x": 0.1, "y": 0.2, "width": 0.4, "height": 0.5,
+                "source_id": "layer", "in_s": 0.75, "out_s": 1.5, "fit": "contain",
+            }
+            document["layers"] = [video_layer]
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            baseline_document = json.loads((baseline / "plan.json").read_text(encoding="utf-8"))
+            baseline_document["layers"] = []
+            (baseline / "plan.json").write_text(json.dumps(baseline_document), encoding="utf-8")
+
+            layered_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            baseline_result = run_module("render", "preview", "--workdir", str(baseline.resolve()), "--json")
+            self.assertEqual(layered_result.returncode, 0, layered_result.stdout + layered_result.stderr)
+            self.assertEqual(baseline_result.returncode, 0, baseline_result.stdout + baseline_result.stderr)
+            self.assertFalse(json.loads(layered_result.stdout)["data"]["audio"]["present"])
+            active = extract_rgb_frame(layered / "preview.mp4", 0.75)
+            plain = extract_rgb_frame(baseline / "preview.mp4", 0.75)
+            self.assertGreater(mean_region_difference(active, plain, 75, 75, 85, 85), 5)
+            self.assertLess(mean_region_difference(active, plain, 35, 75, 45, 85), 2)
+            self.assertGreater(mean_region_difference(
+                extract_rgb_frame(layered / "preview.mp4", 0.6),
+                extract_rgb_frame(layered / "preview.mp4", 1.0), 75, 75, 85, 85,
+            ), 20)
+            for timestamp in (0.25, 1.5):
+                self.assertLess(mean_frame_difference(
+                    extract_rgb_frame(layered / "preview.mp4", timestamp),
+                    extract_rgb_frame(baseline / "preview.mp4", timestamp),
+                ), 2)
+
+            video_layer["fit"] = "crop"
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            crop_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            self.assertEqual(crop_result.returncode, 0, crop_result.stdout + crop_result.stderr)
+            crop = extract_rgb_frame(layered / "preview.mp4", 0.75)
+            self.assertGreater(mean_region_difference(crop, active, 35, 75, 45, 85), 5)
+
+            shutil.copy2(IMAGE_FIXTURES / "blue.png", layered / "sources" / "blue.png")
+            document["sources"].append({"id": "blue", "kind": "image", "path": "sources/blue.png"})
+            document["layers"].append({
+                "type": "image", "start_s": 0.5, "end_s": 1.25,
+                "x": 0.1, "y": 0.2, "width": 0.4, "height": 0.5,
+                "source_id": "blue", "fit": "crop",
+            })
+            (layered / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            stacked_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
+            self.assertEqual(stacked_result.returncode, 0, stacked_result.stdout + stacked_result.stderr)
+            self.assertGreater(mean_region_difference(
+                extract_rgb_frame(layered / "preview.mp4", 0.75), crop, 75, 75, 85, 85,
+            ), 5)
 
     def test_graph_does_not_use_broll_audio_and_keeps_processing_explicit(self) -> None:
         """Confirma no grafo que B fornece somente imagem e o áudio controla a mixagem."""

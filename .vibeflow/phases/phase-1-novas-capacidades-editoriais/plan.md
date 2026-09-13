@@ -158,16 +158,18 @@ Implementar o contrato v2 do plano e as cinco capacidades da spec, começando pe
 
 ### T7: Compor vídeo em camada sem áudio implícito
 
-- [ ] T7 concluída
+- [x] T7 concluída
 - **Spec:** A3, A6, C1
 - **Decisões:** LAYER-01 (vídeo em camada permanece acima do vídeo-base e sem áudio editorial implícito)
 - **O quê:** Adicionar `type: "video"` às camadas, validando fonte de vídeo, intervalo, duração exata, caixa e `fit`, e compor o clipe no retângulo normalizado durante o intervalo declarado. O áudio da fonte da camada será descartado; áudio editorial continuará vindo apenas de `segments[].audio`.
 - **Aceite:**
-  - [ ] A camada aceita somente fonte `kind: "video"`, `in_s`/`out_s` com duração igual ao intervalo da camada dentro da tolerância, `contain` ou `crop`, sem loop, freeze ou ajuste de velocidade.
-  - [ ] O vídeo-base continua presente abaixo da camada, a ordem do array permanece determinística e nenhum áudio da camada chega ao output.
-  - [ ] Intervalo, caixa, fonte incompatível e duração divergente são rejeitados antes do FFmpeg, enquanto a preview real confirma composição temporal e metadados.
+  - [x] A camada aceita somente fonte `kind: "video"`, `in_s`/`out_s` com duração igual ao intervalo da camada dentro da tolerância, `contain` ou `crop`, sem loop, freeze ou ajuste de velocidade.
+  - [x] O vídeo-base continua presente abaixo da camada, a ordem do array permanece determinística e nenhum áudio da camada chega ao output.
+  - [x] Intervalo, caixa, fonte incompatível e duração divergente são rejeitados antes do FFmpeg, enquanto a preview real confirma composição temporal e metadados.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+- **Prova:** verificação da T7, `35 tests ... OK`; regressão do consumidor full, `6 tests ... OK`. Frames reais confirmam recorte, intervalo, fit, ordem e ausência de áudio da camada.
+- **Arquivos executados:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `.vibeflow/REGRAS.md`, `spec.md`, `plan.md` e `implement.md` desta phase.
 - **Deps:** T6
 - **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/render/preview.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `tests/fixtures/phase-1/`
 - **Size:** `high, 8/10, fonte audiovisual em camada, mapeamento temporal e composição espacial real`

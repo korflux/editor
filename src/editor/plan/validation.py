@@ -726,7 +726,7 @@ def _validate_layer_intervals(
     layers: list[dict[str, Any]], timeline_duration: float,
     source_map: dict[str, dict[str, Any]],
 ) -> None:
-    """Garante que camadas estejam na timeline e imagens apontem para fontes estáticas."""
+    """Confere intervalos globais e a mídia compatível com cada camada."""
 
     for layer in layers:
         if float(layer["end_s"]) > timeline_duration + ASPECT_TOLERANCE:
@@ -735,6 +735,17 @@ def _validate_layer_intervals(
             source = source_map.get(str(layer["source_id"]))
             if source is None or source["definition"]["kind"] != "image":
                 raise plan_error("A camada de imagem deve usar uma fonte de imagem válida.")
+        elif layer["type"] == "video":
+            source = source_map.get(str(layer["source_id"]))
+            if source is None or source["definition"]["kind"] != "video":
+                raise plan_error("A camada de vídeo deve usar uma fonte de vídeo válida.")
+            start = float(layer["in_s"])
+            end = float(layer["out_s"])
+            duration = source["metadata"].duration_seconds
+            if start < 0 or end <= start or duration is None or end > duration + ASPECT_TOLERANCE:
+                raise plan_error("O intervalo da camada de vídeo está fora da fonte.")
+            if abs((end - start) - (float(layer["end_s"]) - float(layer["start_s"]))) > ASPECT_TOLERANCE:
+                raise plan_error("A duração da camada de vídeo deve coincidir com seu intervalo na timeline.")
 
 
 def _validate_audio_processing(value: Any) -> dict[str, Any]:

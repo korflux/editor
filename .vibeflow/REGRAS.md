@@ -226,3 +226,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** FFprobe para a allowlist real e FFmpeg com `libx264` para a renderização local.
 - **Limitação conhecida:** somente imagens estáticas das três famílias raster listadas; `ponytail: ampliar formatos apenas quando houver fonte editorial real que justifique outro decoder`.
 - **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` e `.venv\Scripts\python.exe -B -m unittest tests.test_full_render -v`.
+
+### Vídeo em camada, Phase 1 T7
+
+- **Propósito:** compor um trecho MP4/H.264 sobre o vídeo-base no intervalo e na caixa normalizada declarados, sem áudio implícito.
+- **Entrada:** fonte local `kind: "video"` e camada `type: "video"` com `source_id`, `in_s`, `out_s`, `start_s`, `end_s`, `fit` e geometria normalizada; as durações do trecho e da camada devem coincidir.
+- **Saída:** `plan validate` rejeita fonte, intervalo ou duração incompatíveis; preview e full usam o mesmo grafo, com `contain` ou `crop`, ordem de `layers[]` e áudio apenas de `segments[].audio`.
+- **Dependências:** FFprobe para validar a fonte e FFmpeg local com `libx264` para a composição.
+- **Limitação conhecida:** não há loop, freeze, alteração de velocidade ou áudio de camada; `ponytail: adicionar essas operações somente se uma necessidade editorial real exigir contrato e validação próprios`.
+- **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` e `.venv\Scripts\python.exe -B -m unittest tests.test_full_render -v`.

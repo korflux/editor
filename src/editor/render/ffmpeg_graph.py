@@ -420,7 +420,7 @@ def _used_source_ids(document: Mapping[str, Any]) -> tuple[str, ...]:
                 seen.add(normalized)
                 ordered.append(normalized)
     for layer in document["layers"]:
-        if layer["type"] == "image":
+        if layer["type"] in {"image", "video"}:
             source_id = str(layer["source_id"])
             if source_id not in seen:
                 seen.add(source_id)
@@ -428,7 +428,7 @@ def _used_source_ids(document: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def _image_layer_filter(
+def _media_layer_filter(
     input_label: str,
     layer: Mapping[str, Any],
     layer_index: int,
@@ -437,7 +437,7 @@ def _image_layer_filter(
     canvas_height: int,
     timeline_duration: float,
 ) -> tuple[str, str]:
-    """Dimensiona uma imagem estática com alpha e a sobrepõe apenas no intervalo da camada."""
+    """Dimensiona imagem ou trecho de vídeo e o sobrepõe sem mapear áudio da camada."""
 
     left = min(canvas_width - 1, int(float(layer["x"]) * canvas_width))
     top = min(canvas_height - 1, int(float(layer["y"]) * canvas_height))
@@ -446,12 +446,20 @@ def _image_layer_filter(
     width = max(1, right - left)
     height = max(1, bottom - top)
     fit = str(layer["fit"])
-    scaled = f"image{layer_index}"
-    output = f"vimage{layer_index}"
+    scaled = f"media{layer_index}"
+    output = f"vmedia{layer_index}"
     scale_mode = "decrease" if fit == "contain" else "increase"
+    if layer["type"] == "video":
+        # O PTS global posiciona o primeiro frame do recorte na abertura da camada.
+        source = (
+            f"trim=start={_number(layer['in_s'])}:end={_number(layer['out_s'])},"
+            f"setpts=PTS-STARTPTS+{_number(layer['start_s'])}/TB"
+        )
+    else:
+        source = f"trim=duration={_number(timeline_duration)},setpts=PTS-STARTPTS"
     filters = [
-        f"[{input_index}:v:0]trim=duration={_number(timeline_duration)},setpts=PTS-STARTPTS,"
-        f"format=rgba,scale=w={width}:h={height}:force_original_aspect_ratio={scale_mode}"
+        f"[{input_index}:v:0]{source},format=rgba,"
+        f"scale=w={width}:h={height}:force_original_aspect_ratio={scale_mode}"
     ]
     if fit == "crop":
         filters.append(f",crop=w={width}:h={height}:x=(iw-ow)/2:y=(ih-oh)/2")
@@ -533,8 +541,8 @@ def build_ffmpeg_graph(
                 video_label, layer, layer_index, canvas_width, canvas_height
             )
             parts.append(filter_part)
-        elif layer["type"] == "image":
-            filter_part, video_label = _image_layer_filter(
+        elif layer["type"] in {"image", "video"}:
+            filter_part, video_label = _media_layer_filter(
                 video_label, layer, layer_index,
                 input_indexes[str(layer["source_id"])],
                 canvas_width, canvas_height,

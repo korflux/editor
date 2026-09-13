@@ -242,9 +242,7 @@
 - `.vibeflow/phases/phase-1-novas-capacidades-editoriais/plan.md`
 - `.vibeflow/phases/phase-1-novas-capacidades-editoriais/implement.md`
 
-## Handoff
-
-### T6: Camadas raster estáticas
+## T6: Camadas raster estáticas
 
 #### Reconhecimento
 
@@ -285,6 +283,31 @@
   `tests/fixtures/phase-1/images/`.
 - `.vibeflow/REGRAS.md`, `plan.md` e `implement.md` desta phase.
 
+## T7: Vídeo em camada sem áudio implícito
+
+#### Reconhecimento
+
+- O schema v2 já descrevia `type: "video"`, mas a validação de camadas conferia apenas imagens e o grafo ignorava camadas de vídeo.
+- Preview e full compartilham `build_ffmpeg_graph`; corrigir esse ponto preserva uma única composição visual.
+
+#### Implementação
+
+- O validador exige fonte `kind: "video"`, trecho crescente dentro da duração da fonte e duração igual ao intervalo global, além das regras estruturais de caixa e `fit` já existentes.
+- O grafo inclui o vídeo da camada como entrada visual, recorta `in_s`/`out_s`, posiciona o primeiro frame em `start_s` e compõe na ordem de `layers[]` sobre o vídeo-base. Áudio só é mapeado a partir de `segments[].audio`.
+- Imagem e vídeo reutilizam o mesmo filtro espacial, mantendo `contain`, `crop` e o intervalo `[start_s, end_s)`.
+
+#### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` -> `Ran 35 tests ... OK` após simplificação.
+- `.venv\Scripts\python.exe -B -m unittest tests.test_full_render -v` -> `Ran 6 tests ... OK`.
+- O clipe real de teste alterna vermelho e verde e contém áudio. Frames provam o recorte, a caixa, a ordem visual e o vídeo-base preservado; a preview final não contém stream de áudio quando os segmentos estão mute.
+- `git diff --check` passou.
+
+#### Arquivos
+
+- `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`.
+- `.vibeflow/REGRAS.md`, `plan.md`, `spec.md` e `implement.md` desta phase.
+
 ## Handoff
 
-Próximas T* elegíveis: T7 e T9. T8 depende de T7; T10 depende de T8 e T9.
+Próximas T* elegíveis: T8 e T9. T10 depende das duas.
