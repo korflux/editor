@@ -493,6 +493,36 @@ class PreviewRenderTests(unittest.TestCase):
             escaped_result = run_module("render", "preview", "--workdir", str(layered.resolve()), "--json")
             self.assertEqual(escaped_result.returncode, 0, escaped_result.stderr)
 
+    def test_bold_text_uses_concrete_font_file_without_fontconfig_sidecar(self) -> None:
+        """Confirma grafo e render real com o arquivo bold registrado, sem configuração lateral."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+            document["layers"][0]["font"] = "Arial Bold"
+            (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+
+            validated_document, validation = load_validated_plan(workdir)
+            graph = build_ffmpeg_graph(
+                validated_document,
+                validation,
+                canvas_width=320,
+                canvas_height=180,
+            )
+            resolved_font = validation["_resolved_font_files"]["Arial Bold"]
+            self.assertIn("drawtext=fontfile=", graph.filter_complex)
+            self.assertIn(Path(resolved_font).name.casefold(), graph.filter_complex.casefold())
+            self.assertNotIn("fontconfig.xml", graph.filter_complex.casefold())
+
+            result = run_module("render", "preview", "--workdir", str(workdir.resolve()), "--json")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(
+                any(
+                    path.name.casefold() == "fontconfig.xml"
+                    for path in workdir.rglob("*")
+                )
+            )
+
     def test_image_layers_preserve_alpha_fit_interval_order_and_audio_contract(self) -> None:
         """Compara frames reais de contain, crop e z-order sem deixar imagem criar áudio."""
 

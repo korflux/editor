@@ -365,8 +365,9 @@ def _text_layer_filter(
     layer_index: int,
     canvas_width: int,
     canvas_height: int,
+    font_file: str,
 ) -> tuple[str, str]:
-    """Desenha texto em uma superfície transparente limitada à caixa e a sobrepõe no intervalo."""
+    """Desenha texto com o arquivo de fonte validado e o sobrepõe no intervalo declarado."""
 
     left = min(canvas_width - 1, int(float(layer["x"]) * canvas_width))
     top = min(canvas_height - 1, int(float(layer["y"]) * canvas_height))
@@ -384,7 +385,7 @@ def _text_layer_filter(
         size_px=int(layer["size_px"]),
         box_width=box_width,
     )
-    font = _escape_filter_value(str(layer["font"]))
+    escaped_font_file = _escape_filter_value(font_file)
     escaped_text = _escape_filter_value(text)
     start = _number(layer["start_s"])
     end = _number(layer["end_s"])
@@ -395,7 +396,7 @@ def _text_layer_filter(
     output_label = f"vtext{layer_index}"
     surface = (
         f"color=c=black@0:s={box_width}x{box_height}:r=25:d={end},format=rgba,"
-        f"drawtext=font='{font}':fontsize={int(layer['size_px'])}:"
+        f"drawtext=fontfile='{escaped_font_file}':fontsize={int(layer['size_px'])}:"
         f"fontcolor={layer['color']}:text='{escaped_text}':expansion=none:"
         f"text_align={layer['align']}:x={align_x}:y=0[{layer_label}]"
     )
@@ -535,10 +536,19 @@ def build_ffmpeg_graph(
     )
 
     video_label = concat_video_label
+    resolved_font_files = validation.get("_resolved_font_files", {})
     for layer_index, layer in enumerate(document["layers"]):
         if layer["type"] == "text":
+            font_file = resolved_font_files.get(str(layer["font"]))
+            if not isinstance(font_file, str):
+                raise ValueError("arquivo de fonte não resolvido")
             filter_part, video_label = _text_layer_filter(
-                video_label, layer, layer_index, canvas_width, canvas_height
+                video_label,
+                layer,
+                layer_index,
+                canvas_width,
+                canvas_height,
+                font_file,
             )
             parts.append(filter_part)
         elif layer["type"] in {"image", "video"}:

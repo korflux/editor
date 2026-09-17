@@ -8,13 +8,17 @@ import os
 import re
 import subprocess
 import sys
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+try:
+    import winreg
+except ImportError:  # pragma: no cover - somente hosts sem a API do Windows
+    winreg = None
+
 from .. import media
 from ..contracts import CliError, EXIT_CODES, reject_duplicate_json_keys
-from ..dependencies import is_regular_path
+from ..dependencies import is_regular_path, resolve_executable
 from ..workdir import resolve_source_path, validate_workdir
 from .canonical import canonical_json, canonical_sha256
 from .schema import (
@@ -68,6 +72,9 @@ DEFAULT_AUDIO_PROCESSING = {
     "limiter": {"enabled": False, "ceiling_dbfs": -1.0},
     "ducking": False,
 }
+FONT_FILE_EXTENSIONS = frozenset({".otc", ".otf", ".ttc", ".ttf"})
+WINDOWS_FONT_REGISTRY_PATH = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+FONTCONFIG_TIMEOUT_SECONDS = 5
 
 
 def _finite_number(value: Any, location: str) -> float:
@@ -99,41 +106,177 @@ def _reject_nul(value: str, location: str) -> None:
         raise plan_error(f"O campo {location} contém caractere inválido.")
 
 
-@lru_cache(maxsize=128)
-def _font_is_installed(name: str) -> bool:
-    """Consulta fontes locais sem aceitar um caminho fornecido pelo plano nem executar shell."""
+def _normalized_font_name(value: str) -> str:
+    """Normaliza o nome humano da fonte para comparar registro, fontconfig e plano."""
 
-    wanted = name.casefold()
-    if sys.platform == "win32":
-        import winreg
+    without_type = re.sub(r"\s*\([^)]*\)$", "", value)
+    return " ".join(without_type.split()).casefold()
 
-        registry_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-            try:
-                with winreg.OpenKey(hive, registry_path) as key:
-                    for index in range(winreg.QueryInfoKey(key)[1]):
-                        registered = winreg.EnumValue(key, index)[0]
-                        family = re.sub(r"\s*\([^)]*\)$", "", registered).casefold()
-                        if wanted == family:
-                            return True
-            except OSError:
-                continue
+
+def _trusted_windows_font_directories() -> tuple[Path, ...]:
+    """Lista diretórios de fontes do sistema e do usuário sem aceitar raízes arbitrárias."""
+
+    candidates = (
+        (
+            os.environ.get("LOCALAPPDATA"),
+            ("Microsoft", "Windows", "Fonts"),
+        ),
+        (
+            os.environ.get("WINDIR") or os.environ.get("SystemRoot"),
+            ("Fonts",),
+        ),
+    )
+    directories: list[Path] = []
+    for raw_root, suffix in candidates:
+        if not isinstance(raw_root, str) or not raw_root.strip():
+            continue
+        directory = Path(raw_root, *suffix)
+        if is_regular_path(directory, directory=True) and directory not in directories:
+            directories.append(directory)
+    return tuple(directories)
+
+
+def _path_is_within(candidate: Path, directory: Path) -> bool:
+    """Confirma contenção lexical antes da validação física, sem seguir links no cálculo."""
+
+    try:
+        Path(os.path.abspath(os.fspath(candidate))).relative_to(
+            Path(os.path.abspath(os.fspath(directory)))
+        )
+    except ValueError:
         return False
+    return True
+
+
+def _validated_font_file(
+    candidate: Path,
+    *,
+    trusted_directories: tuple[Path, ...] = (),
+) -> Path | None:
+    """Aceita somente fonte regular, suportada e sem reparse point no caminho físico."""
+
+    if candidate.suffix.casefold() not in FONT_FILE_EXTENSIONS:
+        return None
+    if trusted_directories and not any(
+        _path_is_within(candidate, directory) for directory in trusted_directories
+    ):
+        return None
+    try:
+        return resolve_source_path(candidate)
+    except (CliError, OSError, ValueError):
+        return None
+
+
+def _resolve_windows_font_file(name: str) -> Path | None:
+    """Resolve o nome nas colmeias do Windows e materializa somente o arquivo registrado."""
+
+    if winreg is None:
+        return None
+    trusted_directories = _trusted_windows_font_directories()
+    if not trusted_directories:
+        return None
+    wanted = _normalized_font_name(name)
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, WINDOWS_FONT_REGISTRY_PATH) as key:
+                value_count = winreg.QueryInfoKey(key)[1]
+                for index in range(value_count):
+                    registered, raw_path, _ = winreg.EnumValue(key, index)
+                    if not isinstance(registered, str) or _normalized_font_name(registered) != wanted:
+                        continue
+                    if not isinstance(raw_path, str) or not raw_path.strip() or len(raw_path) > 4_096:
+                        continue
+                    registry_path = Path(raw_path)
+                    candidates = (
+                        (registry_path,)
+                        if registry_path.is_absolute()
+                        else tuple(directory / registry_path for directory in trusted_directories)
+                    )
+                    for candidate in candidates:
+                        resolved = _validated_font_file(
+                            candidate,
+                            trusted_directories=trusted_directories,
+                        )
+                        if resolved is not None:
+                            return resolved
+        except OSError:
+            continue
+    return None
+
+
+def _fontconfig_name_matches(name: str, family: str, style: str) -> bool:
+    """Evita aceitar o fallback silencioso do fontconfig para uma família inexistente."""
+
+    wanted = _normalized_font_name(name)
+    families = [_normalized_font_name(item) for item in family.split(",") if item.strip()]
+    styles = [_normalized_font_name(item) for item in style.split(",") if item.strip()]
+    return any(
+        wanted == family_name
+        or any(wanted == f"{family_name} {style_name}" for style_name in styles)
+        for family_name in families
+    )
+
+
+def _resolve_fontconfig_font_file(name: str) -> Path | None:
+    """Consulta o fontconfig por arquivo concreto, sem criar configuração lateral no trabalho."""
+
+    executable = resolve_executable("fc-match")
+    if executable is None:
+        return None
     try:
         result = subprocess.run(
-            ["fc-list", "-f", "%{family}\n"],
+            [
+                str(executable),
+                "-f",
+                "%{family}\t%{style}\t%{file}\n",
+                name,
+            ],
             capture_output=True,
             text=True,
-            timeout=5,
+            encoding="utf-8",
+            errors="replace",
+            timeout=FONTCONFIG_TIMEOUT_SECONDS,
             check=False,
+            shell=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0 and any(
-        wanted == family.strip().casefold()
-        for line in result.stdout.splitlines()
-        for family in line.split(",")
-    )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    if result.returncode != 0 or len(stdout) > 8_192:
+        return None
+    line = next((item for item in stdout.splitlines() if item.strip()), "")
+    fields = line.split("\t", 2)
+    if len(fields) != 3 or not _fontconfig_name_matches(name, fields[0], fields[1]):
+        return None
+    candidate = Path(fields[2].strip())
+    if not candidate.is_absolute():
+        return None
+    return _validated_font_file(candidate)
+
+
+def _resolve_font_file(name: str) -> Path | None:
+    """Escolhe a descoberta nativa do host e devolve o arquivo seguro para o renderer."""
+
+    if sys.platform == "win32":
+        return _resolve_windows_font_file(name)
+    return _resolve_fontconfig_font_file(name)
+
+
+def _resolve_layer_fonts(layers: list[dict[str, Any]]) -> dict[str, str]:
+    """Resolve uma vez cada fonte textual e mantém seus caminhos fora do contrato público."""
+
+    resolved: dict[str, str] = {}
+    for layer in layers:
+        if layer["type"] != "text":
+            continue
+        name = str(layer["font"])
+        if name in resolved:
+            continue
+        font_file = _resolve_font_file(name)
+        if font_file is None:
+            raise plan_error("A fonte da camada não possui um arquivo local utilizável.")
+        resolved[name] = str(font_file)
+    return resolved
 
 
 def _rounded(value: float) -> float:
@@ -428,8 +571,6 @@ def _validate_layers_structure(value: Any) -> list[dict[str, Any]]:
             ):
                 raise plan_error("A fonte da camada deve ser um nome instalado válido.")
             _reject_nul(font, "layers[].font")
-            if not _font_is_installed(font):
-                raise plan_error("A fonte da camada não está instalada localmente.")
             _positive_integer(layer.get("size_px"), "layers[].size_px", 512)
             color = layer.get("color")
             if not isinstance(color, str) or not HEX_COLOR_PATTERN.fullmatch(color):
@@ -828,6 +969,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         raise plan_error(f"O plano deve usar schema_version {PLAN_SCHEMA_VERSION}.")
     max_full_width = _validate_profile(document.get("profile"))
     cut_definitions, layer_definitions, audio_processing = _validate_plan_structure(document)
+    resolved_font_files = _resolve_layer_fonts(layer_definitions)
     source_map, source_records = _inspect_sources(root, document.get("sources"))
     timeline_segments, timeline_duration = _validate_segments(
         document.get("segments"),
@@ -849,6 +991,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         "profile": profile,
         "sources": source_records,
         "audio_processing": audio_processing,
+        "_resolved_font_files": resolved_font_files,
         "timeline": {
             "duration_seconds": timeline_duration,
             "segments": timeline_segments,
@@ -868,4 +1011,4 @@ def validate_plan(workdir: str | Path) -> dict[str, Any]:
     """Valida plan.json, consulta fontes locais e retorna a timeline e o hash canônico."""
 
     _, result = load_validated_plan(workdir)
-    return result
+    return {key: value for key, value in result.items() if not key.startswith("_")}

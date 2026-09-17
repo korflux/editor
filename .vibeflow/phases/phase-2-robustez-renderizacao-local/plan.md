@@ -138,17 +138,20 @@ equivalente ao primeiro plano detalhado.
 
 ### T5: Resolver o arquivo real das fontes de texto
 
-- [ ] T5 concluída
+- [x] T5 concluída
 - **Spec:** A8, C7
 - **O quê:** Trocar a verificação booleana de fonte instalada por um resolvedor de
   arquivo regular confiável em Windows e fontconfig. Entregar o caminho apenas como
   metadado interno validado e gerar `drawtext=fontfile=...`.
 - **Aceite:**
-  - [ ] HKLM, HKCU e fontconfig resolvem arquivo permitido; ausência, extensão recusada e reparse point retornam `PLAN_INVALID`.
-  - [ ] O caminho não entra no plano canônico nem no envelope público e nunca pode ser informado pelo plano.
-  - [ ] Arial Bold gera grafo com o arquivo bold real e renderiza sem `fontconfig.xml` lateral.
+  - [x] HKLM, HKCU e fontconfig resolvem arquivo permitido; ausência, extensão recusada e reparse point retornam `PLAN_INVALID`.
+  - [x] O caminho não entra no plano canônico nem no envelope público e nunca pode ser informado pelo plano.
+  - [x] Arial Bold gera grafo com o arquivo bold real e renderiza sem `fontconfig.xml` lateral.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v`
+- **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` -> `Ran 45 tests in 25.264s ... OK`; os testes confirmaram resolução em HKLM/HKCU, rejeição de arquivo ausente, extensão recusada e reparse point, isolamento do caminho no contrato público e render real de Arial Bold.
+- **Arquivos produzidos:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/spec.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/plan.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/implement.md`
+- **Decisões:** A8 e C7 implementadas. O Windows consulta HKCU antes de HKLM e só aceita arquivos `.ttf`, `.otf`, `.ttc` ou `.otc` dentro das pastas de fontes do sistema/usuário; outros sistemas usam `fc-match` e rejeitam fallback de família. O caminho resolvido fica somente em metadado interno e o grafo usa `fontfile` escapado.
 - **Deps:** nenhuma
 - **Arquivos:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`
 - **Size:** `medium, 6/10, integra descoberta específica de plataforma com validação e render real`

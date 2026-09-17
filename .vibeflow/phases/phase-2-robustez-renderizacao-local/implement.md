@@ -1,7 +1,7 @@
 # Implement: Robustez da renderização local e da transcrição real
 # Alvo: phase-2-robustez-renderizacao-local
 # Status: aprovado
-# Route: high · modo A · T4
+# Route: high · modo A · T5
 
 ## Reconhecimento
 
@@ -158,6 +158,35 @@
 - **Decisão:** a tolerância corrige somente deriva limitada e mensurável; qualquer
   desvio maior continua bloqueando a publicação para não alterar evidência editorial.
 
+## T5: Resolver o arquivo real das fontes de texto
+
+### Reconhecimento
+
+- A validação estrutural aceitava somente o booleano `_font_is_installed()`, consultando o Registro no Windows ou apenas as famílias do `fc-list`; o grafo emitia `drawtext=font=...` e deixava o FFmpeg resolver o arquivo.
+- O resultado de `load_validated_plan()` já era o ponto compartilhado por preview e full. A alteração ficou nesse fluxo, com metadado interno separado do resultado público de `validate_plan()`.
+
+### Implementação
+
+- O resolvedor Windows consulta HKCU e HKLM, relaciona o nome registrado ao valor de arquivo e aceita somente `.ttf`, `.otf`, `.ttc` e `.otc` em diretórios de fontes do sistema ou do usuário.
+- A validação física reutiliza `resolve_source_path()`, preservando a rejeição de arquivo ausente, extensão não permitida, symlink, junction e reparse point, antes da inspeção de mídia.
+- Em hosts com fontconfig, `fc-match` retorna família, estilo e arquivo concreto; fallback para outra família é rejeitado e nenhum `fontconfig.xml` é criado no trabalho.
+- O caminho resolvido permanece em `_resolved_font_files`, usado somente pelo grafo interno; `validate_plan()`, JSON canônico e envelopes de renderização não o publicam.
+- `drawtext` passou a usar `fontfile` com escape próprio para o caminho real. Arial Bold foi renderizada no fluxo real da preview.
+
+### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` -> `Ran 45 tests in 25.264s ... OK`.
+- A matriz confirmou HKLM, HKCU, arquivo ausente, extensão recusada e reparse point como `PLAN_INVALID`, além da ausência do caminho no contrato público.
+- O teste de integração real confirmou `Arial Bold`, `fontfile` apontando para `arialbd.ttf`, publicação da preview e ausência de `fontconfig.xml` lateral.
+- `git diff --check` passou.
+
+### Registro
+
+- **Plan:** T5 marcada como concluída.
+- **Spec comprovada nesta fatia:** A8 e C7.
+- **Arquivos:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py` e `tests/test_preview_render.py`, além dos artefatos vivos da Phase 2.
+- **Decisão:** HKCU tem precedência sobre HKLM quando os dois registram o mesmo nome; a resolução continua limitada às pastas confiáveis e às extensões suportadas, sem aceitar caminho vindo do plano.
+
 ## Handoff
 
-Próxima task elegível: T5 ou T6.
+Próxima task elegível: T6.

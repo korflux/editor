@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ from uuid import uuid4
 from editor import dependencies
 from editor.contracts import CliError
 from editor.media import MediaMetadata
+from editor.plan import validation as plan_validation
 from editor.plan.canonical import canonical_sha256
 from editor.plan.validation import validate_plan
 
@@ -106,6 +108,50 @@ def fake_long_video_source(path: Path, *, require_audio: bool, require_video: bo
     )
 
 
+class FakeRegistryKey:
+    """Representa uma chave de registro somente para provar a leitura das entradas de fonte."""
+
+    def __init__(self, values: list[tuple[str, str, int]]) -> None:
+        self.values = values
+
+    def __enter__(self) -> "FakeRegistryKey":
+        """Permite que o resolvedor use o mesmo ciclo de vida da API winreg real."""
+
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:
+        """Fecha a chave simulada sem suprimir erros da operação sob teste."""
+
+        return False
+
+
+class FakeWinreg:
+    """Fornece as operações mínimas das colmeias HKLM e HKCU usadas pelo resolvedor."""
+
+    HKEY_LOCAL_MACHINE = "HKLM"
+    HKEY_CURRENT_USER = "HKCU"
+
+    def __init__(self, values_by_hive: dict[str, list[tuple[str, str, int]]]) -> None:
+        self.values_by_hive = values_by_hive
+
+    def OpenKey(self, hive: str, path: str) -> FakeRegistryKey:
+        """Abre somente a chave de fontes esperada pelo contrato do Windows."""
+
+        if path != plan_validation.WINDOWS_FONT_REGISTRY_PATH:
+            raise OSError("chave inesperada")
+        return FakeRegistryKey(self.values_by_hive.get(hive, []))
+
+    def QueryInfoKey(self, key: FakeRegistryKey) -> tuple[int, int, int]:
+        """Retorna a quantidade de valores para reproduzir a enumeração do registro."""
+
+        return 0, len(key.values), 0
+
+    def EnumValue(self, key: FakeRegistryKey, index: int) -> tuple[str, str, int]:
+        """Entrega o valor registrado na posição solicitada pela implementação."""
+
+        return key.values[index]
+
+
 class PlanValidationTests(unittest.TestCase):
     """Garante que somente planos explícitos e temporalmente consistentes sejam aceitos."""
 
@@ -158,6 +204,143 @@ class PlanValidationTests(unittest.TestCase):
         )
         self.assertEqual(len(data["plan_sha256"]), 64)
         self.assertEqual(json.loads(data["canonical_json"])["schema_version"], 2)
+
+    def test_windows_font_registry_resolves_hklm_and_hkcu_files(self) -> None:
+        """Confirma que cada colmeia resolve o arquivo concreto dentro do diretório permitido."""
+
+        with workspace_tempdir() as workdir:
+            system_fonts = workdir / "Windows" / "Fonts"
+            user_fonts = workdir / "LocalAppData" / "Microsoft" / "Windows" / "Fonts"
+            system_fonts.mkdir(parents=True)
+            user_fonts.mkdir(parents=True)
+            system_file = system_fonts / "arialbd.ttf"
+            user_file = user_fonts / "arial-user.ttf"
+            system_file.write_bytes(b"system-font")
+            user_file.write_bytes(b"user-font")
+
+            cases = (
+                ("HKLM", system_file.name, system_file),
+                ("HKCU", user_file.name, user_file),
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "WINDIR": str(workdir / "Windows"),
+                    "SystemRoot": str(workdir / "Windows"),
+                    "LOCALAPPDATA": str(workdir / "LocalAppData"),
+                },
+            ), patch.object(plan_validation.sys, "platform", "win32"):
+                for hive, registered_file, expected_path in cases:
+                    with self.subTest(hive=hive):
+                        registry = FakeWinreg({
+                            hive: [("Arial Bold (TrueType)", registered_file, 1)],
+                        })
+                        with patch.object(plan_validation, "winreg", registry):
+                            self.assertEqual(
+                                plan_validation._resolve_font_file("Arial Bold"),
+                                expected_path,
+                            )
+
+    def test_windows_font_resolver_rejects_missing_extension_and_reparse(self) -> None:
+        """Confirma rejeição pública para arquivo ausente, extensão não suportada e reparse point."""
+
+        with workspace_tempdir() as workdir:
+            shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+            system_root = workdir / "Windows"
+            system_fonts = system_root / "Fonts"
+            user_root = workdir / "LocalAppData"
+            user_fonts = user_root / "Microsoft" / "Windows" / "Fonts"
+            system_fonts.mkdir(parents=True)
+            user_fonts.mkdir(parents=True)
+            document = load_workflow_plan()
+
+            cases = (
+                ("Missing Font", "missing.ttf", None),
+                ("Rejected Font", "rejected.txt", None),
+                ("Reparse Font", "reparse.ttf", "reparse"),
+            )
+            for name, filename, failure_kind in cases:
+                with self.subTest(name=name):
+                    document["layers"][0]["font"] = name
+                    write_plan(workdir, document)
+                    font_path = system_fonts / filename
+                    if failure_kind == "reparse":
+                        font_path.write_bytes(b"reparse-font")
+                    registry = FakeWinreg({
+                        "HKLM": [(f"{name} (TrueType)", filename, 1)],
+                    })
+                    patches = [
+                        patch.object(plan_validation, "winreg", registry),
+                        patch.object(plan_validation.sys, "platform", "win32"),
+                        patch.dict(
+                            os.environ,
+                            {
+                                "WINDIR": str(system_root),
+                                "SystemRoot": str(system_root),
+                                "LOCALAPPDATA": str(user_root),
+                            },
+                        ),
+                        patch("editor.plan.validation.media.inspect_source"),
+                    ]
+                    if failure_kind == "reparse":
+                        patches.append(
+                            patch.object(
+                                plan_validation,
+                                "resolve_source_path",
+                                side_effect=CliError(
+                                    code="SOURCE_INVALID",
+                                    message="reparse point",
+                                    exit_code=3,
+                                ),
+                            )
+                        )
+                    with patches[0], patches[1], patches[2], patches[3] as inspect:
+                        if failure_kind == "reparse":
+                            with patches[4]:
+                                with self.assertRaises(CliError) as raised:
+                                    validate_plan(workdir)
+                        else:
+                            with self.assertRaises(CliError) as raised:
+                                validate_plan(workdir)
+                        self.assertEqual(raised.exception.code, "PLAN_INVALID")
+                        inspect.assert_not_called()
+
+    def test_resolved_font_path_stays_internal_and_out_of_public_plan_contract(self) -> None:
+        """Confirma que o caminho concreto serve ao renderer, mas não ao hash ou envelope público."""
+
+        with workspace_tempdir() as workdir:
+            shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+            system_root = workdir / "Windows"
+            system_fonts = system_root / "Fonts"
+            user_root = workdir / "LocalAppData"
+            user_fonts = user_root / "Microsoft" / "Windows" / "Fonts"
+            system_fonts.mkdir(parents=True)
+            user_fonts.mkdir(parents=True)
+            font_path = system_fonts / "arialbd.ttf"
+            font_path.write_bytes(b"arial-bold-font")
+            document = load_workflow_plan()
+            document["layers"][0]["font"] = "Arial Bold"
+            write_plan(workdir, document)
+            registry = FakeWinreg({
+                "HKLM": [("Arial Bold (TrueType)", font_path.name, 1)],
+            })
+            with patch.object(plan_validation, "winreg", registry), patch.object(
+                plan_validation.sys, "platform", "win32"
+            ), patch.dict(
+                os.environ,
+                {
+                    "WINDIR": str(system_root),
+                    "SystemRoot": str(system_root),
+                    "LOCALAPPDATA": str(user_root),
+                },
+            ):
+                _, internal = plan_validation.load_validated_plan(workdir)
+                public = validate_plan(workdir)
+
+            self.assertEqual(internal["_resolved_font_files"]["Arial Bold"], str(font_path))
+            self.assertNotIn("_resolved_font_files", public)
+            self.assertNotIn(str(font_path), internal["canonical_json"])
+            self.assertNotIn(str(font_path), json.dumps(public))
 
     def test_max_full_width_accepts_default_and_rejects_invalid_values_before_probe(self) -> None:
         """Prova compatibilidade v2 e a allowlist numérica do teto final na borda do plano."""
