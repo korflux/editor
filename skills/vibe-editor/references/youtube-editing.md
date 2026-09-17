@@ -180,7 +180,60 @@ Assistir à `preview.mp4` procurando quatro coisas: a história está clara, os 
 parecem intencionais, o texto pode ser lido e a imagem está ajudando a fala. Se algo
 precisar mudar, editar o plano, validar novamente e gerar outra preview.
 
-### 1.6 Aprovar e gerar a versão final
+### 1.6 Auditar a preview antes da aprovação
+
+A revisão da preview tem duas camadas que precisam ser registradas separadamente.
+Validação estrutural confirma o contrato do plano e o arquivo produzido. Inspeção
+visual e editorial confirma o que o espectador realmente verá e ouvirá. Uma camada
+sem a outra bloqueia o pedido de aprovação.
+
+#### Evidência estrutural
+
+Execute novamente:
+
+```text
+.venv\Scripts\python.exe -B -m editor plan validate --workdir "<workdir>" --json
+.venv\Scripts\python.exe -B -m editor render preview --workdir "<workdir>" --json
+```
+
+Guarde os resultados e confirme a timeline, fontes, cortes, camadas e os caminhos
+de `preview.mp4` e das análises. O sucesso desses comandos não prova continuidade
+visual, leitura do lettering ou naturalidade do encerramento.
+
+#### Auditoria temporal e visual
+
+Para cada fronteira de fala, compare os tempos de `words[]` em
+`analysis\transcription\<source-id>.json` com o corte no plano. Registre se o corte
+preserva palavras, termina em pausa natural ou remove fala intencionalmente. Para
+cortes com movimento ou revelação, para o início e fim de cada movimento e para o
+encerramento, extraia frames da preview:
+
+```text
+.venv\Scripts\python.exe -B -m editor extract frames --workdir "<workdir>" --source-id "preview" --input "<workdir>\preview.mp4" --timestamps "<corte-0.5>,<corte>,<corte+0.5>,<movimento-inicio>,<movimento-fim>,<fim-1>,<fim>" --json
+```
+
+Assista à preview inteira e confirme continuidade de ação, olhar, enquadramento e
+áudio. Confira que movimentos não cortam o assunto nem iniciam ou terminam de forma
+abrupta, e que o último plano não congela, fica preto ou termina o áudio antes da
+imagem. Para cada lettering, confirme fonte real, caixa, safe area, quebra de linha,
+contraste, tamanho e legibilidade. `plan validate` não substitui essa inspeção.
+
+#### Registro das decisões humanas
+
+Antes de pedir aprovação, apresente um resumo com:
+
+- cada fala estrangeira e a decisão entre manter, traduzir ou legendar, com intervalo
+  e justificativa;
+- cada arquivo excluído, identificado por ID ou caminho, e o motivo;
+- cada fala removida intencionalmente, com fonte, intervalo, palavras afetadas e
+  motivo, separada de pausas naturais;
+- a observação e a evidência usada para cortes, movimentos, textos e encerramento.
+
+Itens que não se aplicam devem ser registrados como “não se aplica”. A skill não
+traduz nem decide cortes automaticamente. Sem a prova estrutural, a inspeção visual
+e o resumo de decisões, não pedir aprovação ao usuário.
+
+### 1.7 Aprovar e gerar a versão final
 
 A full só deve ser gerada depois de uma aprovação explícita do usuário:
 

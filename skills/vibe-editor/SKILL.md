@@ -186,12 +186,93 @@ Execute:
 
 Informe ao usuário onde está `preview.mp4` e peça que ele assista. Traduza o
 feedback em alterações no plano. Depois de qualquer alteração, repita a validação
-e gere uma nova preview.
+e gere uma nova preview. Ainda não peça aprovação: execute primeiro o gate editorial
+e visual da seção 7.
 
-Se o usuário disser apenas “parece bom”, pergunte se pode considerar a preview
-aprovada. Não interprete aprovação implícita.
+Se o usuário disser apenas “parece bom”, registre isso como feedback e conclua as
+auditorias obrigatórias. Não interprete aprovação implícita nem pule o gate.
 
-### 7. Registrar a aprovação e gerar a full
+### 7. Auditar a preview antes de pedir aprovação
+
+A preview só fica elegível para aprovação depois de duas provas independentes:
+validação estrutural do plano e inspeção editorial/visual da mídia renderizada.
+Renderizar com sucesso ou passar no `plan validate` não substitui assistir à
+preview. Se qualquer uma das duas provas faltar, não peça aprovação e não rode a
+operação `approve`.
+
+#### 7.1 Prova estrutural
+
+Execute novamente os comandos que certificam o contrato e a saída publicada:
+
+```text
+.venv\Scripts\python.exe -B -m editor plan validate --workdir "<workdir>" --json
+.venv\Scripts\python.exe -B -m editor render preview --workdir "<workdir>" --json
+```
+
+Registre o resultado como evidência estrutural, incluindo a timeline, os cortes,
+as camadas, as fontes e os caminhos dos artefatos. Essa prova confirma que o
+plano é permitido e que a preview é um MP4 válido, mas não confirma continuidade,
+legibilidade ou intenção editorial.
+
+#### 7.2 Auditoria temporal e editorial
+
+Cruze cada fronteira de segmento e cada corte com o campo `words[]` e as palavras publicadas em
+`<workdir>\analysis\transcription\<source-id>.json`. Para cada fronteira, registre
+se ela preserva a palavra inteira, termina em uma pausa natural ou remove fala de
+forma intencional. Não use apenas o nível de áudio para classificar uma pausa.
+
+Extraia frames nos dois lados dos cortes que envolvam movimento, revelação visual
+ou mudança de enquadramento. Use os tempos reais do plano e da transcrição, não
+valores inventados:
+
+```text
+.venv\Scripts\python.exe -B -m editor extract frames --workdir "<workdir>" --source-id "preview" --input "<workdir>\preview.mp4" --timestamps "<corte-1-0.5>,<corte-1>,<corte-1+0.5>" --json
+```
+
+Repita a extração para o início e fim de cada movimento e para o último segundo
+do vídeo. Na auditoria, confirme continuidade de ação, olhar, enquadramento e
+áudio; confirme que o movimento não corta o assunto nem começa ou termina de
+forma abrupta; e confirme que o último plano e o áudio encerram naturalmente,
+sem frame preto, congelamento ou corte prematuro.
+
+#### 7.3 Auditoria visual do lettering
+
+Assista à preview em tamanho normal e confira cada camada de texto. A validação
+estrutural só prova que a fonte e a geometria são aceitas pelo schema. A inspeção
+visual deve confirmar a fonte real, a caixa, a safe area, a quebra de linha, o
+contraste, o tamanho e a leitura, sem texto cortado ou sobreposto a informação
+essencial. Se houver dúvida de leitura, ajuste o plano, valide e gere outra
+preview.
+
+#### 7.4 Decisões humanas e resumo de exclusões
+
+Antes de pedir aprovação, apresente um resumo textual com uma decisão humana para
+cada item aplicável:
+
+- falas em idioma diferente do destino: manter o original, traduzir ou legendar,
+  com intervalo e justificativa;
+- arquivos excluídos: ID ou caminho declarado e motivo da exclusão;
+- falas removidas intencionalmente: fonte, intervalo, palavras afetadas e motivo,
+  separadas de pausas naturais;
+- cortes, movimentos, encerramento e textos: observação objetiva e evidência usada.
+
+Não traduza, escolha cortes ou declare qualidade editorial automaticamente. Quando
+um item não se aplicar, registre explicitamente “não se aplica”. O resumo e as
+evidências precisam estar completos antes de perguntar ao usuário se a preview
+está aprovada.
+
+O gate só passa quando os estados abaixo forem verdadeiros ao mesmo tempo:
+
+1. `plan validate` e `render preview` passaram, prova estrutural registrada.
+2. A preview foi assistida e os frames de cortes, movimentos e encerramento foram
+   conferidos, prova visual registrada.
+3. As decisões sobre tradução, arquivos excluídos e fala removida estão no resumo.
+
+Se algum estado estiver ausente, corrija o plano ou a análise e repita a validação
+e a preview. Somente depois mostre o resumo ao usuário e solicite uma confirmação
+explícita.
+
+### 8. Registrar a aprovação e gerar a full
 
 Somente após uma confirmação clara como “Aprovado, pode gerar a versão final”,
 execute:
@@ -206,7 +287,7 @@ confere se nada mudou e só então publica `full.mp4`. Se o editor informar que 
 aprovação ficou desatualizada, não force a execução: gere uma nova preview e peça
 aprovação novamente.
 
-### 8. Entregar o resultado
+### 9. Entregar o resultado
 
 Informe ao usuário o caminho da `full.mp4`, a duração e as principais escolhas
 realizadas. Também informe se algo ficou fora do pedido. Preserve os artefatos do

@@ -159,20 +159,22 @@ equivalente ao primeiro plano detalhado.
 
 ### T6: Impor o gate editorial antes da aprovação
 
-- [ ] T6 concluída
+- [x] T6 concluída
 - **Spec:** A10
 - **O quê:** Atualizar a skill para exigir auditoria de palavras nas fronteiras,
   continuidade visual, tradução de falas estrangeiras, fonte/safe area do lettering e
   resumo de exclusões antes de pedir aprovação, sem automatizar decisões editoriais.
 - **Aceite:**
-  - [ ] O fluxo documenta comandos/evidências para auditar cortes, movimento, fim do vídeo e textos na preview.
-  - [ ] A skill distingue validação estrutural de inspeção visual e bloqueia a solicitação de aprovação sem ambas.
-  - [ ] Tradução, arquivos excluídos e fala removida intencionalmente aparecem como decisões humanas registradas.
+  - [x] O fluxo documenta comandos/evidências para auditar cortes, movimento, fim do vídeo e textos na preview.
+  - [x] A skill distingue validação estrutural de inspeção visual e bloqueia a solicitação de aprovação sem ambas.
+  - [x] Tradução, arquivos excluídos e fala removida intencionalmente aparecem como decisões humanas registradas.
 - **Verificação:**
-  - [ ] `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor`
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_vibe_editor_skill -v`
+  - [x] `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_vibe_editor_skill -v`
+- **Prova:** `quick_validate.py skills\vibe-editor` -> `Skill is valid!`; `.venv\Scripts\python.exe -B -m unittest tests.test_vibe_editor_skill -v` -> `Ran 4 tests ... OK`; `git diff --check` passou.
 - **Deps:** nenhuma
-- **Arquivos:** `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `tests/test_vibe_editor_skill.py`
+- **Arquivos:** `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `tests/test_vibe_editor_skill.py`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/plan.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/implement.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/spec.md`
+- **Decisões:** o pedido de aprovação só ocorre após duas provas registradas, estrutural e visual/editorial; auditorias de palavras, cortes, movimento, encerramento e lettering usam a transcrição e frames da preview; tradução, arquivos excluídos e falas removidas permanecem decisões humanas explícitas, sem automação.
 - **Size:** `low, 3/10, contrato operacional documental com validação estática existente`
 - **Risk:** `low`
 

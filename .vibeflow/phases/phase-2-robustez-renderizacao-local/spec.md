@@ -149,7 +149,7 @@ final e fontes de texto determinísticos.
 - [x] A7: Anomalias fora do contrato falham sem substituir a transcrição vigente.
 - [x] A8: Arial Bold registrada produz `fontfile` apontando para o arquivo bold real, sem `fontconfig.xml` lateral.
 - [ ] A9: Preview e full continuam consumindo o mesmo grafo, plano e fontes aprovados.
-- [ ] A10: A skill impede pedido de aprovação antes das auditorias editorial, temporal e visual documentadas.
+- [x] A10: A skill impede pedido de aprovação antes das auditorias editorial, temporal e visual documentadas.
 
 ### Critérios de sucesso
 

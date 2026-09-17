@@ -1,7 +1,7 @@
 # Implement: Robustez da renderização local e da transcrição real
 # Alvo: phase-2-robustez-renderizacao-local
 # Status: aprovado
-# Route: high · modo A · T5
+# Route: high · modo A · T6
 
 ## Reconhecimento
 
@@ -187,6 +187,47 @@
 - **Arquivos:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_plan_validation.py` e `tests/test_preview_render.py`, além dos artefatos vivos da Phase 2.
 - **Decisão:** HKCU tem precedência sobre HKLM quando os dois registram o mesmo nome; a resolução continua limitada às pastas confiáveis e às extensões suportadas, sem aceitar caminho vindo do plano.
 
+## T6: Impor o gate editorial antes da aprovação
+
+### Reconhecimento
+
+- A skill já exigia preview e aprovação humana, mas permitia chegar ao pedido de
+  aprovação após uma revisão genérica, sem separar prova estrutural de inspeção
+  visual/editorial.
+- A CLI já publica transcrição com `words[]`, análise de áudio, frames, preview e
+  validação do plano. A lacuna estava no contrato operacional da skill, não no
+  núcleo de renderização.
+- A referência de YouTube repetia o fluxo anterior e precisava carregar o mesmo
+  gate para evitar divergência entre a instrução geral e a específica de destino.
+
+### Implementação
+
+- A seção de preview agora bloqueia o pedido de aprovação até a execução de um gate
+  com prova estrutural e inspeção visual/editorial independentes.
+- O gate documenta `plan validate`, `render preview` e `extract frames` com evidência
+  de `words[]` nas fronteiras, continuidade de cortes e movimento, encerramento do
+  vídeo e inspeção de fonte, safe area, quebra e legibilidade do lettering.
+- O resumo pré-aprovação exige decisões humanas explícitas para falas estrangeiras,
+  arquivos excluídos e falas removidas intencionalmente, inclusive “não se aplica”
+  quando necessário. A skill proíbe traduzir ou decidir cortes automaticamente.
+- A referência `youtube-editing.md` recebeu o mesmo fluxo operacional e os mesmos
+  critérios, sem alterar o contrato da CLI ou criar artefatos paralelos.
+- `tests/test_vibe_editor_skill.py` verifica a ordem do gate, os comandos e as
+  evidências obrigatórias, os registros humanos e o alinhamento da referência.
+
+### Prova
+
+- `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor` -> `Skill is valid!`.
+- `.venv\Scripts\python.exe -B -m unittest tests.test_vibe_editor_skill -v` -> `Ran 4 tests ... OK`.
+- `git diff --check` passou.
+
+### Registro
+
+- **Plan:** T6 marcada como concluída.
+- **Spec comprovada nesta fatia:** A10.
+- **Arquivos:** `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `tests/test_vibe_editor_skill.py` e os artefatos vivos da Phase 2.
+- **Decisão:** a aprovação só é solicitada depois de evidência estrutural, auditoria temporal e inspeção visual/editorial registradas; o agente não automatiza tradução, cortes ou julgamento de qualidade.
+
 ## Handoff
 
-Próxima task elegível: T6.
+Próxima task elegível: T7.
