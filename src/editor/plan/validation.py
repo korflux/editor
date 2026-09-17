@@ -22,13 +22,17 @@ from .schema import (
     AUDIO_MODES,
     AUDIO_PROCESSING_FIELDS,
     CUT_FIELDS,
-    MAX_CUT_DURATION_SECONDS,
     CUT_TYPES,
+    DEFAULT_MAX_FULL_WIDTH,
     FIT_MODES,
     IMAGE_LAYER_FIELDS,
     LAYER_FIT_MODES,
     LAYER_TYPES,
     LIMITER_FIELDS,
+    MAX_CUT_DURATION_SECONDS,
+    MAX_FULL_WIDTH_STEP,
+    MAX_MAX_FULL_WIDTH,
+    MIN_MAX_FULL_WIDTH,
     MOTION_FIELDS,
     MOTION_STATE_FIELDS,
     MOTION_ZOOM_MAX,
@@ -193,13 +197,43 @@ def _read_plan(root: Path) -> tuple[Path, dict[str, Any]]:
     return plan_path, document
 
 
-def _validate_profile(value: Any) -> None:
-    """Valida o perfil único do MVP, que precisa ser horizontal em 16:9."""
+def _validate_profile(value: Any) -> int:
+    """Valida o perfil 16:9 e devolve o teto final explícito ou compatível padrão."""
 
     profile = require_object(value, "profile")
     reject_unknown_fields(profile, PROFILE_FIELDS, "profile")
     if profile.get("aspect_ratio") != "16:9":
         raise plan_error("O perfil de saída do MVP deve usar aspect_ratio 16:9.")
+    max_full_width = profile.get("max_full_width", DEFAULT_MAX_FULL_WIDTH)
+    if (
+        isinstance(max_full_width, bool)
+        or not isinstance(max_full_width, int)
+        or not MIN_MAX_FULL_WIDTH <= max_full_width <= MAX_MAX_FULL_WIDTH
+        or max_full_width % MAX_FULL_WIDTH_STEP != 0
+    ):
+        raise plan_error(
+            "O campo profile.max_full_width deve ser um inteiro múltiplo de 32 entre 32 e 3840."
+        )
+    return max_full_width
+
+
+def _calculated_profile(
+    max_full_width: int,
+    source_records: list[dict[str, Any]],
+    timeline_segments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Calcula o teto e a largura final sem ampliar a primeira fonte visual da timeline."""
+
+    first_source_id = timeline_segments[0]["video_source_id"]
+    first_source = next(record for record in source_records if record["id"] == first_source_id)
+    source_width = first_source.get("video_width")
+    if isinstance(source_width, bool) or not isinstance(source_width, int) or source_width <= 0:
+        raise plan_error("A largura da primeira fonte visual não pôde ser determinada.")
+    return {
+        "aspect_ratio": "16:9",
+        "max_full_width": max_full_width,
+        "effective_full_width": min(source_width, max_full_width),
+    }
 
 
 def _validate_source_structure(value: Any) -> None:
@@ -792,7 +826,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         or schema_version != PLAN_SCHEMA_VERSION
     ):
         raise plan_error(f"O plano deve usar schema_version {PLAN_SCHEMA_VERSION}.")
-    _validate_profile(document.get("profile"))
+    max_full_width = _validate_profile(document.get("profile"))
     cut_definitions, layer_definitions, audio_processing = _validate_plan_structure(document)
     source_map, source_records = _inspect_sources(root, document.get("sources"))
     timeline_segments, timeline_duration = _validate_segments(
@@ -801,6 +835,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         cut_definitions,
     )
     _validate_layer_intervals(layer_definitions, timeline_duration, source_map)
+    profile = _calculated_profile(max_full_width, source_records, timeline_segments)
     return {
         "plan_path": str(plan_path),
         "relative_plan_path": "plan.json",
@@ -811,6 +846,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         "segment_count": len(timeline_segments),
         "cut_count": len(cut_definitions),
         "layer_count": len(layer_definitions),
+        "profile": profile,
         "sources": source_records,
         "audio_processing": audio_processing,
         "timeline": {

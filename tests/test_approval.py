@@ -283,7 +283,7 @@ class ApprovalTests(unittest.TestCase):
             )["plan_sha256"]
             self.assertEqual(formatted_hash, first_hash)
 
-            document["segments"][0]["audio"]["tracks"][0]["gain_db"] = -1
+            document["profile"]["max_full_width"] = 160
             (workdir / "plan.json").write_text(
                 json.dumps(document),
                 encoding="utf-8",

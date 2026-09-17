@@ -172,6 +172,8 @@ class FullRenderTests(unittest.TestCase):
             self.assertEqual(payload["command"], "render full")
             self.assertEqual(payload["data"]["timeline_duration_seconds"], 2.0)
             self.assertEqual(payload["data"]["video"]["max_dimension"], 320)
+            self.assertEqual(payload["data"]["profile"]["max_full_width"], 1920)
+            self.assertEqual(payload["data"]["profile"]["effective_full_width"], 320)
             self.assertEqual(payload["data"]["cut_count"], 0)
             self.assertEqual(payload["data"]["layer_count"], 1)
             self.assertEqual(payload["data"]["audio"], {"codec": "aac", "present": True})
@@ -191,6 +193,43 @@ class FullRenderTests(unittest.TestCase):
                 sources_before,
             )
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_explicit_max_full_width_limits_only_full_without_upscaling(self) -> None:
+        """Renderiza teto explícito e confirma que preview e fonte menor não são ampliadas."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
+            document["profile"]["max_full_width"] = 160
+            (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            approve_workflow(workdir)
+
+            preview_metadata = inspect_source(
+                workdir / "preview.mp4", require_audio=True, require_video=True
+            )
+            result = run_module(
+                "render", "full", "--workdir", str(workdir.resolve()), "--json"
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (preview_metadata.video_width, preview_metadata.video_height),
+                (320, 180),
+            )
+            self.assertEqual(payload["data"]["profile"]["max_full_width"], 160)
+            self.assertEqual(payload["data"]["profile"]["effective_full_width"], 160)
+            self.assertEqual(
+                (payload["data"]["video"]["width"], payload["data"]["video"]["height"]),
+                (160, 90),
+            )
+
+            document["profile"]["max_full_width"] = 1_920
+            (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            stale = run_module(
+                "render", "full", "--workdir", str(workdir.resolve()), "--json"
+            )
+            self.assertEqual(json.loads(stale.stdout)["error"]["code"], "APPROVAL_STALE")
 
     def test_real_cli_publishes_full_with_v2_media_layers(self) -> None:
         """Confirma que a full consome a composição v2 completa e seus contadores."""

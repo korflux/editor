@@ -75,17 +75,20 @@ equivalente ao primeiro plano detalhado.
 
 ### T2: Aplicar perfil final limitado e compatível
 
-- [ ] T2 concluída
+- [x] T2 concluída
 - **Spec:** A5, C4
 - **O quê:** Acrescentar `profile.max_full_width` opcional ao schema v2, calcular o
   padrão 1920 sem upscale e usar o perfil efetivo na full e nos resultados estruturados.
   A preview permanece em até 720 pixels e o JSON canônico continua vinculando valores explícitos.
 - **Aceite:**
-  - [ ] Plano sem o campo valida com teto efetivo 1920; valor explícito válido controla a full sem alterar a preview.
-  - [ ] Booleano, não inteiro, valor fora de 32..3840 ou não múltiplo de 32 retorna `PLAN_INVALID` antes do FFmpeg.
-  - [ ] Fonte menor não sofre upscale e mudança explícita do perfil invalida a aprovação vigente.
+  - [x] Plano sem o campo valida com teto efetivo 1920; valor explícito válido controla a full sem alterar a preview.
+  - [x] Booleano, não inteiro, valor fora de 32..3840 ou não múltiplo de 32 retorna `PLAN_INVALID` antes do FFmpeg.
+  - [x] Fonte menor não sofre upscale e mudança explícita do perfil invalida a aprovação vigente.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_approval tests.test_preview_render tests.test_full_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_approval tests.test_preview_render tests.test_full_render -v`
+- **Prova:** suíte da fatia -> `Ran 55 tests in 178.115s ... OK`; render real manteve a preview em 320x180, limitou a full explícita a 160x90 e bloqueou a aprovação após mudar o perfil.
+- **Arquivos produzidos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/preview.py`, `src/editor/render/full.py`, `tests/test_plan_validation.py`, `tests/test_approval.py`, `tests/test_preview_render.py`, `tests/test_full_render.py`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/spec.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/plan.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/implement.md`
+- **Decisões:** A5 e C4 implementadas. O documento canônico preserva somente o valor explícito; o resultado calculado expõe o teto resolvido e a largura efetiva sem upscale.
 - **Deps:** T1
 - **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/preview.py`, `src/editor/render/full.py`, `tests/test_plan_validation.py`, `tests/test_approval.py`, `tests/test_preview_render.py`, `tests/test_full_render.py`
 - **Size:** `high, 7/10, altera schema compartilhado, perfil calculado, aprovação e render com regressão real`

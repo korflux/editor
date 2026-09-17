@@ -52,8 +52,9 @@ def _preview_dimensions(
     *,
     max_dimension: int | None = MAX_PREVIEW_DIMENSION,
     artifact_name: str = "preview",
+    width_alignment: int = 32,
 ) -> tuple[int, int]:
-    """Escolhe o canvas 16:9 do primeiro vídeo, com limite opcional para a preview."""
+    """Escolhe o canvas 16:9 sem upscale, respeitando teto e alinhamento do artefato."""
 
     first_video_source_id = str(document["segments"][0]["video"]["source_id"])
     source = next(
@@ -86,14 +87,10 @@ def _preview_dimensions(
             EXIT_CODES["OPERATION"],
         )
 
-    # Larguras múltiplas de 32 mantêm largura e altura pares no perfil 16:9
-    # yuv420p, evitando arredondamento que alteraria a proporção publicada.
+    # O alinhamento 32 da preview mantém ambas as dimensões pares em yuv420p.
+    # A full preserva o alinhamento legado de 16 quando a fonte fica abaixo do teto.
     width = min(source_width, max_dimension) if max_dimension is not None else source_width
-    if max_dimension is not None:
-        width = max(32, (width // 32) * 32)
-    else:
-        # A full mantém a maior resolução possível em um canvas 16:9 exato.
-        width -= width % 16
+    width -= width % width_alignment
     if width < 2:
         raise _error(
             "RENDER_FAILED",
@@ -487,6 +484,7 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
         "segment_count": validation["segment_count"],
         "cut_count": validation["cut_count"],
         "layer_count": validation["layer_count"],
+        "profile": validation["profile"],
         "video": {
             "codec": metadata.video_codec,
             "width": metadata.video_width,

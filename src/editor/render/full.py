@@ -39,13 +39,14 @@ def render_full(workdir: str | Path) -> dict[str, Any]:
     )
     approval = verify_approval(workdir, validation)
 
-    # O primeiro vídeo define a resolução final, enquanto o limite de 720 pixels
-    # continua exclusivo da preview para preservar a qualidade da full aprovada.
+    # O perfil validado limita somente a full; alinhamento 16 preserva a resolução
+    # legada de fontes menores sem ultrapassar o teto explícito ou padrão.
     canvas_width, canvas_height = _preview_dimensions(
         document,
         validation,
-        max_dimension=None,
+        max_dimension=int(validation["profile"]["effective_full_width"]),
         artifact_name="full",
+        width_alignment=16,
     )
     graph = build_ffmpeg_graph(
         document,
@@ -104,6 +105,7 @@ def render_full(workdir: str | Path) -> dict[str, Any]:
         "segment_count": validation["segment_count"],
         "cut_count": validation["cut_count"],
         "layer_count": validation["layer_count"],
+        "profile": validation["profile"],
         "video": {
             "codec": metadata.video_codec,
             "width": metadata.video_width,

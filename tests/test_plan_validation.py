@@ -138,6 +138,14 @@ class PlanValidationTests(unittest.TestCase):
         self.assertEqual(data["segment_count"], 3)
         self.assertEqual(data["cut_count"], 0)
         self.assertEqual(data["layer_count"], 1)
+        self.assertEqual(
+            data["profile"],
+            {
+                "aspect_ratio": "16:9",
+                "max_full_width": 1920,
+                "effective_full_width": 320,
+            },
+        )
         self.assertEqual(data["timeline"]["duration_seconds"], 2.0)
         self.assertEqual(
             [segment["video_source_id"] for segment in data["timeline"]["segments"]],
@@ -150,6 +158,42 @@ class PlanValidationTests(unittest.TestCase):
         )
         self.assertEqual(len(data["plan_sha256"]), 64)
         self.assertEqual(json.loads(data["canonical_json"])["schema_version"], 2)
+
+    def test_max_full_width_accepts_default_and_rejects_invalid_values_before_probe(self) -> None:
+        """Prova compatibilidade v2 e a allowlist numérica do teto final na borda do plano."""
+
+        document = load_workflow_plan()
+        with workspace_tempdir() as workdir:
+            shutil.copytree(WORKFLOW_SOURCES, workdir / "sources")
+            write_plan(workdir, document)
+            with patch(
+                "editor.plan.validation.media.inspect_source", side_effect=fake_inspect_source
+            ):
+                self.assertEqual(validate_plan(workdir)["profile"]["max_full_width"], 1920)
+
+            document["profile"]["max_full_width"] = 160
+            write_plan(workdir, document)
+            with patch(
+                "editor.plan.validation.media.inspect_source", side_effect=fake_inspect_source
+            ):
+                self.assertEqual(
+                    validate_plan(workdir)["profile"],
+                    {
+                        "aspect_ratio": "16:9",
+                        "max_full_width": 160,
+                        "effective_full_width": 160,
+                    },
+                )
+
+            for invalid in (True, 32.0, 0, 16, 48, 3_872):
+                with self.subTest(value=invalid):
+                    document["profile"]["max_full_width"] = invalid
+                    write_plan(workdir, document)
+                    with patch("editor.plan.validation.media.inspect_source") as inspect:
+                        with self.assertRaises(CliError) as raised:
+                            validate_plan(workdir)
+                    self.assertEqual(raised.exception.code, "PLAN_INVALID")
+                    inspect.assert_not_called()
 
     def test_image_sources_require_static_matching_raster_and_correct_layer_kind(self) -> None:
         """Exercita formatos reais e impede extensão falsa, animação e referência audiovisual."""

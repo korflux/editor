@@ -20,7 +20,11 @@ ROOT_FIELDS = frozenset(
     }
 )
 PLAN_SCHEMA_VERSION = 2
-PROFILE_FIELDS = frozenset({"aspect_ratio"})
+PROFILE_FIELDS = frozenset({"aspect_ratio", "max_full_width"})
+DEFAULT_MAX_FULL_WIDTH = 1_920
+MIN_MAX_FULL_WIDTH = 32
+MAX_MAX_FULL_WIDTH = 3_840
+MAX_FULL_WIDTH_STEP = 32
 SOURCE_FIELDS = frozenset({"id", "kind", "path"})
 SEGMENT_FIELDS = frozenset({"video", "audio"})
 VIDEO_FIELDS = frozenset({"source_id", "in_s", "out_s", "fit", "motion"})

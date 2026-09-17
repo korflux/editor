@@ -1,7 +1,7 @@
 # Implement: Robustez da renderização local e da transcrição real
 # Alvo: phase-2-robustez-renderizacao-local
 # Status: aprovado
-# Route: medium · modo A · T1
+# Route: high · modo A · T2
 
 ## Reconhecimento
 
@@ -43,6 +43,43 @@
 - **Arquivos:** `src/editor/render/preview.py`, `src/editor/render/full.py`, `tests/test_preview_render.py` e os artefatos vivos da Phase 2.
 - **Decisão:** o FFmpeg 9.0.1 instalado não reconhece `-filter_complex_script`; a forma suportada `-/filter_complex <arquivo>` foi usada para manter o grafo fora da linha de comando.
 
+## T2: Aplicar perfil final limitado e compatível
+
+### Reconhecimento
+
+- `profile` já era validado por allowlist no schema v2, mas aceitava somente
+  `aspect_ratio`; preview e full compartilhavam `_preview_dimensions()`.
+- O hash canônico já inclui o documento original e `verify_approval()` já compara
+  esse hash antes de iniciar o FFmpeg, portanto não foi criada lógica paralela de aprovação.
+
+### Implementação
+
+- `profile.max_full_width` passou a aceitar somente inteiro não booleano, múltiplo
+  de 32 entre 32 e 3840, com padrão compatível de 1920.
+- A validação publica o perfil calculado com teto resolvido e largura efetiva da
+  primeira fonte visual, sem inserir o padrão no JSON canônico.
+- A preview continua limitada a 720 pixels; a full usa `effective_full_width` e
+  preserva fontes menores sem upscale.
+- `plan validate`, `render preview` e `render full` retornam o mesmo perfil calculado.
+- A prova cobre rejeição antes do FFprobe, render real, compatibilidade v2 e
+  invalidação da aprovação por mudança explícita do perfil.
+
+### Prova
+
+- `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_approval tests.test_preview_render tests.test_full_render -v` -> `Ran 55 tests in 178.115s ... OK`.
+- `git diff --check` passou.
+
+### Registro
+
+- **Plan:** T2 marcada como concluída.
+- **Spec comprovada nesta fatia:** A5 e C4.
+- **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`,
+  `src/editor/render/preview.py`, `src/editor/render/full.py`, quatro testes da
+  fatia e os artefatos vivos da Phase 2.
+- **Decisão:** o perfil calculado é saída derivada; somente campos explícitos do
+  plano participam da serialização canônica, mantendo compatibilidade e distinguindo
+  ausência do campo de uma alteração editorial explícita.
+
 ## Handoff
 
-Próxima task elegível: T4, T5 ou T6. A T2 e a T3 permanecem bloqueadas pela dependência sequencial.
+Próxima task elegível: T3, T4, T5 ou T6.

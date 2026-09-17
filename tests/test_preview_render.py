@@ -283,6 +283,8 @@ class PreviewRenderTests(unittest.TestCase):
             self.assertEqual(data["timeline_duration_seconds"], 2.0)
             self.assertEqual(data["cut_count"], 0)
             self.assertEqual(data["layer_count"], 1)
+            self.assertEqual(data["profile"]["max_full_width"], 1920)
+            self.assertEqual(data["profile"]["effective_full_width"], 320)
             self.assertNotIn("overlay_count", data)
             self.assertEqual(data["video"]["max_dimension"], 320)
             self.assertEqual(data["audio"], {"codec": "aac", "present": True})
