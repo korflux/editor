@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import math
 import os
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 from typing import Any
@@ -171,11 +172,63 @@ def _create_staging_file(
     )
 
 
+def _create_filter_script(
+    layout: PreviewLayout | FullLayout,
+    graph: FfmpegGraph,
+    artifact_name: str = "preview",
+) -> Path:
+    """Grava o grafo UTF-8 em um arquivo exclusivo antes de iniciar o FFmpeg."""
+
+    descriptor: int | None = None
+    filter_script: Path | None = None
+    keep_file = False
+    try:
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix=f".{artifact_name}-filter-",
+            suffix=".txt",
+            dir=layout.temporary,
+        )
+        filter_script = Path(raw_path)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(graph.filter_complex.encode("utf-8"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        if not is_regular_path(filter_script):
+            raise _error(
+                "OUTPUT_PUBLISH_FAILED",
+                f"O script temporário da {artifact_name} não pôde ser validado.",
+                EXIT_CODES["OPERATION"],
+            )
+        keep_file = True
+        return filter_script
+    except CliError:
+        raise
+    except (OSError, UnicodeError) as error:
+        raise _error(
+            "OUTPUT_PUBLISH_FAILED",
+            f"Não foi possível preparar o script temporário da {artifact_name}.",
+            EXIT_CODES["OPERATION"],
+        ) from error
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if not keep_file and filter_script is not None and os.path.lexists(filter_script):
+            try:
+                filter_script.unlink()
+            except OSError:
+                pass
+
+
 def _build_ffmpeg_arguments(
     graph: FfmpegGraph,
     source_records: Sequence[Mapping[str, Any]],
     staging: Path,
     *,
+    filter_script: Path,
     duration_seconds: float,
     frame_rate: float | None,
 ) -> list[str]:
@@ -197,8 +250,11 @@ def _build_ffmpeg_arguments(
 
     arguments.extend(
         [
-            "-filter_complex",
-            graph.filter_complex,
+            # FFmpeg 9 removeu a opção legada `-filter_complex_script`; a forma
+            # prefixada por `/` mantém a mesma leitura UTF-8 por arquivo sem
+            # devolver o grafo à linha de comando.
+            "-/filter_complex",
+            str(filter_script),
             "-map",
             f"[{graph.video_label}]",
             "-map_metadata",
@@ -359,6 +415,17 @@ def _cleanup_staging(staging: Path | None) -> None:
         pass
 
 
+def _cleanup_filter_script(filter_script: Path | None) -> None:
+    """Remove somente o script de filtro da operação, sem tocar no estado vigente do trabalho."""
+
+    if filter_script is None or not os.path.lexists(filter_script):
+        return
+    try:
+        filter_script.unlink()
+    except OSError:
+        pass
+
+
 def render_preview(workdir: str | Path) -> dict[str, Any]:
     """Valida o plano, renderiza a preview em `.tmp` e publica um único arquivo completo."""
 
@@ -383,12 +450,16 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
     source_records = list(validation["sources"])
     first_source = next(record for record in source_records if record["id"] == first_source_id)
     frame_rate = first_source.get("video_frame_rate")
-    staging = _create_staging_file(layout)
+    staging: Path | None = None
+    filter_script: Path | None = None
     try:
+        staging = _create_staging_file(layout)
+        filter_script = _create_filter_script(layout, graph)
         arguments = _build_ffmpeg_arguments(
             graph,
             source_records,
             staging,
+            filter_script=filter_script,
             duration_seconds=expected_duration,
             frame_rate=float(frame_rate) if frame_rate is not None else None,
         )
@@ -403,6 +474,7 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
         publish_preview_atomic(layout, staging)
         staging = None
     finally:
+        _cleanup_filter_script(filter_script)
         _cleanup_staging(staging)
 
     return {

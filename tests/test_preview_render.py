@@ -19,7 +19,7 @@ from editor import dependencies, process
 from editor.contracts import CliError
 from editor.media import inspect_source
 from editor.plan.validation import load_validated_plan
-from editor.render.ffmpeg_graph import build_ffmpeg_graph
+from editor.render.ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
 from editor.render.preview import render_preview
 
 
@@ -300,6 +300,126 @@ class PreviewRenderTests(unittest.TestCase):
                 source_hashes,
             )
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_large_filter_graph_uses_file_and_keeps_process_arguments_short(self) -> None:
+        """Confirma que um grafo grande chega ao processo somente pelo arquivo temporário."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            captured: dict[str, object] = {}
+            original_builder = build_ffmpeg_graph
+            original_run_tool = process.run_tool
+            padding = " " * 100_001
+
+            def fake_build_graph(
+                document: dict[str, object],
+                validation: dict[str, object],
+                *,
+                canvas_width: int,
+                canvas_height: int,
+            ) -> FfmpegGraph:
+                """Amplia apenas o grafo de prova, preservando labels e fontes reais."""
+
+                graph = original_builder(
+                    document,
+                    validation,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                )
+                return FfmpegGraph(
+                    filter_complex=graph.filter_complex + padding,
+                    video_label=graph.video_label,
+                    audio_label=graph.audio_label,
+                    input_source_ids=graph.input_source_ids,
+                    has_audio=graph.has_audio,
+                )
+
+            def fake_run_tool(
+                tool: str,
+                arguments: list[str],
+                *,
+                timeout_seconds: float,
+            ) -> subprocess.CompletedProcess[str]:
+                """Lê o script no ponto de execução e simula uma saída válida do FFmpeg."""
+
+                if tool != "ffmpeg" or "-encoders" in arguments:
+                    return original_run_tool(
+                        tool,
+                        arguments,
+                        timeout_seconds=timeout_seconds,
+                    )
+                script_option = "-/filter_complex"
+                self.assertIn(script_option, arguments)
+                self.assertNotIn("-filter_complex", arguments)
+                script_path = Path(arguments[arguments.index(script_option) + 1])
+                captured["arguments"] = list(arguments)
+                captured["script"] = script_path.read_text(encoding="utf-8")
+                shutil.copy2(WORKFLOW_DIR / "preview.mp4", Path(arguments[-1]))
+                return subprocess.CompletedProcess(
+                    args=[tool, *arguments],
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                )
+
+            with (
+                patch("editor.render.preview.build_ffmpeg_graph", side_effect=fake_build_graph),
+                patch("editor.render.preview.process.run_tool", side_effect=fake_run_tool),
+            ):
+                result = render_preview(workdir)
+
+            arguments = captured["arguments"]
+            script = captured["script"]
+            self.assertIsInstance(arguments, list)
+            self.assertIsInstance(script, str)
+            self.assertGreater(len(script), 100_000)
+            executable = dependencies.resolve_executable("ffmpeg")
+            assert executable is not None
+            command_length = len(str(executable)) + 1 + sum(
+                len(str(argument)) + 1 for argument in arguments
+            )
+            self.assertLess(command_length, 32_767)
+            self.assertEqual(result["video"]["max_dimension"], 320)
+            self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_render_exception_and_timeout_clean_all_operation_temporaries(self) -> None:
+        """Confirma limpeza e preservação da preview em exceção operacional e timeout."""
+
+        failures = (
+            RuntimeError("simulated runner exception"),
+            process.ProcessExecutionError("ffmpeg", timed_out=True),
+        )
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                with workspace_tempdir() as workdir:
+                    copy_workflow(workdir)
+                    previous_path = workdir / "preview.mp4"
+                    previous = b"previous-preview"
+                    previous_path.write_bytes(previous)
+                    original_run_tool = process.run_tool
+
+                    def fake_run_tool(
+                        tool: str,
+                        arguments: list[str],
+                        *,
+                        timeout_seconds: float,
+                    ) -> subprocess.CompletedProcess[str]:
+                        """Mantém sondagens reais e força a falha do processo de render."""
+
+                        if tool == "ffmpeg" and "-encoders" not in arguments:
+                            raise failure
+                        return original_run_tool(
+                            tool,
+                            arguments,
+                            timeout_seconds=timeout_seconds,
+                        )
+
+                    with patch("editor.render.preview.process.run_tool", side_effect=fake_run_tool):
+                        with self.assertRaises((CliError, RuntimeError)):
+                            render_preview(workdir)
+
+                    self.assertEqual(previous_path.read_bytes(), previous)
+                    self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
     def test_text_layer_respects_box_interval_and_underlying_video(self) -> None:
         """Prova por frames que texto longo fica na caixa e só aparece no intervalo declarado."""

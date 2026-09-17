@@ -16,7 +16,9 @@ from ..workdir import (
 from .ffmpeg_graph import build_ffmpeg_graph
 from .preview import (
     _build_ffmpeg_arguments,
+    _cleanup_filter_script,
     _cleanup_staging,
+    _create_filter_script,
     _create_staging_file,
     _preview_dimensions,
     _require_encoders,
@@ -58,12 +60,16 @@ def render_full(workdir: str | Path) -> dict[str, Any]:
     source_records = list(validation["sources"])
     first_source = next(record for record in source_records if record["id"] == first_source_id)
     frame_rate = first_source.get("video_frame_rate")
-    staging = _create_staging_file(layout, "full")
+    staging: Path | None = None
+    filter_script: Path | None = None
     try:
+        staging = _create_staging_file(layout, "full")
+        filter_script = _create_filter_script(layout, graph, "full")
         arguments = _build_ffmpeg_arguments(
             graph,
             source_records,
             staging,
+            filter_script=filter_script,
             duration_seconds=expected_duration,
             frame_rate=float(frame_rate) if frame_rate is not None else None,
         )
@@ -80,6 +86,7 @@ def render_full(workdir: str | Path) -> dict[str, Any]:
         publish_full_atomic(layout, staging)
         staging = None
     finally:
+        _cleanup_filter_script(filter_script)
         _cleanup_staging(staging)
 
     return {
