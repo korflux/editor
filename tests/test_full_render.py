@@ -16,8 +16,9 @@ from uuid import uuid4
 
 from editor import dependencies, process
 from editor.contracts import CliError
-from editor.media import inspect_source
+from editor.media import MAX_SOURCE_SIZE_BYTES, inspect_source
 from editor.render.full import render_full
+from editor.render.preview import _validate_rendered_preview
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -518,6 +519,62 @@ class FullRenderTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "RENDER_FAILED")
             self.assertEqual(full_path.read_bytes(), previous_full)
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_full_policy_accepts_large_long_rendered_artifact(self) -> None:
+        """Aceita a full válida acima dos limites exclusivos das fontes de entrada."""
+
+        with workspace_tempdir() as workdir:
+            staging = workdir / "rendered-full.mp4"
+            staging.write_bytes(b"staging")
+            payload = {
+                "format": {
+                    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                    "duration": "7200.0",
+                },
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "codec_name": "h264",
+                        "width": 1920,
+                        "height": 1080,
+                        "avg_frame_rate": "25/1",
+                    },
+                    {
+                        "codec_type": "audio",
+                        "codec_name": "aac",
+                        "sample_rate": "48000",
+                        "channels": 2,
+                    },
+                ],
+            }
+            probe = subprocess.CompletedProcess(
+                args=["ffprobe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+            oversized = type(
+                "StatResult",
+                (),
+                {"st_size": MAX_SOURCE_SIZE_BYTES + 1},
+            )()
+
+            with patch("editor.media.Path.stat", return_value=oversized), patch(
+                "editor.media.process.run_tool", return_value=probe
+            ) as run_tool:
+                metadata = _validate_rendered_preview(
+                    staging,
+                    expected_duration=7_200.0,
+                    expected_audio=True,
+                    canvas_width=1_920,
+                    canvas_height=1_080,
+                    max_dimension=None,
+                    artifact_name="full",
+                )
+
+            self.assertEqual(metadata.size_bytes, MAX_SOURCE_SIZE_BYTES + 1)
+            self.assertEqual(metadata.duration_seconds, 7_200.0)
+            run_tool.assert_called_once()
 
     @staticmethod
     def _mutate_plan(workdir: Path) -> None:

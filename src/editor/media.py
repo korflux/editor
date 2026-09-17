@@ -112,8 +112,9 @@ def _validate_probe_payload(
     *,
     require_audio: bool,
     require_video: bool,
+    enforce_source_limits: bool,
 ) -> MediaMetadata:
-    """Valida contêiner, streams, codecs, duração e limites antes de qualquer operação."""
+    """Valida metadados comuns e aplica limites somente quando o arquivo é uma fonte."""
 
     format_data = payload.get("format")
     streams = payload.get("streams")
@@ -179,7 +180,9 @@ def _validate_probe_payload(
                 break
     if duration is None:
         raise _error("MEDIA_UNSUPPORTED", "A duração da fonte não pôde ser determinada.")
-    if size_bytes > MAX_SOURCE_SIZE_BYTES or duration > MAX_SOURCE_DURATION_SECONDS:
+    if enforce_source_limits and (
+        size_bytes > MAX_SOURCE_SIZE_BYTES or duration > MAX_SOURCE_DURATION_SECONDS
+    ):
         raise _error(
             "MEDIA_LIMIT_EXCEEDED",
             "A fonte excede o limite de tamanho ou duração permitido.",
@@ -286,14 +289,15 @@ def _validate_image_probe_payload(
     )
 
 
-def inspect_source(
+def _inspect_media_file(
     input_path: str | Path,
     *,
-    require_audio: bool = True,
-    require_video: bool = False,
-    allow_image: bool = False,
+    require_audio: bool,
+    require_video: bool,
+    allow_image: bool,
+    enforce_source_limits: bool,
 ) -> MediaMetadata:
-    """Inspeciona uma fonte local com FFprobe antes de iniciar uma operação de mídia."""
+    """Sonda um arquivo regular e aplica a política indicada sem duplicar o parser FFprobe."""
 
     path = resolve_source_path(input_path)
     is_image = allow_image and path.suffix.lower() in IMAGE_FORMATS
@@ -303,7 +307,9 @@ def inspect_source(
         size_bytes = path.stat().st_size
     except OSError as error:
         raise _error("SOURCE_INVALID", "Não foi possível ler o tamanho da fonte.") from error
-    if size_bytes > (MAX_IMAGE_SIZE_BYTES if is_image else MAX_SOURCE_SIZE_BYTES):
+    if enforce_source_limits and size_bytes > (
+        MAX_IMAGE_SIZE_BYTES if is_image else MAX_SOURCE_SIZE_BYTES
+    ):
         raise _error("MEDIA_LIMIT_EXCEEDED", "A fonte excede o limite de tamanho permitido.")
 
     arguments = [
@@ -335,6 +341,41 @@ def inspect_source(
         payload,
         require_audio=require_audio,
         require_video=require_video,
+        enforce_source_limits=enforce_source_limits,
+    )
+
+
+def inspect_source(
+    input_path: str | Path,
+    *,
+    require_audio: bool = True,
+    require_video: bool = False,
+    allow_image: bool = False,
+) -> MediaMetadata:
+    """Inspeciona uma fonte local e mantém os limites de ingestão antes do processamento."""
+
+    return _inspect_media_file(
+        input_path,
+        require_audio=require_audio,
+        require_video=require_video,
+        allow_image=allow_image,
+        enforce_source_limits=True,
+    )
+
+
+def inspect_rendered_artifact(
+    input_path: str | Path,
+    *,
+    require_audio: bool,
+) -> MediaMetadata:
+    """Valida um MP4 renderizado sem aplicar os limites arbitrários das fontes de entrada."""
+
+    return _inspect_media_file(
+        input_path,
+        require_audio=require_audio,
+        require_video=True,
+        allow_image=False,
+        enforce_source_limits=False,
     )
 
 

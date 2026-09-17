@@ -18,6 +18,7 @@ from uuid import uuid4
 from editor.analysis.audio import MAX_AUDIO_WINDOWS, analyze_audio
 from editor.contracts import CliError
 from editor import dependencies
+from editor.media import MAX_SOURCE_SIZE_BYTES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -141,6 +142,19 @@ class AudioAnalysisTests(unittest.TestCase):
 
             self.assertEqual(raised.exception.code, "ARGUMENT_INVALID")
             sha256_file.assert_not_called()
+
+    def test_source_above_size_limit_is_rejected_before_ffprobe(self) -> None:
+        """Mantém o teto de 4 GiB na ingestão mesmo após separar a política de render."""
+
+        oversized = SimpleNamespace(st_size=MAX_SOURCE_SIZE_BYTES + 1)
+        with workspace_tempdir() as workdir, patch(
+            "editor.media.Path.stat", return_value=oversized
+        ), patch("editor.media.process.run_tool") as run_tool:
+            with self.assertRaises(CliError) as raised:
+                analyze_audio(workdir, "main", MEDIA_FIXTURE)
+
+        self.assertEqual(raised.exception.code, "MEDIA_LIMIT_EXCEEDED")
+        run_tool.assert_not_called()
 
     def test_window_count_limit_accounts_for_sample_rounding(self) -> None:
         """Confirma que o limite usa a janela quantizada em amostras na fronteira exata."""

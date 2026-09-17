@@ -1,7 +1,7 @@
 # Implement: Robustez da renderização local e da transcrição real
 # Alvo: phase-2-robustez-renderizacao-local
 # Status: aprovado
-# Route: high · modo A · T2
+# Route: high · modo A · T3
 
 ## Reconhecimento
 
@@ -80,6 +80,45 @@
   plano participam da serialização canônica, mantendo compatibilidade e distinguindo
   ausência do campo de uma alteração editorial explícita.
 
+## T3: Validar artefatos renderizados sem limites de fonte
+
+### Reconhecimento
+
+- `_validate_rendered_preview()` era o validador compartilhado por preview e full,
+  mas chamava `media.inspect_source()` e herdava os tetos de ingestão de 4 GiB e
+  3.600 segundos.
+- A mesma sondagem FFprobe já centralizava contêiner, streams e codecs; a separação
+  necessária era de política, não de parser nem de pipeline de publicação.
+
+### Implementação
+
+- A sondagem comum foi isolada em `_inspect_media_file()`, mantendo uma única
+  validação de metadados e codecs.
+- `inspect_source()` continua aplicando os limites antes do FFprobe e também após
+  obter a duração. O novo `inspect_rendered_artifact()` exige vídeo MP4/H.264 e o
+  áudio esperado, mas não aplica tetos arbitrários de tamanho ou duração.
+- O validador compartilhado de preview/full passou a usar a política de artefato;
+  perfil, dimensões, proporção, áudio e duração esperada continuam sendo verificados
+  antes da publicação atômica.
+- As provas cobrem fonte acima de 4 GiB rejeitada antes da sondagem, full simulada
+  acima de 4 GiB e 7.200 segundos aceita, e falhas de codec/stream, dimensão e
+  duração preservando a preview vigente e limpando `.tmp`.
+
+### Prova
+
+- Testes novos isolados -> `Ran 3 tests in 0.553s ... OK`.
+- `.venv\Scripts\python.exe -B -m unittest tests.test_audio_analysis tests.test_frame_extraction tests.test_plan_validation tests.test_preview_render tests.test_full_render -v` -> `Ran 70 tests in 160.606s ... OK`.
+- Reexecução após a revisão de simplificação -> `Ran 70 tests in 158.593s ... OK`.
+- Confirmação final antes do commit -> `Ran 70 tests in 159.169s ... OK`.
+- `git diff --check` passou antes do registro final.
+
+### Registro
+
+- **Plan:** T3 marcada como concluída.
+- **Spec comprovada nesta fatia:** A4 e C3; C2 permaneceu comprovada pela T1 e ganhou cobertura adicional de validação incompatível.
+- **Arquivos:** `src/editor/media.py`, `src/editor/render/preview.py`, três testes da fatia e os artefatos vivos da Phase 2.
+- **Decisão:** os limites de segurança pertencem à ingestão de fontes; artefatos gerados continuam estritos em estrutura e aderência ao render esperado, sem herdar tetos arbitrários de entrada.
+
 ## Handoff
 
-Próxima task elegível: T3, T4, T5 ou T6.
+Próxima task elegível: T4, T5 ou T6.

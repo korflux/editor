@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from editor import dependencies, process
 from editor.contracts import CliError
-from editor.media import inspect_source
+from editor.media import MediaMetadata, inspect_source
 from editor.plan.validation import load_validated_plan
 from editor.render.ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
 from editor.render.preview import render_preview
@@ -882,6 +882,61 @@ class PreviewRenderTests(unittest.TestCase):
             self.assertEqual(previous_path.read_bytes(), previous)
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
             self.assertFalse((workdir / "preview.mp4.tmp").exists())
+
+    def test_invalid_rendered_metadata_preserves_preview_and_cleans_temp(self) -> None:
+        """Rejeita codec, stream, dimensão ou duração incompatível sem publicar o staging."""
+
+        valid = {
+            "path": Path("render.mp4"),
+            "container": "mp4",
+            "audio_codec": "aac",
+            "video_codec": "h264",
+            "duration_seconds": 2.0,
+            "size_bytes": 1,
+            "sample_rate": 48_000,
+            "channels": 2,
+            "video_width": 320,
+            "video_height": 180,
+            "video_frame_rate": 25.0,
+        }
+        cases = {
+            "codec_or_stream": CliError(
+                code="MEDIA_UNSUPPORTED",
+                message="metadado incompatível",
+                exit_code=4,
+            ),
+            "dimension": MediaMetadata(**(valid | {"video_width": 640})),
+            "duration": MediaMetadata(**(valid | {"duration_seconds": 3.0})),
+            "audio_stream": MediaMetadata(**(valid | {"audio_codec": None})),
+        }
+
+        for name, inspection in cases.items():
+            with self.subTest(name=name), workspace_tempdir() as workdir:
+                copy_workflow(workdir)
+                previous_path = workdir / "preview.mp4"
+                previous = b"previous-preview"
+                previous_path.write_bytes(previous)
+                inspection_patch = (
+                    patch(
+                        "editor.render.preview.media.inspect_rendered_artifact",
+                        side_effect=inspection,
+                    )
+                    if isinstance(inspection, CliError)
+                    else patch(
+                        "editor.render.preview.media.inspect_rendered_artifact",
+                        return_value=inspection,
+                    )
+                )
+
+                with patch("editor.render.preview._require_encoders"), patch(
+                    "editor.render.preview._run_ffmpeg"
+                ), inspection_patch:
+                    with self.assertRaises(CliError) as raised:
+                        render_preview(workdir)
+
+                self.assertEqual(raised.exception.code, "RENDER_FAILED")
+                self.assertEqual(previous_path.read_bytes(), previous)
+                self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
 
 if __name__ == "__main__":

@@ -96,17 +96,20 @@ equivalente ao primeiro plano detalhado.
 
 ### T3: Validar artefatos renderizados sem limites de fonte
 
-- [ ] T3 concluída
+- [x] T3 concluída
 - **Spec:** A4, C2, C3
 - **O quê:** Separar a inspeção de fonte da validação de preview/full para que
   saídas sejam julgadas por contêiner, streams, codecs, perfil e duração esperada,
   sem herdar 4 GiB ou 3.600 segundos.
 - **Aceite:**
-  - [ ] Uma saída H.264/AAC simulada acima de 4 GiB passa pela política de render.
-  - [ ] Uma fonte acima de 4 GiB continua falhando como `MEDIA_LIMIT_EXCEEDED` antes do FFprobe.
-  - [ ] Codec, stream, dimensão ou duração incompatível falha como `RENDER_FAILED` e preserva o artefato vigente.
+  - [x] Uma saída H.264/AAC simulada acima de 4 GiB passa pela política de render.
+  - [x] Uma fonte acima de 4 GiB continua falhando como `MEDIA_LIMIT_EXCEEDED` antes do FFprobe.
+  - [x] Codec, stream, dimensão ou duração incompatível falha como `RENDER_FAILED` e preserva o artefato vigente.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_audio_analysis tests.test_frame_extraction tests.test_plan_validation tests.test_preview_render tests.test_full_render -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_audio_analysis tests.test_frame_extraction tests.test_plan_validation tests.test_preview_render tests.test_full_render -v`
+- **Prova:** suíte da fatia executada após implementação, simplificação e registro; confirmação final -> `Ran 70 tests in 159.169s ... OK`.
+- **Arquivos produzidos:** `src/editor/media.py`, `src/editor/render/preview.py`, `tests/test_audio_analysis.py`, `tests/test_preview_render.py`, `tests/test_full_render.py`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/spec.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/plan.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/implement.md`
+- **Decisões:** A4 e C3 implementadas; a sondagem FFprobe é compartilhada, mas somente `inspect_source()` aplica os limites de ingestão, enquanto `inspect_rendered_artifact()` exige MP4/H.264 e os streams declarados sem teto arbitrário de tamanho ou duração.
 - **Deps:** T2
 - **Arquivos:** `src/editor/media.py`, `src/editor/render/preview.py`, `tests/test_audio_analysis.py`, `tests/test_frame_extraction.py`, `tests/test_plan_validation.py`, `tests/test_preview_render.py`, `tests/test_full_render.py`
 - **Size:** `medium, 6/10, contrato interno compartilhado com provas negativas em entrada e saída`

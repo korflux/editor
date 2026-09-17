@@ -349,10 +349,9 @@ def _validate_rendered_preview(
     """Valida o MP4 produzido antes de permitir sua publicação como artefato vigente."""
 
     try:
-        metadata = media.inspect_source(
+        metadata = media.inspect_rendered_artifact(
             staging,
             require_audio=expected_audio,
-            require_video=True,
         )
     except CliError as error:
         if error.code == "DEPENDENCY_MISSING":
