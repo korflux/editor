@@ -22,6 +22,7 @@ from ..workdir import (
 
 
 _LANGUAGE_PATTERN = re.compile(r"^[a-z]{2,3}(?:-[a-z]{2})?$")
+_MAX_WORD_BOUNDARY_DRIFT_SECONDS = 0.5
 
 
 def _argument_error(message: str) -> CliError:
@@ -79,16 +80,41 @@ def _probability(value: Any) -> float | None:
     return round(probability, 6)
 
 
-def _serialize_word(word: Any, segment_start: float, segment_end: float, duration: float) -> dict[str, Any]:
-    """Normaliza uma palavra e exige início e fim para manter o contrato temporal."""
+def _clamp_word_timestamp(timestamp: float, segment_start: float, segment_end: float) -> tuple[float, bool]:
+    """Limita pequena deriva do Whisper ao segmento e recusa deslocamento editorial relevante."""
+
+    if timestamp < segment_start:
+        if segment_start - timestamp > _MAX_WORD_BOUNDARY_DRIFT_SECONDS:
+            raise _analysis_error("A transcrição retornou palavra muito distante do segmento.")
+        return segment_start, True
+    if timestamp > segment_end:
+        if timestamp - segment_end > _MAX_WORD_BOUNDARY_DRIFT_SECONDS:
+            raise _analysis_error("A transcrição retornou palavra muito distante do segmento.")
+        return segment_end, True
+    return timestamp, False
+
+
+def _serialize_word(
+    word: Any,
+    segment_start: float,
+    segment_end: float,
+    duration: float,
+    counters: dict[str, int],
+) -> dict[str, Any] | None:
+    """Normaliza uma palavra, contabilizando clamps e descartes sem esconder deriva excessiva."""
 
     text = _field(word, "word")
     if not isinstance(text, str):
         raise _analysis_error("A transcrição não retornou o texto de uma palavra.")
-    start = _timestamp(_field(word, "start"), "início da palavra", duration)
-    end = _timestamp(_field(word, "end"), "fim da palavra", duration)
-    if end <= start or start < segment_start or end > segment_end:
-        raise _analysis_error("A transcrição retornou intervalo de palavra inválido.")
+    raw_start = _timestamp(_field(word, "start"), "início da palavra", duration)
+    raw_end = _timestamp(_field(word, "end"), "fim da palavra", duration)
+    start, start_clamped = _clamp_word_timestamp(raw_start, segment_start, segment_end)
+    end, end_clamped = _clamp_word_timestamp(raw_end, segment_start, segment_end)
+    if start_clamped or end_clamped:
+        counters["clamped_word_count"] += 1
+    if end <= start:
+        counters["discarded_word_count"] += 1
+        return None
     payload: dict[str, Any] = {"word": text, "start_s": start, "end_s": end}
     probability = _probability(_field(word, "probability"))
     if probability is not None:
@@ -96,8 +122,13 @@ def _serialize_word(word: Any, segment_start: float, segment_end: float, duratio
     return payload
 
 
-def _serialize_segment(index: int, segment: Any, duration: float) -> dict[str, Any]:
-    """Normaliza um segmento e recusa backend que não forneça timestamps por palavra."""
+def _serialize_segment(
+    index: int,
+    segment: Any,
+    duration: float,
+    counters: dict[str, int],
+) -> dict[str, Any] | None:
+    """Normaliza um segmento e remove somente aquele que perdeu todas as palavras válidas."""
 
     text = _field(segment, "text")
     raw_words = _field(segment, "words")
@@ -108,13 +139,21 @@ def _serialize_segment(index: int, segment: Any, duration: float) -> dict[str, A
     except TypeError as error:
         raise _analysis_error("O backend não forneceu timestamps por palavra.") from error
     if not words:
-        raise _analysis_error("O backend não forneceu timestamps por palavra.")
+        counters["discarded_segment_count"] += 1
+        return None
 
     start = _timestamp(_field(segment, "start"), "início do segmento", duration)
     end = _timestamp(_field(segment, "end"), "fim do segmento", duration)
     if end <= start:
         raise _analysis_error("A transcrição retornou intervalo de segmento inválido.")
-    serialized_words = [_serialize_word(word, start, end, duration) for word in words]
+    serialized_words = [
+        serialized
+        for word in words
+        if (serialized := _serialize_word(word, start, end, duration, counters)) is not None
+    ]
+    if not serialized_words:
+        counters["discarded_segment_count"] += 1
+        return None
     segment_id = _field(segment, "id", index)
     try:
         segment_id = int(segment_id)
@@ -124,7 +163,7 @@ def _serialize_segment(index: int, segment: Any, duration: float) -> dict[str, A
         "id": segment_id,
         "start_s": start,
         "end_s": end,
-        "text": text,
+        "text": "".join(word["word"] for word in serialized_words),
         "words": serialized_words,
     }
 
@@ -134,22 +173,33 @@ def _build_transcription(
     info: Any,
     language: str,
     duration: float,
-) -> dict[str, Any]:
-    """Monta o corpo canônico da transcrição a partir da resposta materializada."""
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Monta transcrição coerente e devolve métricas da normalização tolerante."""
 
     detected_language = _field(info, "language") or (None if language == "auto" else language)
     if not isinstance(detected_language, str) or not detected_language:
         raise _analysis_error("O backend não retornou o idioma detectado.")
-    serialized_segments = [
-        _serialize_segment(index, segment, duration)
-        for index, segment in enumerate(segments)
-    ]
-    return {
-        "language": detected_language.lower(),
-        "language_probability": _probability(_field(info, "language_probability")),
-        "text": "".join(segment["text"] for segment in serialized_segments),
-        "segments": serialized_segments,
+    counters = {
+        "discarded_word_count": 0,
+        "clamped_word_count": 0,
+        "discarded_segment_count": 0,
     }
+    serialized_segments = [
+        serialized
+        for index, segment in enumerate(segments)
+        if (serialized := _serialize_segment(index, segment, duration, counters)) is not None
+    ]
+    if not serialized_segments:
+        raise _analysis_error("A transcrição não retornou nenhuma palavra válida.")
+    return (
+        {
+            "language": detected_language.lower(),
+            "language_probability": _probability(_field(info, "language_probability")),
+            "text": "".join(segment["text"] for segment in serialized_segments),
+            "segments": serialized_segments,
+        },
+        counters,
+    )
 
 
 def _serialize_artifact(artifact: dict[str, Any]) -> bytes:
@@ -186,7 +236,7 @@ def analyze_transcription(
         source.path,
         None if normalized_language == "auto" else normalized_language,
     )
-    transcription = _build_transcription(
+    transcription, normalization = _build_transcription(
         raw_segments,
         info,
         normalized_language,
@@ -215,4 +265,5 @@ def analyze_transcription(
         "duration_seconds": round(source.duration_seconds, 6),
         "language": transcription["language"],
         "segment_count": len(transcription["segments"]),
+        **normalization,
     }

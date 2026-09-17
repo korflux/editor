@@ -139,9 +139,123 @@ class TranscriptionTests(unittest.TestCase):
             self.assertEqual(transcription["language"], "pt")
             self.assertEqual(transcription["text"], " Olá mundo")
             self.assertEqual(transcription["segments"][0]["words"][1]["end_s"], 0.8)
+            self.assertEqual(result["discarded_word_count"], 0)
+            self.assertEqual(result["clamped_word_count"], 0)
+            self.assertEqual(result["discarded_segment_count"], 0)
             call = fake_model.transcribe.call_args
             self.assertIsNone(call.kwargs["language"])
             self.assertTrue(call.kwargs["word_timestamps"])
+
+    def test_tolerant_normalization_rebuilds_text_and_reports_counters(self) -> None:
+        """Cobre duração zero, clamps, descarte pós-clamp e segmento esvaziado."""
+
+        segments = [
+            SimpleNamespace(
+                id=0,
+                start=0.1,
+                end=0.6,
+                text="texto divergente do backend",
+                words=[
+                    SimpleNamespace(word=" zero", start=0.2, end=0.2, probability=0.9),
+                    SimpleNamespace(word=" A", start=0.0, end=0.3, probability=0.9),
+                    SimpleNamespace(word=" B", start=0.4, end=0.7, probability=0.9),
+                    SimpleNamespace(word=" removida", start=0.65, end=0.7, probability=0.9),
+                ],
+            ),
+            SimpleNamespace(
+                id=1,
+                start=0.7,
+                end=0.8,
+                text=" segmento vazio",
+                words=[SimpleNamespace(word=" vazia", start=0.75, end=0.75, probability=0.9)],
+            ),
+        ]
+        info = SimpleNamespace(language="pt", language_probability=0.99)
+
+        with workspace_tempdir() as workdir:
+            model_root = create_model_root(workdir / "models")
+            fake_model = Mock()
+            fake_model.transcribe.return_value = (segments, info)
+            with configured_backend(model_root), patch(
+                "editor.whisper_backend._load_whisper_model",
+                return_value=fake_model,
+            ):
+                result = analyze_transcription(
+                    workdir,
+                    "main",
+                    MEDIA_FIXTURE,
+                    model="base",
+                    device="cpu",
+                )
+
+            transcription = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))[
+                "transcription"
+            ]
+            self.assertEqual(transcription["text"], " A B")
+            self.assertEqual(
+                transcription["text"],
+                "".join(item["text"] for item in transcription["segments"]),
+            )
+            self.assertEqual(
+                transcription["segments"][0]["text"],
+                "".join(word["word"] for word in transcription["segments"][0]["words"]),
+            )
+            self.assertEqual(transcription["segments"][0]["words"][0]["start_s"], 0.1)
+            self.assertEqual(transcription["segments"][0]["words"][1]["end_s"], 0.6)
+            self.assertEqual(result["discarded_word_count"], 3)
+            self.assertEqual(result["clamped_word_count"], 3)
+            self.assertEqual(result["discarded_segment_count"], 1)
+
+    def test_irrecoverable_timestamps_preserve_existing_artifact(self) -> None:
+        """Recusa deriva superior a 0,5 s e resultado vazio sem substituir o vigente."""
+
+        cases = {
+            "excessive-drift": [
+                SimpleNamespace(
+                    id=0,
+                    start=0.7,
+                    end=0.9,
+                    text=" fora",
+                    words=[SimpleNamespace(word=" fora", start=0.1, end=0.8, probability=0.9)],
+                )
+            ],
+            "empty-result": [
+                SimpleNamespace(
+                    id=0,
+                    start=0.1,
+                    end=0.3,
+                    text=" vazio",
+                    words=[SimpleNamespace(word=" vazio", start=0.2, end=0.2, probability=0.9)],
+                )
+            ],
+        }
+        info = SimpleNamespace(language="pt", language_probability=0.99)
+
+        for label, segments in cases.items():
+            with self.subTest(label=label), workspace_tempdir() as workdir:
+                model_root = create_model_root(workdir / "models")
+                destination = workdir / "analysis" / "transcription" / "main.json"
+                destination.parent.mkdir(parents=True)
+                previous = b'{"previous":true}'
+                destination.write_bytes(previous)
+                fake_model = Mock()
+                fake_model.transcribe.return_value = (segments, info)
+                with configured_backend(model_root), patch(
+                    "editor.whisper_backend._load_whisper_model",
+                    return_value=fake_model,
+                ):
+                    with self.assertRaises(CliError) as raised:
+                        analyze_transcription(
+                            workdir,
+                            "main",
+                            MEDIA_FIXTURE,
+                            model="base",
+                            device="cpu",
+                        )
+
+                self.assertEqual(raised.exception.code, "ANALYSIS_FAILED")
+                self.assertEqual(destination.read_bytes(), previous)
+                self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
     def test_cpu_baseline_and_local_only_are_used(self) -> None:
         """Confirma que o modelo explícito usa a configuração CPU int8 do MVP."""

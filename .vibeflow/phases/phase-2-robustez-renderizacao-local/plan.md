@@ -117,17 +117,20 @@ equivalente ao primeiro plano detalhado.
 
 ### T4: Normalizar timestamps do Whisper com coerência textual
 
-- [ ] T4 concluída
+- [x] T4 concluída
 - **Spec:** A6, A7, C5, C6
 - **O quê:** Incorporar a normalização tolerante ao módulo oficial de transcrição,
   limitando palavras em até 0,5 segundo, removendo intervalos sem duração e
   reconstruindo textos apenas das palavras publicadas. Expor os contadores no envelope.
 - **Aceite:**
-  - [ ] A matriz cobre duração zero, clamp inicial/final, clamp que zera palavra, segmento esvaziado e resultado vazio.
-  - [ ] Desvio acima de 0,5 segundo ou resposta irrecuperável retorna `ANALYSIS_FAILED` sem substituir o artefato vigente.
-  - [ ] Textos de segmento/global correspondem às palavras publicadas e o envelope retorna os três contadores, inclusive zeros.
+  - [x] A matriz cobre duração zero, clamp inicial/final, clamp que zera palavra, segmento esvaziado e resultado vazio.
+  - [x] Desvio acima de 0,5 segundo ou resposta irrecuperável retorna `ANALYSIS_FAILED` sem substituir o artefato vigente.
+  - [x] Textos de segmento/global correspondem às palavras publicadas e o envelope retorna os três contadores, inclusive zeros.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_transcription -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_transcription -v`
+- **Prova:** confirmação final da suíte da fatia -> `Ran 11 tests in 1.122s ... OK`; a matriz confirmou três descartes de palavra, três clamps, um segmento descartado, coerência textual e preservação atômica nos casos irrecuperáveis.
+- **Arquivos produzidos:** `src/editor/analysis/transcription.py`, `tests/test_transcription.py`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/spec.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/plan.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/implement.md`
+- **Decisões:** A6, A7, C5 e C6 implementadas. Somente deriva de até 0,5 segundo é limitada às fronteiras; palavras sem duração e segmentos sem palavra válida são descartados, e o texto publicado deriva exclusivamente das palavras restantes.
 - **Deps:** nenhuma
 - **Arquivos:** `src/editor/analysis/transcription.py`, `tests/test_transcription.py`
 - **Size:** `medium, 4/10, contrato temporal local com matriz unitária e preservação atômica`

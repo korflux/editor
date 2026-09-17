@@ -1,7 +1,7 @@
 # Implement: Robustez da renderização local e da transcrição real
 # Alvo: phase-2-robustez-renderizacao-local
 # Status: aprovado
-# Route: high · modo A · T3
+# Route: high · modo A · T4
 
 ## Reconhecimento
 
@@ -119,6 +119,45 @@
 - **Arquivos:** `src/editor/media.py`, `src/editor/render/preview.py`, três testes da fatia e os artefatos vivos da Phase 2.
 - **Decisão:** os limites de segurança pertencem à ingestão de fontes; artefatos gerados continuam estritos em estrutura e aderência ao render esperado, sem herdar tetos arbitrários de entrada.
 
+## T4: Normalizar timestamps do Whisper com coerência textual
+
+### Reconhecimento
+
+- A transcrição já centralizava validação, serialização e publicação atômica em
+  `analysis/transcription.py`, mas recusava qualquer palavra degenerada ou fora do
+  segmento e publicava o texto fornecido pelo backend sem reconciliá-lo com `words[]`.
+- A publicação existente já preservava o artefato vigente quando a construção da
+  transcrição falhava, portanto a correção ficou no normalizador compartilhado.
+
+### Implementação
+
+- Palavras com timestamps até 0,5 segundo fora do segmento são limitadas à fronteira;
+  deriva superior continua falhando como `ANALYSIS_FAILED`.
+- Palavras sem duração, inclusive após clamp, são removidas. Segmentos sem palavra
+  válida também são omitidos, e uma resposta totalmente vazia continua irrecuperável.
+- Textos de segmento e global são reconstruídos somente das palavras publicadas.
+- O envelope de sucesso expõe `discarded_word_count`, `clamped_word_count` e
+  `discarded_segment_count`, inclusive quando todos são zero, sem alterar o schema 1
+  do artefato canônico.
+
+### Prova
+
+- Primeira execução após a implementação -> `Ran 11 tests in 1.112s ... OK`.
+- Reexecução após simplificação -> `Ran 11 tests in 1.113s ... OK`.
+- Confirmação final antes do commit -> `Ran 11 tests in 1.122s ... OK`.
+- A matriz cobre duração zero, clamps inicial e final, clamp que zera palavra,
+  segmento esvaziado, deriva superior a 0,5 segundo e resultado totalmente vazio.
+- `git diff --check` passou.
+
+### Registro
+
+- **Plan:** T4 marcada como concluída.
+- **Spec comprovada nesta fatia:** A6, A7, C5 e C6.
+- **Arquivos:** `src/editor/analysis/transcription.py`, `tests/test_transcription.py`
+  e os artefatos vivos da Phase 2.
+- **Decisão:** a tolerância corrige somente deriva limitada e mensurável; qualquer
+  desvio maior continua bloqueando a publicação para não alterar evidência editorial.
+
 ## Handoff
 
-Próxima task elegível: T4, T5 ou T6.
+Próxima task elegível: T5 ou T6.

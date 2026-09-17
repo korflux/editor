@@ -145,8 +145,8 @@ final e fontes de texto determinísticos.
 - [x] A3: O script de filtro e o MP4 temporário são limpos em todos os caminhos de saída.
 - [x] A4: Fontes continuam limitadas a 4 GiB/3.600 s, mas saídas válidas acima de 4 GiB não são rejeitadas por essa política.
 - [x] A5: `max_full_width` opcional aplica teto padrão de 1920 sem upscale e invalida a aprovação quando explicitamente alterado.
-- [ ] A6: Anomalias Whisper dentro do contrato tolerante são normalizadas com texto e palavras coerentes.
-- [ ] A7: Anomalias fora do contrato falham sem substituir a transcrição vigente.
+- [x] A6: Anomalias Whisper dentro do contrato tolerante são normalizadas com texto e palavras coerentes.
+- [x] A7: Anomalias fora do contrato falham sem substituir a transcrição vigente.
 - [ ] A8: Arial Bold registrada produz `fontfile` apontando para o arquivo bold real, sem `fontconfig.xml` lateral.
 - [ ] A9: Preview e full continuam consumindo o mesmo grafo, plano e fontes aprovados.
 - [ ] A10: A skill impede pedido de aprovação antes das auditorias editorial, temporal e visual documentadas.
@@ -157,8 +157,8 @@ final e fontes de texto determinísticos.
 - [x] C2: Testes de falha de render confirmam preservação do artefato vigente e `.tmp` sem arquivos operacionais residuais.
 - [x] C3: Uma full simulada com tamanho superior a 4 GiB passa pela política de saída, enquanto uma fonte do mesmo tamanho continua retornando `MEDIA_LIMIT_EXCEEDED`.
 - [x] C4: Planos v2 sem `max_full_width` validam com teto efetivo 1920; valores desconhecidos, fora da faixa ou não múltiplos de 32 retornam `PLAN_INVALID`.
-- [ ] C5: Testes cobrem palavra de duração zero, clamp nas duas fronteiras, clamp que zera a palavra, segmento esvaziado, desvio acima de 0,5 s e resultado totalmente vazio.
-- [ ] C6: Testes confirmam que `transcription.text` equivale à concatenação dos textos reconstruídos dos segmentos publicados.
+- [x] C5: Testes cobrem palavra de duração zero, clamp nas duas fronteiras, clamp que zera a palavra, segmento esvaziado, desvio acima de 0,5 s e resultado totalmente vazio.
+- [x] C6: Testes confirmam que `transcription.text` equivale à concatenação dos textos reconstruídos dos segmentos publicados.
 - [ ] C7: Testes do resolvedor de fonte cobrem HKLM, HKCU, arquivo ausente, extensão recusada e reparse point; o grafo usa `fontfile`.
 - [ ] C8: A jornada E2E vigente e a suíte completa continuam passando sem scripts de `A:\Youtube\Teste\.tmp`.
 
