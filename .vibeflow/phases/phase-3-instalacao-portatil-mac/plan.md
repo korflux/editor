@@ -57,16 +57,18 @@ Entregar instalação por comando único no Windows e no Mac com `editor` no PAT
 
 ### T2: Registrar shim no PATH do usuário no Windows
 
-- [ ] T2 concluída
+- [x] T2 concluída
 - **Spec:** A1, C2, C4
 - **O quê:** Adicionar `-AddToPath` em `scripts/install.ps1` com shim por usuário reversível que chama o Python do venv por caminho absoluto com `-m editor`.
 - **Aceite:**
-  - [ ] Clone novo no Windows deixa `editor` utilizável em novo terminal após `-Install -AddToPath`
-  - [ ] Registro reversível por usuário sem admin e sem mudar semântica de `-Verify` e `-Install`
-  - [ ] Shim sem shell intermediário e sem montar comando a partir de entrada externa
+  - [x] Clone novo no Windows deixa `editor` utilizável em novo terminal após `-Install -AddToPath`
+  - [x] Registro reversível por usuário sem admin e sem mudar semântica de `-Verify` e `-Install`
+  - [x] Shim sem shell intermediário e sem montar comando a partir de entrada externa
 - **Verificação:**
-  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
-  - [ ] `python -m unittest discover -s tests -p "test_installation.py" -v`
+  - [x] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [x] `python -m unittest discover -s tests -p "test_installation.py" -v`
+- **Prova:** `scripts/install.ps1 -Verify` -> exit 0 sem criar `.tools\bin`; `discover -s tests -p "test_installation.py" -v` -> `Ran 10 tests ... OK` (7 vigentes + 3 novos de shim); `git diff --check` -> 0.
+- **Decisões:** shim padrão em `.tools\bin\editor.cmd` com Python do venv por caminho absoluto; PATH por usuário via .NET sem admin e idempotente; `-Verify` rejeita `-AddToPath`; `-ShimDir` segue o padrão isolável de `-VenvPath`/`-ModelDir`; A1/C2/C4 seguem com aceite final em T9.
 - **Deps:** T1
 - **Arquivos:** `scripts/install.ps1`, `tests/test_installation.py`
 - **Size:** `medium, 5/10 (1+1+1+1+1), shim Windows com PATH reversível sobre contrato vigente`

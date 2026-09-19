@@ -13,6 +13,8 @@ param(
     [string]$ModelSource,
     [switch]$InstallGitleaks,
     [string]$GitleaksSource,
+    [switch]$AddToPath,
+    [string]$ShimDir = '.tools\bin',
     [switch]$Force,
     [switch]$SecurityGates,
     [string]$VenvPath = '.venv',
@@ -34,6 +36,7 @@ $script:HasFailures = $false
 $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $script:VenvAbsolutePath = $null
 $script:ModelAbsolutePath = $null
+$script:ShimAbsolutePath = $null
 $script:GitleaksVersion = '8.30.1'
 $script:AllowedModels = @('tiny', 'base', 'small')
 
@@ -609,6 +612,72 @@ function Install-LocalCuda {
     Write-Host 'Instalador CUDA local concluído; execute -Verify para conferir cuBLAS, cuDNN e driver.'
 }
 
+# Lê as entradas do PATH do usuário sem shell intermediário, preservando a ordem para comparação idempotente.
+function Get-UserPathEntries {
+    $current = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ([string]::IsNullOrEmpty($current)) {
+        return @()
+    }
+    return @($current -split ';' | Where-Object { $_ -and $_.Trim() -ne '' })
+}
+
+# Cria o shim editor.cmd por usuário e registra o diretório no PATH sem admin, chamando o Python do venv por caminho absoluto.
+# Reversível pelo operador (remover o diretório do PATH do usuário); sem shell intermediário e sem montar comando de entrada externa.
+function Install-Shim {
+    if (-not $IsWindows) {
+        throw 'O registro no PATH nesta fatia suporta somente Windows; no Mac use scripts/install.sh.'
+    }
+    $shimDir = Resolve-RepoPath $ShimDir -AllowMissing
+    $script:ShimAbsolutePath = $shimDir
+    $venvPython = Join-Path $script:VenvAbsolutePath 'Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf) -or -not (Test-RegularPath $venvPython)) {
+        throw 'O ambiente virtual não foi encontrado; execute -Install antes de -AddToPath.'
+    }
+    $venvPythonFull = (Get-Item -LiteralPath $venvPython -Force).FullName
+    if (-not (Test-Path -LiteralPath $shimDir)) {
+        New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
+    }
+    [void](Resolve-RepoPath $shimDir -AllowMissing)
+    $shimPath = Join-Path $shimDir 'editor.cmd'
+    if ((Test-Path -LiteralPath $shimPath) -and -not (Test-RegularPath $shimPath)) {
+        throw 'O shim existente é um reparse point ou objeto inválido.'
+    }
+    # Conteúdo fixo com caminho absoluto resolvido; %* repassa argumentos sem interpretar entrada externa.
+    # ponytail: publicar também editor.ps1/shim Unix somente quando T4 exigir espelho fora do Windows.
+    $shimContent = '@echo off' + "`r`n" + ('"{0}" -m editor %*' -f $venvPythonFull) + "`r`n"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($shimPath, $shimContent, $utf8NoBom)
+    $normalizedShim = $shimDir.TrimEnd('\')
+    $entries = @(Get-UserPathEntries)
+    $found = $false
+    foreach ($entry in $entries) {
+        if ([System.String]::Equals($entry.TrimEnd('\'), $normalizedShim, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $found = $true
+            break
+        }
+    }
+    if (-not $found) {
+        $newPath = if ($entries.Count -eq 0) { $normalizedShim } else { ($entries -join ';') + ';' + $normalizedShim }
+        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+    }
+    if ([string]::IsNullOrEmpty($env:Path)) {
+        $env:Path = $normalizedShim
+    } else {
+        $sessionFound = $false
+        foreach ($entry in ($env:Path -split ';')) {
+            if ([System.String]::Equals($entry.TrimEnd('\'), $normalizedShim, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $sessionFound = $true
+                break
+            }
+        }
+        if (-not $sessionFound) {
+            $env:Path = $env:Path + ';' + $normalizedShim
+        }
+    }
+    Write-Host "Shim registrado em $shimPath; abra um novo terminal e execute editor --help."
+    Write-Host ("Para reverter, remova '{0}' do PATH do usuário e apague o diretório." -f $normalizedShim)
+}
+
 # Executa os gates de segredo e SCA somente quando solicitado e bloqueia qualquer falha ou ferramenta ausente.
 function Invoke-SecurityGates {
     $gitleaks = Test-Gitleaks
@@ -647,12 +716,12 @@ function Invoke-Verification {
 }
 
 try {
-    $modeCount = @($Verify, $Install, $InstallFfmpeg, $InstallCuda, $InstallModels, $InstallGitleaks |
+    $modeCount = @($Verify, $Install, $InstallFfmpeg, $InstallCuda, $InstallModels, $InstallGitleaks, $AddToPath |
         Where-Object { $_ }).Count
     if ($modeCount -eq 0) {
-        throw 'Nenhuma ação selecionada. Use -Verify ou uma opção -Install explícita.'
+        throw 'Nenhuma ação selecionada. Use -Verify ou uma opção explícita (-Install, -AddToPath ou -Install*).'
     }
-    if ($Verify -and ($Install -or $InstallFfmpeg -or $InstallCuda -or $InstallModels -or $InstallGitleaks)) {
+    if ($Verify -and ($Install -or $InstallFfmpeg -or $InstallCuda -or $InstallModels -or $InstallGitleaks -or $AddToPath)) {
         throw '-Verify não pode ser combinado com opções de instalação.'
     }
     if ($SecurityGates -and -not $Verify) {
@@ -661,6 +730,7 @@ try {
 
     $script:VenvAbsolutePath = Resolve-RepoPath $VenvPath -AllowMissing
     $script:ModelAbsolutePath = Resolve-RepoPath $ModelDir -AllowMissing
+    $script:ShimAbsolutePath = Resolve-RepoPath $ShimDir -AllowMissing
     Initialize-PythonInvoker
 
     if ($Install) { Install-PythonEnvironment }
@@ -668,6 +738,7 @@ try {
     if ($InstallGitleaks) { Install-LocalGitleaks }
     if ($InstallModels) { Install-LocalModels -Overwrite:$Force }
     if ($InstallCuda) { Install-LocalCuda }
+    if ($AddToPath) { Install-Shim }
     if ($Verify) { Invoke-Verification }
 
     if ($script:HasFailures) {

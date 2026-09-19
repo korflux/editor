@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +42,47 @@ class InstallationContractTests(unittest.TestCase):
             errors="replace",
             check=False,
         )
+
+    def get_user_path(self) -> str:
+        """Lê o PATH do usuário via .NET sem shell intermediário, para conferir o shim."""
+        result = subprocess.run(
+            [self.pwsh, "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path','User')"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        return (result.stdout or "").strip()
+
+    def set_user_path(self, value: str) -> None:
+        """Restaura o PATH do usuário via .NET, com valor passado por ambiente para evitar injeção."""
+        env = dict(os.environ)
+        env["EDITOR_TEST_USER_PATH"] = value
+        result = subprocess.run(
+            [self.pwsh, "-NoProfile", "-Command", "[Environment]::SetEnvironmentVariable('Path', $env:EDITOR_TEST_USER_PATH, 'User')"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def count_shim_in_user_path(self, shim_dir: Path) -> int:
+        """Conta ocorrências do shim no PATH do usuário com comparação sem diferenciar maiúsculas."""
+        current = self.get_user_path()
+        if not current:
+            return 0
+        target = str(shim_dir).rstrip("\\/").lower()
+        count = 0
+        for entry in current.split(";"):
+            if entry.strip().rstrip("\\/").lower() == target:
+                count += 1
+        return count
 
     @contextmanager
     def workspace_tempdir(self) -> Iterator[Path]:
@@ -233,6 +276,89 @@ class InstallationContractTests(unittest.TestCase):
             combined_output = result.stdout + result.stderr
             self.assertIn("Gate SCA indisponível", combined_output)
             self.assertNotIn("Gates gitleaks e pip-audit concluídos", combined_output)
+
+    def test_verify_cannot_combine_with_add_to_path_and_creates_no_shim(self) -> None:
+        """Confirma que Verify continua somente leitura e rejeita AddToPath sem criar shim."""
+        with self.workspace_tempdir() as temporary_path:
+            shim_dir = temporary_path / "shim"
+            result = self.run_installer(
+                "-Verify",
+                "-AddToPath",
+                "-VenvPath",
+                str(temporary_path / "venv"),
+                "-ModelDir",
+                str(temporary_path / "models"),
+                "-ShimDir",
+                str(shim_dir),
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("-Verify não pode ser combinado", result.stdout + result.stderr)
+            self.assertFalse(shim_dir.exists())
+
+    def test_add_to_path_fails_closed_when_venv_python_is_missing(self) -> None:
+        """Confirma que o shim falha fechado sem venv e sem tocar no PATH do usuário."""
+        with self.workspace_tempdir() as temporary_path:
+            venv_path = temporary_path / "venv"
+            venv_path.mkdir(parents=True)
+            shim_dir = temporary_path / "shim"
+            result = self.run_installer(
+                "-AddToPath",
+                "-VenvPath",
+                str(venv_path),
+                "-ShimDir",
+                str(shim_dir),
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("ambiente virtual", result.stdout + result.stderr)
+            self.assertFalse((shim_dir / "editor.cmd").exists())
+            self.assertEqual(self.count_shim_in_user_path(shim_dir), 0)
+
+    def test_add_to_path_registers_reversible_user_shim_without_shell(self) -> None:
+        """Confirma que o shim por usuário aponta para o venv e é idempotente sem shell intermediário."""
+        if os.name != "nt":
+            raise unittest.SkipTest("shim Windows com PATH por usuário exige Windows")
+        with self.workspace_tempdir() as temporary_path:
+            venv_python = temporary_path / "venv" / "Scripts" / "python.exe"
+            venv_python.parent.mkdir(parents=True)
+            venv_python.write_bytes(b"fixture")
+            shim_dir = temporary_path / "shim"
+            original_path = self.get_user_path()
+            try:
+                result = self.run_installer(
+                    "-AddToPath",
+                    "-VenvPath",
+                    str(temporary_path / "venv"),
+                    "-ShimDir",
+                    str(shim_dir),
+                )
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                shim_file = shim_dir / "editor.cmd"
+                self.assertTrue(shim_file.is_file())
+                content = shim_file.read_text(encoding="utf-8")
+                self.assertTrue(content.startswith("@echo off"))
+                self.assertIn("-m editor %*", content)
+                match = re.search(r'"(.+python\.exe)"', content, re.IGNORECASE)
+                self.assertIsNotNone(match, content)
+                assert match is not None
+                self.assertTrue(Path(match.group(1)).is_file())
+                for forbidden in ("cmd /c", "powershell", "Invoke-Expression", "Start-Process"):
+                    self.assertNotIn(forbidden.lower(), content.lower())
+                self.assertEqual(self.count_shim_in_user_path(shim_dir), 1)
+
+                rerun = self.run_installer(
+                    "-AddToPath",
+                    "-VenvPath",
+                    str(temporary_path / "venv"),
+                    "-ShimDir",
+                    str(shim_dir),
+                )
+                self.assertEqual(rerun.returncode, 0, rerun.stdout + rerun.stderr)
+                self.assertEqual(self.count_shim_in_user_path(shim_dir), 1)
+            finally:
+                self.set_user_path(original_path)
 
 
 if __name__ == "__main__":
