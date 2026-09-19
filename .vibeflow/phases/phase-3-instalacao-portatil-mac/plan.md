@@ -172,18 +172,20 @@ Entregar instalação por comando único no Windows e no Mac com `editor` no PAT
 
 ### T8: Aplicar fontes e filtro por sistema mantendo renderer
 
-- [ ] T8 concluída
+- [x] T8 concluída
 - **Spec:** A2, C1, C3
 - **O quê:** Manter renderer `fontfile` com origem por sistema e transporte de filtro por arquivo com flag e teto reportados em `capabilities`, sem fallback silencioso de família.
 - **Aceite:**
-  - [ ] Windows mantém HKCU e HKLM, demais sistemas usam `fc-match` e rejeitam fallback
-  - [ ] Windows mantém `-/filter_complex` com teto 32767, demais usam `-filter_complex` com limite do sistema reportado
-  - [ ] Resolução sem `.exe` no Mac prioriza `.tools/ffmpeg` e exige `libx264` e `aac`
+  - [x] Windows mantém HKCU e HKLM, demais sistemas usam `fc-match` e rejeitam fallback
+  - [x] Windows mantém `-/filter_complex` com teto 32767, demais usam `-filter_complex` com limite do sistema reportado
+  - [x] Resolução sem `.exe` no Mac prioriza `.tools/ffmpeg` e exige `libx264` e `aac`
 - **Verificação:**
-  - [ ] `python -m editor capabilities --json`
-  - [ ] `python -m unittest discover -s tests -p "test_capabilities.py" -v`
+  - [x] `python -m editor capabilities --json`
+  - [x] `python -m unittest discover -s tests -p "test_capabilities.py" -v`
+- **Prova:** `capabilities --json` -> exit 0 com `filter_option:-/filter_complex`, `max:32767`, `fonts.source:registry`, `registry:[HKCU,HKLM]`, `fallback:reject`, `renderer:fontfile`; `discover -s tests -p "test_capabilities.py" -v` -> `Ran 15 tests ... OK` (11 vigentes + 4 novos); `tests.test_plan_validation` -> `Ran 30 tests ... OK`; `tests.test_preview_render` -> `Ran 15 tests ... OK`; `git diff --check` -> 0.
+- **Decisões:** helpers centrais `is_windows`, `ffmpeg_filter_option`, `max_command_characters`, `font_lookup_source` e `font_registry_hives` em `dependencies.py`; `capabilities.py` reporta flag, teto e origem por sistema com `fallback:reject`; `preview.py` usa a flag por sistema mantendo transporte por arquivo; `validation.py` centraliza via `is_windows()` preservando mocks vigentes de `sys.platform`; `ffmpeg_graph.py` mantido sem delta com renderer `fontfile`; `ponytail` em `max_command_characters` registra fallback POSIX até prova de ARG_MAX no Mac; A2/C1/C3 seguem com aceite final em T9.
 - **Deps:** T7
-- **Arquivos:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/capabilities.py`, `src/editor/dependencies.py`, `tests/test_capabilities.py`
+- **Arquivos:** `src/editor/capabilities.py`, `src/editor/dependencies.py`, `src/editor/plan/validation.py`, `src/editor/render/preview.py`, `tests/test_capabilities.py`
 - **Size:** `medium, 6/10 (2+1+1+1+1), quatro módulos com variação por sistema`
 - **Risk:** `medium, render e fontes compartilhados com preview e full`
 

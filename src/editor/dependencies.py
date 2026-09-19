@@ -11,6 +11,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -18,7 +19,54 @@ from typing import Any, Sequence
 ALLOWED_MODEL_NAMES = ("tiny", "base", "small")
 REPARSE_POINT_ATTRIBUTE = 0x400
 RENDER_ENCODERS = ("libx264", "aac")
+WINDOWS_MAX_COMMAND_CHARACTERS = 32_767
+FALLBACK_POSIX_MAX_COMMAND_CHARACTERS = 131_072
 _ENCODER_LINE = re.compile(r"^\s*[A-Z.]{6}\s+(\S+)")
+
+
+def is_windows() -> bool:
+    """Informa se o host é Windows para centralizar a variação por sistema."""
+
+    # sys.platform cobre win32 mesmo em Python 64 bits; evita divergir de plan/validation.
+    return sys.platform == "win32"
+
+
+def ffmpeg_filter_option() -> str:
+    """Devolve a flag de filtro por arquivo exigida pelo FFmpeg de cada sistema."""
+
+    # Windows lê o grafo UTF-8 por arquivo com `-/filter_complex`; demais usam `-filter_complex`.
+    # O transporte continua por arquivo nos dois casos, sem devolver o grafo à linha de comando.
+    return "-/filter_complex" if is_windows() else "-filter_complex"
+
+
+def max_command_characters() -> int:
+    """Devolve o teto de linha de comando reportado em capabilities por sistema."""
+
+    # Windows mantém o teto 32.767; demais usam o limite do sistema para não truncar falso.
+    # ponytail: fallback POSIX fixo, trocar por sonda de getconf quando o Mac real exigir prova de ARG_MAX.
+    if is_windows():
+        return WINDOWS_MAX_COMMAND_CHARACTERS
+    try:
+        limit = os.sysconf("SC_ARG_MAX")
+        if isinstance(limit, int) and limit > 0:
+            return int(limit)
+    except (AttributeError, OSError, ValueError):
+        pass
+    return FALLBACK_POSIX_MAX_COMMAND_CHARACTERS
+
+
+def font_lookup_source() -> str:
+    """Informa a origem consultada para fontes, sem expor caminho no envelope público."""
+
+    # Windows consulta o registro; demais consultam fc-match e rejeitam fallback silencioso.
+    return "registry" if is_windows() else "fc-match"
+
+
+def font_registry_hives() -> list[str]:
+    """Lista as colmeias consultadas no Windows, vazia nos demais sistemas."""
+
+    # Mantém HKCU antes de HKLM por precedência do usuário; fora do Windows não há colmeia.
+    return ["HKCU", "HKLM"] if is_windows() else []
 
 
 def is_regular_path(path: Path, *, directory: bool = False) -> bool:
@@ -43,7 +91,8 @@ def _package_root() -> Path:
 def resolve_executable(name: str) -> Path | None:
     """Resolve somente executáveis regulares locais, priorizando o bundle `.tools` do projeto."""
 
-    executable_name = f"{name}.exe" if os.name == "nt" else name
+    # Sem `.exe` fora do Windows; `.tools/ffmpeg` tem prioridade sobre o PATH nos dois sistemas.
+    executable_name = f"{name}.exe" if is_windows() else name
     candidates: list[Path] = []
     if name in {"ffmpeg", "ffprobe"}:
         for root in (_package_root(), Path.cwd()):

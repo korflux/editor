@@ -247,10 +247,8 @@ def _build_ffmpeg_arguments(
 
     arguments.extend(
         [
-            # FFmpeg 9 removeu a opção legada `-filter_complex_script`; a forma
-            # prefixada por `/` mantém a mesma leitura UTF-8 por arquivo sem
-            # devolver o grafo à linha de comando.
-            "-/filter_complex",
+            # Transporte sempre por arquivo UTF-8; a flag varia por sistema via dependencies.
+            dependencies.ffmpeg_filter_option(),
             str(filter_script),
             "-map",
             f"[{graph.video_label}]",

@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover - somente hosts sem a API do Windows
 
 from .. import media
 from ..contracts import CliError, EXIT_CODES, reject_duplicate_json_keys
-from ..dependencies import is_regular_path, resolve_executable
+from ..dependencies import is_regular_path, is_windows, resolve_executable
 from ..workdir import resolve_source_path, validate_workdir
 from .canonical import canonical_json, canonical_sha256
 from .schema import (
@@ -257,7 +257,9 @@ def _resolve_fontconfig_font_file(name: str) -> Path | None:
 def _resolve_font_file(name: str) -> Path | None:
     """Escolhe a descoberta nativa do host e devolve o arquivo seguro para o renderer."""
 
-    if sys.platform == "win32":
+    # Windows mantém HKCU e HKLM; demais usam fc-match com rejeição de fallback silencioso.
+    # Checa o helper central e o sys local para preservar os mocks vigentes de plataforma.
+    if is_windows() or sys.platform == "win32":
         return _resolve_windows_font_file(name)
     return _resolve_fontconfig_font_file(name)
 

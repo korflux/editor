@@ -359,5 +359,86 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(config.model_name, "base")
 
 
+    def test_filter_flag_and_ceiling_follow_host(self) -> None:
+        """Confirma que Windows usa -/filter_complex com 32767 e demais usam -filter_complex com limite do sistema."""
+
+        with patch("editor.dependencies.is_windows", return_value=True):
+            self.assertEqual(editor_dependencies.ffmpeg_filter_option(), "-/filter_complex")
+            self.assertEqual(editor_dependencies.max_command_characters(), 32_767)
+            with workspace_tempdir() as root:
+                data = collect_capabilities(root)
+            self.assertEqual(data["render"]["filter_transport"], "file")
+            self.assertEqual(data["render"]["filter_option"], "-/filter_complex")
+            self.assertEqual(data["render"]["max_command_characters"], 32_767)
+            self.assertEqual(data["limits"]["max_command_characters"], 32_767)
+
+        with (
+            patch("editor.dependencies.is_windows", return_value=False),
+            patch("editor.dependencies.os.sysconf", return_value=262_144, create=True),
+        ):
+            self.assertEqual(editor_dependencies.ffmpeg_filter_option(), "-filter_complex")
+            self.assertEqual(editor_dependencies.max_command_characters(), 262_144)
+            with workspace_tempdir() as root:
+                data = collect_capabilities(root)
+            self.assertEqual(data["render"]["filter_option"], "-filter_complex")
+            self.assertEqual(data["render"]["max_command_characters"], 262_144)
+            self.assertEqual(data["limits"]["max_command_characters"], 262_144)
+
+    def test_filter_ceiling_falls_back_without_sysconf(self) -> None:
+        """Confirma que sem SC_ARG_MAX a capabilities informa o fallback POSIX sem falhar."""
+
+        with (
+            patch("editor.dependencies.is_windows", return_value=False),
+            patch("editor.dependencies.os.sysconf", side_effect=OSError("sem limite"), create=True),
+        ):
+            self.assertEqual(
+                editor_dependencies.max_command_characters(),
+                editor_dependencies.FALLBACK_POSIX_MAX_COMMAND_CHARACTERS,
+            )
+
+    def test_font_origin_follows_host_without_silent_fallback(self) -> None:
+        """Confirma que Windows informa registry HKCU/HKLM e demais informam fc-match com fallback rejeitado."""
+
+        with patch("editor.dependencies.is_windows", return_value=True):
+            self.assertEqual(editor_dependencies.font_lookup_source(), "registry")
+            self.assertEqual(editor_dependencies.font_registry_hives(), ["HKCU", "HKLM"])
+            with workspace_tempdir() as root:
+                data = collect_capabilities(root)
+            self.assertEqual(data["fonts"]["renderer"], "fontfile")
+            self.assertEqual(data["fonts"]["source"], "registry")
+            self.assertEqual(data["fonts"]["registry"], ["HKCU", "HKLM"])
+            self.assertEqual(data["fonts"]["fallback"], "reject")
+
+        with patch("editor.dependencies.is_windows", return_value=False):
+            self.assertEqual(editor_dependencies.font_lookup_source(), "fc-match")
+            self.assertEqual(editor_dependencies.font_registry_hives(), [])
+            with workspace_tempdir() as root:
+                data = collect_capabilities(root)
+            self.assertEqual(data["fonts"]["renderer"], "fontfile")
+            self.assertEqual(data["fonts"]["source"], "fc-match")
+            self.assertEqual(data["fonts"]["registry"], [])
+            self.assertEqual(data["fonts"]["fallback"], "reject")
+
+    def test_resolve_without_exe_prioritizes_tools_bundle(self) -> None:
+        """Confirma que fora do Windows a resolução prioriza .tools/ffmpeg sem sufixo .exe."""
+
+        with workspace_tempdir() as root:
+            bundle = root / ".tools" / "ffmpeg"
+            bundle.mkdir(parents=True)
+            candidate = bundle / "ffmpeg"
+            candidate.write_bytes(b"fixture")
+            with (
+                patch("editor.dependencies.is_windows", return_value=False),
+                patch("editor.dependencies._package_root", return_value=root),
+                patch("editor.dependencies.Path.cwd", return_value=root),
+                patch("editor.dependencies.shutil.which", return_value=None),
+            ):
+                resolved = editor_dependencies.resolve_executable("ffmpeg")
+            self.assertIsNotNone(resolved)
+            assert resolved is not None
+            self.assertEqual(resolved.name, "ffmpeg")
+            self.assertNotEqual(resolved.suffix, ".exe")
+
+
 if __name__ == "__main__":
     unittest.main()

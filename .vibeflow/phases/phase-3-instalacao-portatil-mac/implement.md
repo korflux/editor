@@ -205,8 +205,41 @@
 - **Arquivos:** `src/editor/dependencies.py`, `src/editor/capabilities.py`, `src/editor/whisper_backend.py`, `tests/test_capabilities.py`.
 - **Decisão:** Metal só reportado desbloqueia T8 (fontes e filtro por sistema); T8 segue elegível em seam distinta.
 
+## T8: Aplicar fontes e filtro por sistema mantendo renderer
+
+### Reconhecimento
+
+- A pergunta da T8 é como manter `fontfile` com origem por sistema e filtro por arquivo com flag e teto reportados, sem fallback silencioso.
+- O fluxo real passa por `src/editor/dependencies.py` (`resolve_executable`, `detect_ffmpeg`, `probe_ffmpeg_encoders`), `src/editor/capabilities.py` (`collect_capabilities`), `src/editor/plan/validation.py` (`_resolve_font_file` com HKCU/HKLM e `fc-match`) e `src/editor/render/preview.py` (`_build_ffmpeg_arguments` com transporte por arquivo).
+- Reutilizadas as sondas sem shell, a rejeição de fallback via `_fontconfig_name_matches`, a exigência `libx264`/`aac` em `_require_encoders` e a publicação atômica vigente; nenhum helper centralizava flag, teto ou origem por sistema, então a adição foi mínima.
+
+### Implementação
+
+- `src/editor/dependencies.py`: novas funções `is_windows`, `ffmpeg_filter_option` (`-/filter_complex` no Windows, `-filter_complex` nos demais), `max_command_characters` (32767 no Windows, `SC_ARG_MAX` nos demais com fallback POSIX), `font_lookup_source` (`registry`/`fc-match`) e `font_registry_hives` (`HKCU`/`HKLM` ou vazio); `resolve_executable` usa `is_windows()` mantendo `.tools/ffmpeg` primeiro sem `.exe` fora do Windows; comentários semânticos em todas e `ponytail` no teto POSIX.
+- `src/editor/capabilities.py`: `render` usa flag e teto por sistema, `fonts` informa `source`, `registry` por sistema e `fallback:reject` mantendo `renderer:fontfile`; `limits.max_command_characters` espelha o mesmo helper.
+- `src/editor/render/preview.py`: `_build_ffmpeg_arguments` usa `dependencies.ffmpeg_filter_option()` mantendo transporte por arquivo UTF-8.
+- `src/editor/plan/validation.py`: `_resolve_font_file` usa `is_windows()` com `or sys.platform` para preservar os mocks vigentes, mantendo HKCU/HKLM e `fc-match` sem fallback.
+- `tests/test_capabilities.py`: 4 testes novos (flag e teto por host, fallback sem `sysconf`, origem de fontes sem fallback, resolução sem `.exe` priorizando bundle).
+- Comentários semânticos em todas as funções criadas ou alteradas; `ffmpeg_graph.py` mantido sem delta com grafo `fontfile`.
+
+### Prova
+
+- `.venv/Scripts/python.exe -m editor capabilities --json` -> exit 0 com `filter_option:-/filter_complex`, `max:32767`, `fonts.source:registry`, `registry:[HKCU,HKLM]`, `fallback:reject`, `renderer:fontfile`.
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_capabilities.py" -v` -> `Ran 15 tests ... OK` (11 vigentes + 4 novos).
+- `.venv/Scripts/python.exe -m unittest tests.test_plan_validation -v` -> `Ran 30 tests ... OK`.
+- `.venv/Scripts/python.exe -m unittest tests.test_preview_render -v` -> `Ran 15 tests ... OK`.
+- `git diff --check` -> 0.
+- Causa raiz tratada: `os.sysconf` ausente no Windows quebrou o mock sem `create=True` (corrigido nos testes); `import sys` removido quebrou `plan_validation.sys` usado pelos testes vigentes (restaurado com checagem dupla para mocks).
+
+## Registro T8
+
+- **Plan:** T8 marcada como concluída, com prova e decisões sob a seção da task.
+- **Spec comprovada nesta fatia:** nenhuma caixa marcada; A2/C1/C3 seguem com aceite final em T9.
+- **Arquivos:** `src/editor/capabilities.py`, `src/editor/dependencies.py`, `src/editor/plan/validation.py`, `src/editor/render/preview.py`, `tests/test_capabilities.py`.
+- **Decisão:** origem e filtro por sistema desbloqueiam T9; T9 segue elegível com deps T4/T6/T8. Patch prévio de `ffmpeg_graph.py` (sombra/box) isolado em `C:/Users/marco/AppData/Local/Temp/opencode/ffmpeg_graph-prev.patch`, fora deste commit.
+
 ## Handoff
 
-próxima T* (T8)
+próxima T* (T9)
 
-- Chat: fila restante T8-T9 com T8 elegível após este commit; recomendo T8 (fontes e filtro por sistema, seam de render). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
+- Chat: fila restante T9 com T9 elegível após este commit; recomendo T9 (jornada ponta a ponta, integra instalação, CLI e paridade). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.

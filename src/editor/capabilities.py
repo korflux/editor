@@ -290,11 +290,11 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
         },
         "render": {
             "status": "available",
-            # O grafo nunca volta à linha de comando; o FFmpeg 9.0.1 do host
-            # lê o filtro UTF-8 por arquivo para respeitar o teto do Windows.
+            # O grafo nunca volta à linha de comando; o FFmpeg lê o filtro UTF-8 por arquivo.
+            # A flag e o teto variam por sistema e são reportados para agentes não chutarem.
             "filter_transport": "file",
-            "filter_option": "-/filter_complex",
-            "max_command_characters": 32_767,
+            "filter_option": dependencies.ffmpeg_filter_option(),
+            "max_command_characters": dependencies.max_command_characters(),
             "preview_max_dimension": MAX_PREVIEW_DIMENSION,
             "full_default_max_width": DEFAULT_MAX_FULL_WIDTH,
         },
@@ -313,11 +313,13 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "status": "available",
             # O plano aceita somente o nome humano; o validador resolve o
             # arquivo concreto e o grafo desenha com drawtext=fontfile=...
+            # A origem varia por sistema e o fallback silencioso é sempre rejeitado.
             "input": "name",
             "renderer": "fontfile",
             "extensions": sorted(FONT_FILE_EXTENSIONS),
-            "registry": ["HKCU", "HKLM"],
-            "fallback": "fontconfig",
+            "source": dependencies.font_lookup_source(),
+            "registry": dependencies.font_registry_hives(),
+            "fallback": "reject",
         },
         "limits": {
             "max_plan_bytes": MAX_PLAN_BYTES,
@@ -338,7 +340,7 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "max_full_width_min": MIN_MAX_FULL_WIDTH,
             "max_full_width_max": MAX_MAX_FULL_WIDTH,
             "max_full_width_step": MAX_FULL_WIDTH_STEP,
-            "max_command_characters": 32_767,
+            "max_command_characters": dependencies.max_command_characters(),
             "whisper_word_drift_tolerance_seconds": 0.5,
             "jobs_in_parallel": 1,
         },
