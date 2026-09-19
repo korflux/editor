@@ -286,6 +286,13 @@
 - Prova: `git ls-files | Select-String pyc` -> `0`, `git check-ignore` confirma o padrão e `python -m editor --help` continua verde.
 - Arquivos: `.gitignore`, remoções do índice dos `__pycache__`.
 
+### R3: Deriva documental do transporte do filtro
+
+- Causa: `spec.md` ainda citava `-filter_complex_script` no delta e na decisão 3, enquanto T1 implementou `-/filter_complex <arquivo>` por indisponibilidade no FFmpeg 9.0.1.
+- Correção mínima: spec atualizada para `-/filter_complex <arquivo>` com nota da opção legada; nenhum código alterado.
+- Prova: busca por `filter_complex_script` retorna só contexto histórico em decisão, comentário e este registro.
+- Arquivos: `.vibeflow/phases/phase-2-robustez-renderizacao-local/spec.md`.
+
 ## Handoff
 
 Fila zerada. Handoff para `vibe-review`.

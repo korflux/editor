@@ -29,7 +29,8 @@ final e fontes de texto determinísticos.
 2. Preview e full usarão o mesmo grafo editorial. A preview continua limitada a 720
    pixels; `max_full_width` afeta somente a full.
 3. O filtro complexo será sempre gravado em arquivo temporário regular dentro de
-   `<workdir>/.tmp` e fornecido ao FFmpeg por `-filter_complex_script`. Um único caminho
+   `<workdir>/.tmp` e fornecido ao FFmpeg por `-/filter_complex <arquivo>` (o FFmpeg 9.0.1
+   do host não expõe a opção legada `-filter_complex_script`). Um único caminho
    reduz variação entre Windows e outros hosts e elimina dependência do tamanho do plano.
 4. O limite vigente de 4 GiB e 3.600 segundos continua exclusivo das fontes de entrada.
    Preview e full serão validadas por formato, streams, codecs, dimensões e duração
@@ -168,7 +169,7 @@ final e fontes de texto determinísticos.
 
 | Área | Escolha |
 |---|---|
-| Processo | existente: `subprocess` com lista de argumentos e `shell=False`; delta: `-filter_complex_script` |
+| Processo | existente: `subprocess` com lista de argumentos e `shell=False`; delta: `-/filter_complex <arquivo>` |
 | Mídia | existente: FFmpeg/FFprobe locais; delta: política específica para saída renderizada |
 | Plano | existente: schema v2 estrito; delta: `profile.max_full_width` opcional |
 | Transcrição | existente: faster-whisper local; delta: normalização limitada antes da serialização |
