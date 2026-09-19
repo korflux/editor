@@ -301,6 +301,35 @@ def detect_cuda_runtime() -> dict[str, Any]:
     }
 
 
+def detect_metal() -> dict[str, Any]:
+    """Sonda Metal best effort sem transformar ausência em erro de jornada."""
+
+    # Metal só existe em macOS; fora dele a ausência é `missing`, nunca erro.
+    # No Mac, a prova é a presença do framework do sistema; qualquer falha vira `missing`.
+    # ponytail: compute Metal só com prova real no Mac com pesos pinados; nesta fatia o compute permanece CPU int8/CUDA float16.
+    if platform.system() != "Darwin":
+        return {
+            "status": "missing",
+            "reason": "Metal está disponível somente em macOS",
+        }
+    try:
+        framework = Path("/System/Library/Frameworks/Metal.framework")
+        if framework.is_dir():
+            return {
+                "status": "available",
+                "reason": "Metal detectado localmente no macOS",
+            }
+        return {
+            "status": "missing",
+            "reason": "framework Metal não foi encontrado localmente",
+        }
+    except OSError:
+        return {
+            "status": "missing",
+            "reason": "sondagem Metal indisponível sem falhar a jornada",
+        }
+
+
 def read_total_memory_bytes() -> int | None:
     """Lê memória física total por APIs do sistema, mantendo o detector sem dependência externa."""
 

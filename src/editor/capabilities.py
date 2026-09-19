@@ -157,6 +157,8 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
         }
     )
     cuda = _cuda_dependency(gpu, whisper, cuda_runtime)
+    # Sonda Metal best effort; ausência nunca falha a jornada e nunca muda a recomendação nesta fatia.
+    metal = dependencies.detect_metal()
     models = dependencies.discover_models(model_dir or default_model_root())
     recommendation = choose_recommendation(models, cuda["status"])
 
@@ -240,6 +242,12 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
                 "recommended": recommendation["device"] == "cuda",
                 "gpu_count": len(gpu["devices"]),
                 "reason": cuda["reason"],
+            },
+            # Metal é só reporte nesta fatia; o compute garantido permanece CPU int8 (ou CUDA quando recomendado).
+            "metal": {
+                "status": metal["status"],
+                "recommended": False,
+                "reason": metal["reason"],
             },
         },
         "formats": {

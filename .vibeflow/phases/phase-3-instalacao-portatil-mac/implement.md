@@ -174,8 +174,39 @@
 - **Arquivos:** `src/editor/cli.py`, `skills/vibe-editor/SKILL.md`, `tests/test_cli_contract.py`.
 - **Decisão:** atalhos desbloqueiam operação curta sem reinterpretar o plano; T7 segue elegível em seam distinta.
 
+## T7: Reportar Metal best effort com transcrição CPU garantida
+
+### Reconhecimento
+
+- A pergunta da T7 é como sondar Metal sem falhar a jornada, expor `devices.metal` e garantir CPU `int8` com `auto`.
+- O fluxo real passa por `src/editor/dependencies.py` (`detect_gpu`, `detect_cuda_runtime`), `src/editor/capabilities.py` (`collect_capabilities`, `choose_recommendation`) e `src/editor/whisper_backend.py` (`resolve_config` com `auto|cpu|cuda` e `int8`).
+- Reutilizadas as sondas sem shell, o formato `status/reason` e a recomendação CPU vigente; nenhum helper sondava Metal, então a adição foi mínima.
+
+### Implementação
+
+- `src/editor/dependencies.py`: nova função `detect_metal` (fora do Mac vira `missing` sem erro; no Mac exige `Metal.framework`, `OSError` vira `missing`); `ponytail` registra compute Metal só com prova real no Mac.
+- `src/editor/capabilities.py`: chama `detect_metal` e expõe `devices.metal` só como reporte (`recommended:false`); recomendação continua só por CUDA+modelos, então Metal ausente mantém CPU.
+- `src/editor/whisper_backend.py`: só documenta em `resolve_config` que Metal é ignorado na resolução e `auto` nunca falha por ausência de Metal, com CPU `int8` garantida.
+- `tests/test_capabilities.py`: 4 testes novos (sonda nunca falha, `missing` mantém CPU, `available` não muda baseline, `auto` resolve `cpu/int8/base` sem Metal).
+- Comentários semânticos em todas as funções criadas ou alteradas; `--device` permanece `auto|cpu|cuda` sem novo flag.
+
+### Prova
+
+- `.venv/Scripts/python.exe -m editor capabilities --json` -> exit 0 com `devices.metal: missing`, `recommendation: cpu/base`, sem stderr.
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_capabilities.py" -v` -> `Ran 11 tests ... OK` (7 vigentes + 4 novos).
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_transcription.py" -v` -> `Ran 11 tests ... OK`.
+- Transcrição real `speech.mp3` com `--model base --device auto` -> `ok:true` com `segment_count:1`; `resolve_config('base','auto')` -> `cpu/int8`; `--device metal` -> `ARGUMENT_INVALID`.
+- `git diff --check` -> 0.
+
+## Registro T7
+
+- **Plan:** T7 marcada como concluída, com prova e decisões sob a seção da task.
+- **Spec comprovada nesta fatia:** nenhuma caixa marcada; A5/C3 seguem com aceite final em T9.
+- **Arquivos:** `src/editor/dependencies.py`, `src/editor/capabilities.py`, `src/editor/whisper_backend.py`, `tests/test_capabilities.py`.
+- **Decisão:** Metal só reportado desbloqueia T8 (fontes e filtro por sistema); T8 segue elegível em seam distinta.
+
 ## Handoff
 
-próxima T* (T7)
+próxima T* (T8)
 
-- Chat: fila restante T7-T9 com T7 elegível após este commit; recomendo T7 (sonda Metal com CPU garantida, seam distinta de T6). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
+- Chat: fila restante T8-T9 com T8 elegível após este commit; recomendo T8 (fontes e filtro por sistema, seam de render). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.

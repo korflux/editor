@@ -153,16 +153,18 @@ Entregar instalação por comando único no Windows e no Mac com `editor` no PAT
 
 ### T7: Reportar Metal best effort com transcrição CPU garantida
 
-- [ ] T7 concluída
+- [x] T7 concluída
 - **Spec:** A5, C3
 - **O quê:** Sondar Metal sem tratar ausência como erro, expor `devices.metal` em `capabilities` e garantir transcrição CPU `int8` com `auto` sem falha por ausência de Metal.
 - **Aceite:**
-  - [ ] `capabilities` informa `devices.metal` sem erro e recomenda CPU quando Metal ausente
-  - [ ] Transcrição real com modelo `base` local publica artefato em CPU `int8`
-  - [ ] `--device` permanece `auto|cpu|cuda` nesta fatia sem novo flag obrigatório
+  - [x] `capabilities` informa `devices.metal` sem erro e recomenda CPU quando Metal ausente
+  - [x] Transcrição real com modelo `base` local publica artefato em CPU `int8`
+  - [x] `--device` permanece `auto|cpu|cuda` nesta fatia sem novo flag obrigatório
 - **Verificação:**
-  - [ ] `python -m editor capabilities --json`
-  - [ ] `python -m unittest discover -s tests -p "test_capabilities.py" -v`
+  - [x] `python -m editor capabilities --json`
+  - [x] `python -m unittest discover -s tests -p "test_capabilities.py" -v`
+- **Prova:** `capabilities --json` -> `devices.metal: missing` sem erro com `recommendation: cpu/base`; `discover -s tests -p "test_capabilities.py" -v` -> `Ran 11 tests ... OK` (7 vigentes + 4 novos); `discover -s tests -p "test_transcription.py" -v` -> `Ran 11 tests ... OK`; transcrição real `speech.mp3` com `--model base --device auto` -> `ok:true` com `segment_count:1`; `resolve_config('base','auto')` -> `cpu/int8`; `--device metal` -> `ARGUMENT_INVALID`; `git diff --check` -> 0.
+- **Decisões:** `detect_metal` best effort só com `available` no Mac com framework, senão `missing` sem erro; `devices.metal` só reporte com `recommended:false`, compute permanece CPU `int8`/CUDA `float16`; `resolve_config` ignora Metal e garante `auto` sem falha; `ponytail` em `detect_metal` registra compute Metal só com prova real no Mac; A5/C3 seguem com aceite final em T9.
 - **Deps:** T1
 - **Arquivos:** `src/editor/dependencies.py`, `src/editor/capabilities.py`, `src/editor/whisper_backend.py`, `tests/test_capabilities.py`
 - **Size:** `medium, 5/10 (2+1+1+1+0), três módulos com sonda best effort`

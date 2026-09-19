@@ -82,6 +82,8 @@ def _select_model(
 def resolve_config(model: str | None, device: str) -> WhisperConfig:
     """Resolve backend, dispositivo e modelo usando somente recursos locais já detectados."""
 
+    # Metal é best effort só em `capabilities`; a resolução ignora Metal e garante CPU int8, então `auto` nunca falha por ausência de Metal.
+
     if device not in {"auto", "cpu", "cuda"}:
         raise CliError(
             code="ARGUMENT_INVALID",

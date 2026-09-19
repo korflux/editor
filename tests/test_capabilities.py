@@ -13,7 +13,9 @@ from typing import Iterator
 from unittest.mock import patch
 from uuid import uuid4
 
+from editor import dependencies as editor_dependencies
 from editor.capabilities import choose_recommendation, collect_capabilities
+from editor.whisper_backend import resolve_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -251,6 +253,110 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(data["devices"]["cuda"]["status"], "unsupported")
         self.assertEqual(data["recommendation"]["device"], "cpu")
         self.assertEqual(data["devices"]["auto"]["resolves_to"], "cpu")
+
+    def test_metal_probe_never_fails_and_reports_without_error(self) -> None:
+        """Confirma que a sonda Metal best effort nunca levanta e informa status sem erro."""
+
+        probe = editor_dependencies.detect_metal()
+
+        self.assertIn(probe["status"], {"available", "missing"})
+        self.assertTrue(probe["reason"])
+
+    def test_metal_missing_keeps_cpu_recommendation(self) -> None:
+        """Confirma que Metal ausente mantém CPU como recomendação sem falhar capabilities."""
+
+        models = {
+            "status": "available",
+            "root": "models",
+            "available": ["base"],
+            "models": [],
+        }
+        with (
+            patch(
+                "editor.capabilities.dependencies.detect_metal",
+                return_value={"status": "missing", "reason": "fixture sem Metal"},
+            ),
+            patch(
+                "editor.capabilities.dependencies.discover_models",
+                return_value=models,
+            ),
+        ):
+            with workspace_tempdir() as root:
+                data = collect_capabilities(root)
+
+        self.assertEqual(data["devices"]["metal"]["status"], "missing")
+        self.assertFalse(data["devices"]["metal"]["recommended"])
+        self.assertEqual(data["recommendation"]["device"], "cpu")
+        self.assertEqual(data["devices"]["auto"]["resolves_to"], "cpu")
+
+    def test_metal_available_does_not_change_cpu_baseline(self) -> None:
+        """Confirma que Metal disponível é só reporte e o baseline continua CPU nesta fatia."""
+
+        models = {
+            "status": "available",
+            "root": "models",
+            "available": ["base"],
+            "models": [],
+        }
+        with (
+            patch(
+                "editor.capabilities.dependencies.detect_metal",
+                return_value={"status": "available", "reason": "fixture com Metal"},
+            ),
+            patch(
+                "editor.capabilities.dependencies.discover_models",
+                return_value=models,
+            ),
+        ):
+            with workspace_tempdir() as root:
+                data = collect_capabilities(root)
+
+        self.assertEqual(data["devices"]["metal"]["status"], "available")
+        self.assertFalse(data["devices"]["metal"]["recommended"])
+        self.assertEqual(data["recommendation"]["device"], "cpu")
+
+    def test_auto_resolves_cpu_int8_when_metal_missing(self) -> None:
+        """Confirma que auto resolve CPU int8 com modelo base mesmo sem Metal."""
+
+        with workspace_tempdir() as workdir:
+            model_root = workdir / "models"
+            model_root.mkdir()
+            base = model_root / "base"
+            base.mkdir()
+            for filename in ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt"):
+                (base / filename).write_bytes(b"fixture")
+            models = {
+                "status": "available",
+                "root": str(model_root),
+                "available": ["base"],
+                "models": [
+                    {"name": "base", "status": "available", "path": str(base)},
+                ],
+            }
+            with (
+                patch("editor.whisper_backend.default_model_root", return_value=model_root),
+                patch(
+                    "editor.whisper_backend.dependencies.discover_models",
+                    return_value=models,
+                ),
+                patch(
+                    "editor.whisper_backend.dependencies.detect_gpu",
+                    return_value={"status": "missing"},
+                ),
+                patch(
+                    "editor.whisper_backend.dependencies.detect_whisper_backend",
+                    return_value={"status": "available"},
+                ),
+                patch(
+                    "editor.whisper_backend.dependencies.detect_metal",
+                    return_value={"status": "missing", "reason": "fixture sem Metal"},
+                ),
+            ):
+                config = resolve_config(None, "auto")
+
+        self.assertEqual(config.device, "cpu")
+        self.assertEqual(config.compute_type, "int8")
+        self.assertEqual(config.model_name, "base")
 
 
 if __name__ == "__main__":
