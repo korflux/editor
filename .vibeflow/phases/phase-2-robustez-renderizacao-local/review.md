@@ -47,7 +47,7 @@
 ### Optional / Nit
 
 - [x] R3: **Nit** - `.vibeflow/phases/phase-2-robustez-renderizacao-local/spec.md` citava `-filter_complex_script` no delta e na decisão 3, enquanto o código usa `-/filter_complex` no FFmpeg 9.0.1 - sincronizado para `-/filter_complex <arquivo>` com nota da opção legada indisponível; ocorrências restantes são histórico de decisão - prova: busca mostra `filter_complex_script` só em contexto histórico - source: A1/diff - gap: fechado
-- [ ] R4: **Optional** - `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md` - conflito `inquirer 3.4.1` pede `editor>=1.6.0` contra pacote local `0.1.0` no Python global; escopo era ambiente global fora do venv e pode estar obsoleto após T2/instalador - remédio: vibe-implement verifica `pip check` no venv e no global, encerra o registro se obsoleto ou documenta contenção atual - prova: `pip check` relevante mais atualização ou remoção do registro - source: `.erros-encontrados/` - gap: nenhum
+- [x] R4: **Optional** - `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md` - conflito `inquirer 3.4.1` pede `editor>=1.6.0` contra editável local no Python global; verificado que o venv está limpo e o global persiste por colisão de nomes com o pacote PyPI `editor` (dependência do `inquirer`/`open-interpreter`), sem alteração no global ou rename - prova: venv `pip check` limpo, global ainda falha, registro atualizado com verificação de 2026-09-19 - source: `.erros-encontrados/` - gap: fechado
 
 ## Segurança
 

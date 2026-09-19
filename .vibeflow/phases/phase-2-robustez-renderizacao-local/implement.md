@@ -293,6 +293,13 @@
 - Prova: busca por `filter_complex_script` retorna só contexto histórico em decisão, comentário e este registro.
 - Arquivos: `.vibeflow/phases/phase-2-robustez-renderizacao-local/spec.md`.
 
+### R4: Conflito global inquirer contra editável local
+
+- Causa raiz: nome `editor` do pacote local colide com o pacote PyPI `editor>=1.6.0` exigido pelo `inquirer 3.4.1` global (via `open-interpreter`); a instalação editável global a partir de `A:\Projetos\editor` sombreia o PyPI e quebra `pip check` global.
+- Correção mínima: nenhuma alteração no global ou rename (ambos fora do escopo e com blast radius); verificado que o venv está limpo e o registro em `.erros-encontrados/` foi atualizado com a contenção atual e o caminho suportado (venv via `scripts/install.ps1`).
+- Prova: venv `pip check` -> `No broken requirements found`; global ainda reporta o conflito; registro atualizado.
+- Arquivos: `.erros-encontrados/2026-09-10-python-global-inquirer-editor.md`.
+
 ## Handoff
 
 Fila zerada. Handoff para `vibe-review`.
