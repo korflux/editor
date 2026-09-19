@@ -50,6 +50,124 @@ class CliArgumentParser(argparse.ArgumentParser):
         raise HelpRequested(status)
 
 
+def _add_json_argument(parser: argparse.ArgumentParser) -> None:
+    """Registra `--json` no subparser sem sobrescrever o sinalizador informado na raiz."""
+
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="retorna o resultado estruturado em JSON pelo stdout",
+    )
+
+
+def _add_workdir_argument(parser: argparse.ArgumentParser) -> None:
+    """Registra `--workdir` opcional com default para o diretório atual, como nos longos."""
+
+    parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
+
+
+def _add_source_id_argument(parser: argparse.ArgumentParser) -> None:
+    """Registra `--source-id` opcional derivado do basename do `--input`, como nos longos."""
+
+    parser.add_argument("--source-id", required=False, default=None, help="identificador seguro da fonte (padrão: basename do --input)")
+
+
+def register_shortcut_parsers(subparsers: argparse._SubParsersAction) -> None:
+    """Registra atalhos planos como equivalentes exatos aos canônicos, sem mudar os longos."""
+
+    # Atalho `audio` equivale a `analyze audio`; o envelope usa o nome canônico.
+    audio_shortcut = subparsers.add_parser(
+        "audio",
+        help="atalho para analyze audio",
+        description="atalho para analyze audio",
+    )
+    _add_workdir_argument(audio_shortcut)
+    _add_source_id_argument(audio_shortcut)
+    audio_shortcut.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
+    audio_shortcut.add_argument(
+        "--window-s",
+        type=float,
+        default=1.0,
+        help="duração das janelas em segundos, padrão: 1",
+    )
+    _add_json_argument(audio_shortcut)
+    # Atalho `transcribe` equivale a `analyze transcribe`; o envelope usa o nome canônico.
+    transcribe_shortcut = subparsers.add_parser(
+        "transcribe",
+        help="atalho para analyze transcribe",
+        description="atalho para analyze transcribe",
+    )
+    _add_workdir_argument(transcribe_shortcut)
+    _add_source_id_argument(transcribe_shortcut)
+    transcribe_shortcut.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
+    transcribe_shortcut.add_argument(
+        "--language",
+        default="auto",
+        help="idioma da transcrição ou auto, padrão: auto",
+    )
+    transcribe_shortcut.add_argument(
+        "--model",
+        help="nome ou diretório de modelo Whisper local validado",
+    )
+    transcribe_shortcut.add_argument(
+        "--device",
+        choices=("auto", "cpu", "cuda"),
+        default="auto",
+        help="dispositivo de processamento, padrão: auto",
+    )
+    _add_json_argument(transcribe_shortcut)
+    # Atalho `frames` equivale a `extract frames`; o envelope usa o nome canônico.
+    frames_shortcut = subparsers.add_parser(
+        "frames",
+        help="atalho para extract frames",
+        description="atalho para extract frames",
+    )
+    _add_workdir_argument(frames_shortcut)
+    _add_source_id_argument(frames_shortcut)
+    frames_shortcut.add_argument("--input", required=True, help="arquivo local MP4 com vídeo H.264")
+    frames_selection = frames_shortcut.add_mutually_exclusive_group(required=True)
+    frames_selection.add_argument(
+        "--timestamps",
+        help="timestamps em segundos separados por vírgula",
+    )
+    frames_selection.add_argument(
+        "--interval-s",
+        help="intervalo regular em segundos",
+    )
+    frames_shortcut.add_argument("--start-s", help="início do intervalo, padrão: 0")
+    frames_shortcut.add_argument(
+        "--end-s",
+        help="fim exclusivo do intervalo, padrão: duração da fonte",
+    )
+    _add_json_argument(frames_shortcut)
+    # Atalho `validate` equivale a `plan validate`; o envelope usa o nome canônico.
+    validate_shortcut = subparsers.add_parser(
+        "validate",
+        help="atalho para plan validate",
+        description="atalho para plan validate",
+    )
+    _add_workdir_argument(validate_shortcut)
+    _add_json_argument(validate_shortcut)
+    # Atalho `preview` equivale a `render preview`; o envelope usa o nome canônico.
+    preview_shortcut = subparsers.add_parser(
+        "preview",
+        help="atalho para render preview",
+        description="atalho para render preview",
+    )
+    _add_workdir_argument(preview_shortcut)
+    _add_json_argument(preview_shortcut)
+    # Atalho `full` equivale a `render full`; o envelope usa o nome canônico.
+    full_shortcut = subparsers.add_parser(
+        "full",
+        help="atalho para render full",
+        description="atalho para render full",
+    )
+    _add_workdir_argument(full_shortcut)
+    _add_json_argument(full_shortcut)
+
+
 def build_parser() -> CliArgumentParser:
     """Cria o parser raiz e registra os comandos locais já implementados."""
 
@@ -301,6 +419,7 @@ def build_parser() -> CliArgumentParser:
         default=argparse.SUPPRESS,
         help="retorna o resultado estruturado em JSON pelo stdout",
     )
+    register_shortcut_parsers(subparsers)
     return parser
 
 
@@ -366,7 +485,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_json(success_envelope("init", result))
             return 0
 
-        if args.command == "analyze" and args.analyze_command == "audio":
+        if (args.command == "analyze" and args.analyze_command == "audio") or args.command == "audio":
             result = analyze_audio(
                 workdir=resolve_workdir(args.workdir),
                 source_id=effective_source_id(args.source_id, args.input),
@@ -376,7 +495,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_json(success_envelope("analyze audio", result))
             return 0
 
-        if args.command == "analyze" and args.analyze_command == "transcribe":
+        if (args.command == "analyze" and args.analyze_command == "transcribe") or args.command == "transcribe":
             result = analyze_transcription(
                 workdir=resolve_workdir(args.workdir),
                 source_id=effective_source_id(args.source_id, args.input),
@@ -388,7 +507,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_json(success_envelope("analyze transcribe", result))
             return 0
 
-        if args.command == "extract" and args.extract_command == "frames":
+        if (args.command == "extract" and args.extract_command == "frames") or args.command == "frames":
             result = extract_frames(
                 workdir=resolve_workdir(args.workdir),
                 source_id=effective_source_id(args.source_id, args.input),
@@ -401,7 +520,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_json(success_envelope("extract frames", result))
             return 0
 
-        if args.command == "plan" and args.plan_command == "validate":
+        if (args.command == "plan" and args.plan_command == "validate") or args.command == "validate":
             result = validate_plan(resolve_workdir(args.workdir))
             write_json(success_envelope("plan validate", result))
             return 0
@@ -411,12 +530,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_json(success_envelope("approve", result))
             return 0
 
-        if args.command == "render" and args.render_command == "preview":
+        if (args.command == "render" and args.render_command == "preview") or args.command == "preview":
             result = render_preview(resolve_workdir(args.workdir))
             write_json(success_envelope("render preview", result))
             return 0
 
-        if args.command == "render" and args.render_command == "full":
+        if (args.command == "render" and args.render_command == "full") or args.command == "full":
             result = render_full(resolve_workdir(args.workdir))
             write_json(success_envelope("render full", result))
             return 0

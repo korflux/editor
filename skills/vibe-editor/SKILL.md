@@ -106,6 +106,8 @@ Execute as análises necessárias, sempre preservando os originais:
 .venv\Scripts\python.exe -B -m editor extract frames --workdir "<workdir>" --source-id "<id>" --input "<video>" --interval-s "<segundos>" --json
 ```
 
+Atalhos planos `audio`, `transcribe` e `frames` equivalem aos longos acima e retornam os mesmos envelopes canônicos (`analyze audio`, `analyze transcribe`, `extract frames`). Os exemplos desta skill usam os longos, que permanecem válidos.
+
 Use transcrição para localizar falas e momentos importantes, análise de áudio para
 entender níveis e silêncios e frames para conferir o conteúdo visual. Não declare
 que um intervalo é fala, ruído ou intenção editorial apenas por causa da análise de
@@ -173,6 +175,8 @@ Valide antes de renderizar:
 .venv\Scripts\python.exe -B -m editor plan validate --workdir "<workdir>" --json
 ```
 
+O atalho `validate` equivale ao longo acima com envelope `plan validate`. Os longos permanecem válidos.
+
 Se falhar, corrija a causa no plano ou nos arquivos declarados e valide novamente.
 Não ignore erro nem force a renderização.
 
@@ -183,6 +187,8 @@ Execute:
 ```text
 .venv\Scripts\python.exe -B -m editor render preview --workdir "<workdir>" --json
 ```
+
+O atalho `preview` equivale ao longo acima com envelope `render preview`. Os longos permanecem válidos.
 
 Informe ao usuário onde está `preview.mp4` e peça que ele assista. Traduza o
 feedback em alterações no plano. Depois de qualquer alteração, repita a validação
@@ -281,6 +287,8 @@ execute:
 .venv\Scripts\python.exe -B -m editor approve --workdir "<workdir>" --json
 .venv\Scripts\python.exe -B -m editor render full --workdir "<workdir>" --json
 ```
+
+O atalho `full` equivale a `render full` com envelope canônico. `init`, `approve` e `capabilities` não têm atalhos e permanecem inalterados.
 
 O primeiro comando registra qual plano, preview e fontes foram aprovados. O segundo
 confere se nada mudou e só então publica `full.mp4`. Se o editor informar que a

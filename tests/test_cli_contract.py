@@ -236,5 +236,201 @@ class CliContractTests(unittest.TestCase):
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
 
+    def test_shortcuts_in_help_and_longs_remain(self) -> None:
+        """Confirma que os atalhos aparecem no help sem remover os longos canônicos."""
+
+        result = run_module("--help")
+
+        self.assertEqual(result.returncode, 0)
+        for shortcut in ("audio", "transcribe", "frames", "validate", "preview", "full"):
+            self.assertIn(shortcut, result.stdout)
+        for long in ("analyze", "extract", "plan", "render", "init", "approve", "capabilities"):
+            self.assertIn(long, result.stdout)
+        self.assertEqual(result.stderr, "")
+
+    def test_audio_shortcut_matches_long_canonical_envelope(self) -> None:
+        """Confirma que `audio` gera o mesmo artefato de `analyze audio` com envelope canônico."""
+
+        from editor import dependencies
+
+        if dependencies.resolve_executable("ffmpeg") is None or dependencies.resolve_executable("ffprobe") is None:
+            self.skipTest("ffmpeg e ffprobe não estão disponíveis localmente")
+        if not MEDIA_FIXTURE.is_file():
+            self.skipTest("fixture MP4 da análise não está disponível")
+
+        with workspace_tempdir() as parent:
+            long_dir = parent / "long"
+            short_dir = parent / "short"
+            long_dir.mkdir()
+            short_dir.mkdir()
+            self.assertEqual(run_module("init", "--workdir", str(long_dir), "--json").returncode, 0)
+            self.assertEqual(run_module("init", "--workdir", str(short_dir), "--json").returncode, 0)
+
+            long = run_module(
+                "analyze", "audio",
+                "--workdir", str(long_dir),
+                "--source-id", "main",
+                "--input", str(MEDIA_FIXTURE),
+                "--json",
+            )
+            short = run_module(
+                "audio",
+                "--workdir", str(short_dir),
+                "--source-id", "main",
+                "--input", str(MEDIA_FIXTURE),
+                "--json",
+            )
+            long_payload = json.loads(long.stdout)
+            short_payload = json.loads(short.stdout)
+
+            self.assertEqual(long.returncode, 0, long.stderr)
+            self.assertEqual(short.returncode, 0, short.stderr)
+            self.assertEqual(long_payload["command"], "analyze audio")
+            self.assertEqual(short_payload["command"], "analyze audio")
+            long_artifact = Path(long_payload["data"]["artifact_path"])
+            short_artifact = Path(short_payload["data"]["artifact_path"])
+            self.assertTrue(long_artifact.is_file())
+            self.assertTrue(short_artifact.is_file())
+            self.assertEqual(long_artifact.read_bytes(), short_artifact.read_bytes())
+
+    def test_audio_shortcut_without_workdir_uses_current_directory(self) -> None:
+        """Confirma que o atalho `audio` resolve o cwd como os longos de T5."""
+
+        from editor import dependencies
+
+        if dependencies.resolve_executable("ffmpeg") is None or dependencies.resolve_executable("ffprobe") is None:
+            self.skipTest("ffmpeg e ffprobe não estão disponíveis localmente")
+        if not MEDIA_FIXTURE.is_file():
+            self.skipTest("fixture MP4 da análise não está disponível")
+
+        with workspace_tempdir() as parent:
+            workdir = parent / "job"
+            workdir.mkdir()
+            self.assertEqual(run_module_in_workdir(workdir, "init", "--json").returncode, 0)
+
+            fixture_copy = parent / "My Video.mp4"
+            shutil.copyfile(MEDIA_FIXTURE, fixture_copy)
+            result = run_module_in_workdir(workdir, "audio", "--input", str(fixture_copy), "--json")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["command"], "analyze audio")
+            self.assertEqual(payload["data"]["source_id"], "my-video")
+            self.assertTrue(Path(payload["data"]["artifact_path"]).is_file())
+
+    def test_validate_shortcut_shares_validation(self) -> None:
+        """Confirma que `validate` usa o mesmo envelope e validação de `plan validate`."""
+
+        with workspace_tempdir() as parent:
+            workdir = parent / "job"
+            workdir.mkdir()
+            self.assertEqual(run_module("init", "--workdir", str(workdir), "--json").returncode, 0)
+
+            long = run_module("plan", "validate", "--workdir", str(workdir), "--json")
+            short = run_module("validate", "--workdir", str(workdir), "--json")
+            long_payload = json.loads(long.stdout)
+            short_payload = json.loads(short.stdout)
+
+            self.assertEqual(long.returncode, short.returncode)
+            self.assertFalse(long_payload["ok"])
+            self.assertFalse(short_payload["ok"])
+            self.assertEqual(long_payload["error"]["code"], "PLAN_INVALID")
+            self.assertEqual(short_payload["error"]["code"], "PLAN_INVALID")
+            self.assertNotIn("Traceback", short.stdout)
+
+    def test_transcribe_shortcut_impossible_derivation(self) -> None:
+        """Confirma que o atalho `transcribe` falha na borda como o longo sem sondar mídia."""
+
+        with workspace_tempdir() as parent:
+            workdir = parent / "job"
+            workdir.mkdir()
+            self.assertEqual(run_module("init", "--workdir", str(workdir), "--json").returncode, 0)
+
+            result = run_module(
+                "transcribe",
+                "--workdir", str(workdir),
+                "--input", str(parent / "!!!.mp4"),
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["error"]["code"], "ARGUMENT_INVALID")
+            self.assertNotIn("Traceback", result.stdout)
+
+    def test_frames_shortcut_matches_long_manifest(self) -> None:
+        """Confirma que `frames` publica o mesmo manifesto de `extract frames`."""
+
+        from editor import dependencies
+
+        if dependencies.resolve_executable("ffmpeg") is None or dependencies.resolve_executable("ffprobe") is None:
+            self.skipTest("ffmpeg e ffprobe não estão disponíveis localmente")
+        if not MEDIA_FIXTURE.is_file():
+            self.skipTest("fixture MP4 da análise não está disponível")
+
+        with workspace_tempdir() as parent:
+            long_dir = parent / "long"
+            short_dir = parent / "short"
+            long_dir.mkdir()
+            short_dir.mkdir()
+            self.assertEqual(run_module("init", "--workdir", str(long_dir), "--json").returncode, 0)
+            self.assertEqual(run_module("init", "--workdir", str(short_dir), "--json").returncode, 0)
+
+            long = run_module(
+                "extract", "frames",
+                "--workdir", str(long_dir),
+                "--source-id", "main",
+                "--input", str(MEDIA_FIXTURE),
+                "--timestamps", "0",
+                "--json",
+            )
+            short = run_module(
+                "frames",
+                "--workdir", str(short_dir),
+                "--source-id", "main",
+                "--input", str(MEDIA_FIXTURE),
+                "--timestamps", "0",
+                "--json",
+            )
+            long_payload = json.loads(long.stdout)
+            short_payload = json.loads(short.stdout)
+
+            self.assertEqual(long.returncode, 0, long.stderr)
+            self.assertEqual(short.returncode, 0, short.stderr)
+            self.assertEqual(long_payload["command"], "extract frames")
+            self.assertEqual(short_payload["command"], "extract frames")
+            long_manifest = Path(long_payload["data"]["artifact_path"])
+            short_manifest = Path(short_payload["data"]["artifact_path"])
+            self.assertTrue(long_manifest.is_file())
+            self.assertTrue(short_manifest.is_file())
+
+    def test_preview_and_full_shortcuts_share_validation(self) -> None:
+        """Confirma que `preview` e `full` retornam o mesmo erro dos longos sem plano válido."""
+
+        with workspace_tempdir() as parent:
+            workdir = parent / "job"
+            workdir.mkdir()
+            self.assertEqual(run_module("init", "--workdir", str(workdir), "--json").returncode, 0)
+
+            long_preview = run_module("render", "preview", "--workdir", str(workdir), "--json")
+            short_preview = run_module("preview", "--workdir", str(workdir), "--json")
+            long_full = run_module("render", "full", "--workdir", str(workdir), "--json")
+            short_full = run_module("full", "--workdir", str(workdir), "--json")
+
+            self.assertEqual(long_preview.returncode, short_preview.returncode)
+            self.assertEqual(long_full.returncode, short_full.returncode)
+            self.assertEqual(
+                json.loads(long_preview.stdout)["error"]["code"],
+                json.loads(short_preview.stdout)["error"]["code"],
+            )
+            self.assertEqual(
+                json.loads(long_full.stdout)["error"]["code"],
+                json.loads(short_full.stdout)["error"]["code"],
+            )
+            self.assertNotIn("Traceback", short_preview.stdout)
+            self.assertNotIn("Traceback", short_full.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

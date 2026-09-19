@@ -134,18 +134,20 @@ Entregar instalação por comando único no Windows e no Mac com `editor` no PAT
 
 ### T6: Mapear atalhos planos para envelopes canônicos
 
-- [ ] T6 concluída
+- [x] T6 concluída
 - **Spec:** A3, A4, C4
 - **O quê:** Adicionar `audio`, `transcribe`, `frames`, `validate`, `preview` e `full` como equivalentes exatos aos canônicos, com envelopes usando nomes canônicos e longos válidos em help e execução.
 - **Aceite:**
-  - [ ] Atalhos executam sem `--workdir` e geram mesmos artefatos dos longos
-  - [ ] Envelopes usam `analyze audio`, `plan validate`, `render preview` e demais nomes canônicos
-  - [ ] `init`, `approve` e `capabilities` permanecem inalterados
+  - [x] Atalhos executam sem `--workdir` e geram mesmos artefatos dos longos
+  - [x] Envelopes usam `analyze audio`, `plan validate`, `render preview` e demais nomes canônicos
+  - [x] `init`, `approve` e `capabilities` permanecem inalterados
 - **Verificação:**
-  - [ ] `python -m unittest discover -s tests -p "test_cli_contract.py" -v`
-  - [ ] `python -m editor capabilities --json`
+  - [x] `python -m unittest discover -s tests -p "test_cli_contract.py" -v`
+  - [x] `python -m editor capabilities --json`
+- **Prova:** `discover -s tests -p "test_cli_contract.py" -v` -> `Ran 16 tests ... OK` (9 vigentes + 7 novos); `unittest tests.test_init tests.test_cli_contract -v` -> `Ran 22 tests ... OK`; `capabilities --json` -> exit 0 com `command: capabilities`; `audio` vs `analyze audio` com mesma fixture gerou artefatos byte a byte com `command: analyze audio`; `validate` vs `plan validate` com mesmo `PLAN_INVALID`; `git diff --check` -> 0.
+- **Decisões:** `register_shortcut_parsers` com helpers `_add_workdir_argument`/`_add_source_id_argument`/`_add_json_argument` espelhando os longos; despacho estendido em `main` para os 6 atalhos com os mesmos handlers e envelopes canônicos; `contracts.py` sem delta pois já aceita nomes canônicos; skill documenta equivalências mantendo os longos como exemplos; A3/A4/C4 seguem com aceite final em T9.
 - **Deps:** T5
-- **Arquivos:** `src/editor/cli.py`, `src/editor/contracts.py`, `skills/vibe-editor/SKILL.md`, `tests/test_cli_contract.py`
+- **Arquivos:** `src/editor/cli.py`, `skills/vibe-editor/SKILL.md`, `tests/test_cli_contract.py`
 - **Size:** `medium, 4/10 (1+1+1+0+1), mapeamento sobre resolução de T5`
 - **Risk:** `medium, quebra de help ou envelope afeta testes vigentes`
 

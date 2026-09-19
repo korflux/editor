@@ -1,7 +1,7 @@
 # Implement: instalação portátil Mac com atalhos compatíveis
 # Alvo: phase-3-instalacao-portatil-mac
 # Status: rascunho
-# Route: medium · modo A · T5
+# Route: medium · modo A · T6
 
 ## Reconhecimento
 
@@ -144,8 +144,38 @@
 - **Arquivos:** `src/editor/cli.py`, `src/editor/workdir.py`, `tests/test_cli_contract.py`.
 - **Decisão:** defaults desbloqueiam atalhos e T6; T6|T7 seguem elegíveis em seams distintas.
 
+## T6: Mapear atalhos planos para envelopes canônicos
+
+### Reconhecimento
+
+- A pergunta da T6 é como expor `audio`, `transcribe`, `frames`, `validate`, `preview` e `full` como equivalentes exatos sem quebrar os longos, os envelopes ou a skill.
+- O fluxo real passa por `src/editor/cli.py` (`build_parser`, despacho em `main` e conversão central), `src/editor/contracts.py` (envelopes sem allowlist de comando) e `tests/test_cli_contract.py` (contrato dos entry points).
+- Reutilizados `resolve_workdir`, `effective_source_id`/`derive_source_id` de T5, os mesmos handlers (`analyze_audio`, `analyze_transcription`, `extract_frames`, `validate_plan`, `render_preview`, `render_full`) e os envelopes canônicos vigentes; nenhum helper de atalho existia, então a adição foi mínima.
+
+### Implementação
+
+- `src/editor/cli.py`: novos helpers `_add_json_argument`, `_add_workdir_argument` e `_add_source_id_argument` com comentários semânticos; nova função `register_shortcut_parsers` registrando os 6 atalhos com os mesmos argumentos dos longos (`--workdir`/`--source-id` opcionais, `--input`, `--window-s`, `--language`, `--model`, `--device`, seleção de frames, `--start-s`/`--end-s`); despacho em `main` estendido com `(canônico) or (atalho)` e os mesmos `success_envelope` canônicos (`analyze audio`, `analyze transcribe`, `extract frames`, `plan validate`, `render preview`, `render full`); `init`, `approve` e `capabilities` intactos.
+- `tests/test_cli_contract.py`: 7 testes novos (help com atalhos e longos, `audio` vs `analyze audio` byte a byte, atalho `audio` sem `--workdir` no cwd, `validate` com mesmo `PLAN_INVALID`, `transcribe` com `ARGUMENT_INVALID` sem mídia, `frames` com mesmo manifesto, `preview`/`full` com mesmo erro dos longos).
+- `skills/vibe-editor/SKILL.md`: notas de equivalência dos 6 atalhos mantendo os longos como exemplos válidos.
+- Comentários semânticos em todas as funções criadas ou alteradas; `contracts.py` sem delta pois já aceita os nomes canônicos.
+
+### Prova
+
+- `python -m editor --help` -> exit 0 com os 6 atalhos e os 7 longos.
+- `python -m editor capabilities --json` -> exit 0 com `command: capabilities`.
+- `python -m unittest discover -s tests -p "test_cli_contract.py" -v` -> `Ran 16 tests ... OK` (9 vigentes + 7 novos).
+- `python -m unittest tests.test_init tests.test_cli_contract -v` -> `Ran 22 tests ... OK`.
+- `git diff --check` -> 0.
+
+## Registro T6
+
+- **Plan:** T6 marcada como concluída, com prova e decisões sob a seção da task.
+- **Spec comprovada nesta fatia:** nenhuma caixa marcada; A3/A4/C4 seguem com aceite final em T9.
+- **Arquivos:** `src/editor/cli.py`, `skills/vibe-editor/SKILL.md`, `tests/test_cli_contract.py`.
+- **Decisão:** atalhos desbloqueiam operação curta sem reinterpretar o plano; T7 segue elegível em seam distinta.
+
 ## Handoff
 
-próxima T* (T6)
+próxima T* (T7)
 
-- Chat: fila restante T6-T9 com T6|T7 elegíveis após este commit; recomendo T6 (menor n, desbloqueia atalhos e T9). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
+- Chat: fila restante T7-T9 com T7 elegível após este commit; recomendo T7 (sonda Metal com CPU garantida, seam distinta de T6). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
