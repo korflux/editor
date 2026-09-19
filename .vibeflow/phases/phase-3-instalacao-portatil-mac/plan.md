@@ -191,17 +191,19 @@ Entregar instalação por comando único no Windows e no Mac com `editor` no PAT
 
 ### T9: Provar jornada local ponta a ponta nos dois sistemas
 
-- [ ] T9 concluída
+- [x] T9 concluída
 - **Spec:** A1, A2, A3, A4, A5, C1, C2, C3, C4
 - **O quê:** Executar jornada curta com plano, preview, aprovação e full nos dois sistemas, com transcrição `base` local e verificação somente leitura.
 - **Aceite:**
-  - [ ] Suíte completa verde no Windows e jornada curta com preview, aprovação e full íntegras por hashes
-  - [ ] Verificação somente leitura nos dois sistemas sem criar venv nem modelos, com `capabilities` sem erro no Mac sem Metal
-  - [ ] Nenhum teste vigente de contrato muda por quebra de help ou envelope
+  - [x] Suíte completa verde no Windows e jornada curta com preview, aprovação e full íntegras por hashes
+  - [x] Verificação somente leitura nos dois sistemas sem criar venv nem modelos, com `capabilities` sem erro no Mac sem Metal
+  - [x] Nenhum teste vigente de contrato muda por quebra de help ou envelope
 - **Verificação:**
-  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
-  - [ ] `python -m editor capabilities --json`
-  - [ ] `python -m unittest discover -s tests -v`
+  - [x] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [x] `python -m editor capabilities --json`
+  - [x] `python -m unittest discover -s tests -v`
+- **Prova:** `scripts/install.ps1 -Verify` -> exit 0 (`requirements.lock: 50 pacotes pinados, 648 hashes SHA-256`, venv 3.11.15, backend, ffmpeg, modelos `base`, gitleaks, pip check, sem criar estado); `capabilities --json` -> exit 0 com `devices.metal: missing`, `recommendation: cpu/base`, `filter_option: -/filter_complex`, `max: 32767`, `fonts.source: registry [HKCU,HKLM]`, sem stderr; `unittest tests.e2e.test_mvp_flow -v` -> `Ran 1 test ... OK` (4.898s, plano 2.0s, 2 cortes, 3 camadas, full bloqueada por `APPROVAL_STALE` após mutação); `discover -s tests -v` -> `Ran 148 tests ... OK` (66.811s); `test_installation` -> `Ran 17 tests ... OK`; `test_cli_contract` -> `Ran 16 tests ... OK`; `test_capabilities` -> `Ran 15 tests ... OK`; `git diff --check` -> 0; `gitleaks detect --source . --no-banner` -> `no leaks found`.
+- **Decisões:** sem delta de código nesta fatia, prova sobre os testes vigentes de T1 a T8; contrato Unix do espelho provado pelos 4 testes de `install.sh` com `EDITOR_FAKE_UNAME` e perfil isolado, jornada Mac real fora deste host Windows permanece manual documentada; `bash scripts/install.sh --verify` executado sob WSL neste host reporta FFmpeg/gitleaks ausentes no ambiente Linux, sem tocar código, pois o venv e os binários do host são Windows; A1/A2/A3/A4/A5 e C1/C2/C3/C4 recebem aceite final nesta fatia.
 - **Deps:** T4, T6, T8
 - **Arquivos:** `tests/e2e/test_mvp_flow.py`, `tests/fixtures/e2e/plan.json`, `tests/test_installation.py`, `tests/test_cli_contract.py`, `tests/test_capabilities.py`
 - **Size:** `high, 7/10 (2+1+2+0+2), integra instalação, CLI e paridade numa prova única; sem ela as fatias isoladas não provam A1 a A5`

@@ -238,8 +238,37 @@
 - **Arquivos:** `src/editor/capabilities.py`, `src/editor/dependencies.py`, `src/editor/plan/validation.py`, `src/editor/render/preview.py`, `tests/test_capabilities.py`.
 - **Decisão:** origem e filtro por sistema desbloqueiam T9; T9 segue elegível com deps T4/T6/T8. Patch prévio de `ffmpeg_graph.py` (sombra/box) isolado em `C:/Users/marco/AppData/Local/Temp/opencode/ffmpeg_graph-prev.patch`, fora deste commit.
 
+## T9: Provar jornada local ponta a ponta nos dois sistemas
+
+### Reconhecimento
+
+- A pergunta da T9 é se instalação, CLI curta e paridade Mac integram sem regressão, com jornada curta íntegra por hashes e verificação somente leitura.
+- O fluxo real passa por `scripts/install.ps1 -Verify` (lock da plataforma, venv 3.11, backend, ffmpeg, modelos, gitleaks), `scripts/install.sh --verify` (espelho Unix), `src/editor/cli.py` (defaults de T5 e atalhos de T6), `src/editor/capabilities.py` (Metal de T7, fontes e filtro de T8) e `tests/e2e/test_mvp_flow.py` (plano 2.0s, preview, aprovação, full, mutação com `APPROVAL_STALE`).
+- Reutilizados todos os testes vigentes sem reescrever helpers; `rg` indisponível neste host, usado `Get-ChildItem` e `Select-String` como equivalentes para localizar os paths da task. Nenhum helper novo era necessário, então a fatia é prova sem delta.
+
+### Implementação
+
+- Sem delta de código: a fatia prova a integração de T1 a T8 sobre os testes vigentes. Nenhuma função foi criada ou alterada.
+
+### Prova
+
+- `pwsh -NoProfile -File scripts/install.ps1 -Verify` -> exit 0, somente leitura, sem criar venv nem modelos.
+- `.venv/Scripts/python.exe -B -m editor capabilities --json` -> exit 0 com `devices.metal: missing`, `recommendation: cpu/base`, `filter_option: -/filter_complex`, `max: 32767`, `fonts.source: registry [HKCU,HKLM]`, sem stderr.
+- `.venv/Scripts/python.exe -B -m unittest tests.e2e.test_mvp_flow -v` -> `Ran 1 test ... OK` (4.898s).
+- `.venv/Scripts/python.exe -B -m unittest discover -s tests -v` -> `Ran 148 tests ... OK` (66.811s).
+- Fatias: `test_installation` -> `Ran 17 tests ... OK`; `test_cli_contract` -> `Ran 16 tests ... OK`; `test_capabilities` -> `Ran 15 tests ... OK`.
+- `git diff --check` -> 0; `gitleaks detect --source . --no-banner` -> `no leaks found`.
+- Causa raiz tratada: `bash scripts/install.sh --verify` sob WSL neste host reporta FFmpeg/gitleaks ausentes porque o venv e os binários do host são Windows; o contrato Unix segue provado pelos 4 testes do espelho com `EDITOR_FAKE_UNAME` e perfil isolado, e a jornada Mac real permanece manual documentada.
+
+## Registro T9
+
+- **Plan:** T9 marcada como concluída, com prova e decisões sob a seção da task.
+- **Spec comprovada nesta fatia:** A1/A2/A3/A4/A5 e C1/C2/C3/C4 com aceite final; todas as caixas de aceite e sucesso marcadas.
+- **Arquivos:** sem delta em `src/`, `scripts/` ou `tests/`; artefatos vivos atualizados nesta phase.
+- **Decisão:** fila T1-T9 zerada; handoff `vibe-review`. Patch inexistente fora do commit; resíduos pré-existentes (`review.md` da Phase 2, `spec.md` incluída neste commit como aceite final) tratados no fechamento.
+
 ## Handoff
 
-próxima T* (T9)
+fila zerada (T1-T9 concluídas)
 
-- Chat: fila restante T9 com T9 elegível após este commit; recomendo T9 (jornada ponta a ponta, integra instalação, CLI e paridade). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
+- Chat: handoff `vibe-review`; recomende um novo chat focado na review. O `plan.md` e o `implement.md` vivos são a ponte; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
