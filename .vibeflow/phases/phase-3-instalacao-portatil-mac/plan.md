@@ -95,19 +95,21 @@ Entregar instalação por comando único no Windows e no Mac com `editor` no PAT
 
 ### T4: Prover espelho Unix de instalação explícita
 
-- [ ] T4 concluída
+- [x] T4 concluída
 - **Spec:** A2, C1, C2
 - **O quê:** Criar `scripts/install.sh` com `--verify`, `--install`, `--add-to-path`, `--venv-path` e `--model-dir`, espelhando provisionamento explícito e leitura do `ps1`.
 - **Aceite:**
-  - [ ] `bash scripts/install.sh --verify` somente leitura sem criar venv nem modelos
-  - [ ] Origens locais de ffmpeg, modelos e gitleaks seguem semântica explícita sem download implícito
-  - [ ] Shim Unix no PATH por usuário com Python do venv por caminho absoluto
+  - [x] `bash scripts/install.sh --verify` somente leitura sem criar venv nem modelos
+  - [x] Origens locais de ffmpeg, modelos e gitleaks seguem semântica explícita sem download implícito
+  - [x] Shim Unix no PATH por usuário com Python do venv por caminho absoluto
 - **Verificação:**
-  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
-  - [ ] `python -m unittest discover -s tests -p "test_installation.py" -v`
-  - [ ] `bash scripts/install.sh --verify`
+  - [x] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [x] `python -m unittest discover -s tests -p "test_installation.py" -v`
+  - [x] `bash scripts/install.sh --verify`
+- **Prova:** `scripts/install.ps1 -Verify` -> exit 0 sem criar estado; `discover -s tests -p "test_installation.py" -v` -> `Ran 17 tests ... OK` (13 vigentes + 4 novos); `bash scripts/install.sh --verify` -> exit 0 somente leitura com lock, venv 3.11, backend, ffmpeg, modelos, gitleaks e pip check; `git diff --check` -> 0.
+- **Decisões:** espelho bash com mesma semântica explícita do ps1 e sem rede para binários/pesos; lock por plataforma via `uname` (`requirements.lock` no Windows/MSYS, `requirements.macos.lock` fora) com `EDITOR_FAKE_UNAME` só para prova isolada; shim `editor` com `exec "<venv>/bin/python" -m editor "$@"` e PATH por usuário reversível via perfil (`EDITOR_TEST_PROFILE` para testes); `.gitattributes` pinando `scripts/install.sh` em LF para o shebang sobreviver ao checkout Windows; CUDA best effort com CPU baseline e `ponytail` arm64 herdado de T3; `install.ps1` só atualiza o `ponytail` para o espelho T4; lock do Mac reutilizado sem delta; A2/C1/C2 seguem com aceite final em T9.
 - **Deps:** T3
-- **Arquivos:** `scripts/install.sh`, `scripts/install.ps1`, `requirements.macos.lock`, `tests/test_installation.py`
+- **Arquivos:** `scripts/install.sh`, `.gitattributes`, `scripts/install.ps1`, `tests/test_installation.py`
 - **Size:** `medium, 6/10 (1+1+2+1+1), novo instalador com prova Mac externa ao host`
 - **Risk:** `medium, novo caminho de instalação com regressão possível`
 

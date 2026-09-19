@@ -664,7 +664,7 @@ function Install-Shim {
         throw 'O shim existente é um reparse point ou objeto inválido.'
     }
     # Conteúdo fixo com caminho absoluto resolvido; %* repassa argumentos sem interpretar entrada externa.
-    # ponytail: publicar também editor.ps1/shim Unix somente quando T4 exigir espelho fora do Windows.
+    # ponytail: espelho Unix em scripts/install.sh (T4); publicar editor.ps1 só com necessidade real.
     $shimContent = '@echo off' + "`r`n" + ('"{0}" -m editor %*' -f $venvPythonFull) + "`r`n"
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($shimPath, $shimContent, $utf8NoBom)

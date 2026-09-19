@@ -1,7 +1,7 @@
 # Implement: instalação portátil Mac com atalhos compatíveis
 # Alvo: phase-3-instalacao-portatil-mac
 # Status: rascunho
-# Route: medium · modo A · T3
+# Route: medium · modo A · T4
 
 ## Reconhecimento
 
@@ -85,8 +85,38 @@
 - **Arquivos:** `scripts/install.ps1`, `requirements.macos.lock`, `tests/test_installation.py`.
 - **Decisão:** seleção central por plataforma desbloqueia T4 (espelho Unix); T5/T7 seguem elegíveis em seams distintas.
 
+## T4: Prover espelho Unix de instalação explícita
+
+### Reconhecimento
+
+- A pergunta da T4 é como espelhar o provisionamento explícito do ps1 no Mac sem download implícito e com shim Unix reversível.
+- O fluxo real passa por `scripts/install.ps1` (`Get-PlatformLockName`, `Test-Lockfile`, `Install-Shim`, `Install-Local*`) e `tests/test_installation.py` (contrato sem instalar no host).
+- Reutilizadas as exigências de pins/hashes, validação 3.11 x64, cópia local de ffmpeg/modelos/gitleaks e publicação sem shell; nenhum helper Unix existia, então a adição espelha o ps1 em sintaxe bash compatível com bash 3.2 do Mac.
+
+### Implementação
+
+- `scripts/install.sh`: novo espelho com `--verify`, `--install`, `--install-ffmpeg`, `--install-models`, `--install-gitleaks`, `--add-to-path`, `--venv-path`, `--model-dir`, `--shim-dir`, `--python-path`, `--ffmpeg-source`, `--model-source`, `--gitleaks-source`, `--security-gates` e `--force`; seleção por `uname` com `EDITOR_FAKE_UNAME` só para prova; `abspath` portátil sem `realpath` com fallback `python`/`cygpath` e normalização de barras para Git Bash; `resolve_repo_path`/`resolve_local_path` rejeitam escape e links; shim `editor` com `exec "<venv>/bin/python" -m editor "$@"` e PATH por usuário via perfil idempotente (`EDITOR_TEST_PROFILE` para testes); CUDA best effort com CPU baseline; sem `curl`/`wget`/gerenciador de pacotes.
+- `.gitattributes`: pinagem `scripts/install.sh text eol=lf` para o shebang Unix sobreviver ao checkout Windows com `core.autocrlf=true`.
+- `scripts/install.ps1`: só atualiza o `ponytail` do shim para apontar o espelho Unix da T4, sem mudar comportamento.
+- `tests/test_installation.py`: constante `SHELL_SCRIPT`, helpers `find_usable_bash`/`run_shell_installer` e 4 testes (contrato Unix, `--verify` somente leitura, rejeição de `--verify` com install, shim reversível com `EDITOR_FAKE_UNAME=Darwin` e perfil isolado).
+- Comentários semânticos em todas as funções criadas ou alteradas; `ALLOWED_MODELS` reutilizado nos dois loops de modelos.
+
+### Prova
+
+- `pwsh -NoProfile -File scripts/install.ps1 -Verify` -> exit 0, sem criar estado.
+- `bash scripts/install.sh --verify` -> exit 0, somente leitura com lock, venv 3.11, backend, ffmpeg, modelos, gitleaks e pip check.
+- `python -m unittest discover -s tests -p "test_installation.py" -v` -> `Ran 17 tests ... OK` (13 vigentes + 4 novos).
+- `git diff --check` -> 0.
+
+## Registro T4
+
+- **Plan:** T4 marcada como concluída, com prova e decisões sob a seção da task.
+- **Spec comprovada nesta fatia:** nenhuma caixa marcada; A2/C1/C2 seguem com aceite final em T9.
+- **Arquivos:** `scripts/install.sh`, `.gitattributes`, `scripts/install.ps1`, `tests/test_installation.py`.
+- **Decisão:** espelho Unix desbloqueia a jornada Mac e T9; T5/T7 seguem elegíveis em seams distintas.
+
 ## Handoff
 
-próxima T* (T4)
+próxima T* (T5)
 
-- Chat: fila restante T4-T9 com T4|T5|T7 elegíveis após este commit; recomendo T4 (menor n, desbloqueia espelho Unix e T9). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
+- Chat: fila restante T5-T9 com T5|T7 elegíveis após este commit; recomendo T5 (menor n, desbloqueia atalhos e T9). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
