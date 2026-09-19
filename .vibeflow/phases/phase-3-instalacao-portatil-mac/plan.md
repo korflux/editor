@@ -1,0 +1,211 @@
+# Plan: instalação portátil Mac com atalhos compatíveis
+# Alvo: phase-3-instalacao-portatil-mac
+# Status: aprovado
+# Spec: spec.md (mesma pasta)
+
+## Overview
+
+Entregar instalação por comando único no Windows e no Mac com `editor` no PATH, comandos curtos compatíveis com envelopes canônicos e paridade de contrato no Mac com CPU garantida, conforme `spec.md` desta fase.
+
+## Ordem
+
+### Fase 1: Instalação portátil e PATH
+
+- T1 valida esqueleto e leitura, T2 registra shim no Windows, T3 seleciona lock por plataforma, T4 provê espelho Unix (cada task com verificação e commit próprios)
+
+### Fase 2: Contrato CLI e paridade Mac
+
+- T5 aplica defaults opcionais, T6 mapeia atalhos canônicos, T7 reporta Metal com CPU garantida, T8 aplica fontes e filtro por sistema, T9 prova jornada ponta a ponta (cada task com verificação e commit próprios)
+
+## Riscos
+
+| Risco | Impacto | Mitigação |
+|---|---|---|
+| PATH do usuário diverge entre hosts | médio | shim por usuário reversível sem admin, `Verify` somente leitura, teste de shim e orientação de novo terminal |
+| Lock macOS diverge do Windows | médio | hashes obrigatórios nos dois locks, falha fechada antes de criar venv, teste de lock por plataforma |
+| Prova real no Mac indisponível neste host Windows | médio | mocks de plataforma nos testes, jornada Mac documentada como manual, sem transformar ausência em passe |
+| Python local 3.13 difere do exigido 3.11 | médio | `-Install` mantém exigência 3.11 x64 e falha fechada, `-Verify` somente leitura, CI e jornada usam venv 3.11 |
+| Mudança na CLI quebra agentes e skill | alto | envelopes canônicos byte a byte, longos permanecem válidos, testes de contrato travam help e envelope |
+
+## Paralelização
+
+- Paralelo ok: T2 e T5 após T1 verde partem de seams distintos (instalador Windows e parser CLI)
+- Sequencial: T2 → T3 → T4 na mesma seam de instalação; T5 → T6 no mesmo parser; T7 → T8 no mesmo reporte de capabilities
+- Contrato primeiro, depois paralelo: T1 estabelece esqueleto verde antes de qualquer delta; T9 por último integra instalação, CLI e paridade
+
+## Tasks
+
+### T1: Validar esqueleto de CLI com verificação somente leitura
+
+- [x] T1 concluída
+- **Spec:** C2, C4
+- **O quê:** Travar o baseline verde com ponto de entrada real e verificação somente leitura, sem alterar comportamento.
+- **Aceite:**
+  - [x] `python -m editor --help` e `editor --help` executam de forma não interativa
+  - [x] `scripts/install.ps1 -Verify` não cria venv nem modelos
+  - [x] Contrato JSON de sucesso e erro permanece sem stack trace
+- **Verificação:**
+  - [x] `python -m editor --help`
+  - [x] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [x] `python -m unittest discover -s tests -p "test_cli_contract.py" -v`
+- **Prova:** `python -m editor --help` -> exit 0 com `usage: editor`; `editor --help` -> exit 0; `scripts/install.ps1 -Verify` -> exit 0 somente leitura; `discover -s tests -p "test_cli_contract.py" -v` -> `Ran 4 tests ... OK`; `git diff --check` -> 0.
+- **Decisões:** sem delta de código nesta fatia; baseline travado antes de T2/T5. C2/C4 seguem com aceite final em T9.
+- **Deps:** nenhuma
+- **Arquivos:** `src/editor/cli.py`, `src/editor/contracts.py`, `scripts/install.ps1`, `tests/test_cli_contract.py`
+- **Size:** `low, 2/10 (1+0+1+0+0), leitura em duas seams sem delta`
+- **Risk:** `low`
+
+### T2: Registrar shim no PATH do usuário no Windows
+
+- [ ] T2 concluída
+- **Spec:** A1, C2, C4
+- **O quê:** Adicionar `-AddToPath` em `scripts/install.ps1` com shim por usuário reversível que chama o Python do venv por caminho absoluto com `-m editor`.
+- **Aceite:**
+  - [ ] Clone novo no Windows deixa `editor` utilizável em novo terminal após `-Install -AddToPath`
+  - [ ] Registro reversível por usuário sem admin e sem mudar semântica de `-Verify` e `-Install`
+  - [ ] Shim sem shell intermediário e sem montar comando a partir de entrada externa
+- **Verificação:**
+  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [ ] `python -m unittest discover -s tests -p "test_installation.py" -v`
+- **Deps:** T1
+- **Arquivos:** `scripts/install.ps1`, `tests/test_installation.py`
+- **Size:** `medium, 5/10 (1+1+1+1+1), shim Windows com PATH reversível sobre contrato vigente`
+- **Risk:** `low`
+
+### T3: Selecionar lock por plataforma com falha fechada
+
+- [ ] T3 concluída
+- **Spec:** A1, A2, C2
+- **O quê:** Criar `requirements.macos.lock` pinado com hashes e selecionar lock por plataforma antes de criar o venv, com falha fechada em lock ausente ou sem hashes.
+- **Aceite:**
+  - [ ] Lock ausente ou sem hashes falha antes de criar venv nos dois sistemas
+  - [ ] Windows usa `requirements.lock`, Mac usa `requirements.macos.lock` com mesma exigência
+  - [ ] Instalação do venv usa `--require-hashes` sem rede implícita
+- **Verificação:**
+  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [ ] `python -m unittest discover -s tests -p "test_installation.py" -v`
+- **Deps:** T2
+- **Arquivos:** `scripts/install.ps1`, `requirements.lock`, `requirements.macos.lock`, `tests/test_installation.py`
+- **Size:** `medium, 4/10 (1+1+1+0+1), seleção de lock sobre instalador vigente`
+- **Risk:** `medium, contrato compartilhado de instalação nas duas plataformas`
+
+### T4: Prover espelho Unix de instalação explícita
+
+- [ ] T4 concluída
+- **Spec:** A2, C1, C2
+- **O quê:** Criar `scripts/install.sh` com `--verify`, `--install`, `--add-to-path`, `--venv-path` e `--model-dir`, espelhando provisionamento explícito e leitura do `ps1`.
+- **Aceite:**
+  - [ ] `bash scripts/install.sh --verify` somente leitura sem criar venv nem modelos
+  - [ ] Origens locais de ffmpeg, modelos e gitleaks seguem semântica explícita sem download implícito
+  - [ ] Shim Unix no PATH por usuário com Python do venv por caminho absoluto
+- **Verificação:**
+  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [ ] `python -m unittest discover -s tests -p "test_installation.py" -v`
+  - [ ] `bash scripts/install.sh --verify`
+- **Deps:** T3
+- **Arquivos:** `scripts/install.sh`, `scripts/install.ps1`, `requirements.macos.lock`, `tests/test_installation.py`
+- **Size:** `medium, 6/10 (1+1+2+1+1), novo instalador com prova Mac externa ao host`
+- **Risk:** `medium, novo caminho de instalação com regressão possível`
+
+### T5: Aplicar defaults opcionais de contexto sem criar estado
+
+- [ ] T5 concluída
+- **Spec:** A3, C4
+- **O quê:** Tornar `--workdir` opcional com default para diretório atual absoluto e `--source-id` opcional derivado do basename do `--input`, mantendo validação vigente e sem criar estado em caminho inválido.
+- **Aceite:**
+  - [ ] Dentro do trabalho, comandos longos executam sem `--workdir` com mesma validação e `WORKDIR_INVALID` sem criar estado
+  - [ ] `--source-id` omitido deriva para `^[a-z0-9][a-z0-9_-]{0,63}$`, derivação impossível retorna `ARGUMENT_INVALID`
+  - [ ] Ajuda, envelopes, códigos e artefatos dos longos permanecem byte a byte
+- **Verificação:**
+  - [ ] `python -m editor capabilities --json`
+  - [ ] `python -m unittest discover -s tests -p "test_cli_contract.py" -v`
+- **Deps:** T1
+- **Arquivos:** `src/editor/cli.py`, `src/editor/workdir.py`, `src/editor/contracts.py`, `tests/test_cli_contract.py`
+- **Size:** `medium, 4/10 (1+1+1+0+1), defaults sobre parser e validadores vigentes`
+- **Risk:** `medium, contrato CLI compartilhado com agentes`
+
+### T6: Mapear atalhos planos para envelopes canônicos
+
+- [ ] T6 concluída
+- **Spec:** A3, A4, C4
+- **O quê:** Adicionar `audio`, `transcribe`, `frames`, `validate`, `preview` e `full` como equivalentes exatos aos canônicos, com envelopes usando nomes canônicos e longos válidos em help e execução.
+- **Aceite:**
+  - [ ] Atalhos executam sem `--workdir` e geram mesmos artefatos dos longos
+  - [ ] Envelopes usam `analyze audio`, `plan validate`, `render preview` e demais nomes canônicos
+  - [ ] `init`, `approve` e `capabilities` permanecem inalterados
+- **Verificação:**
+  - [ ] `python -m unittest discover -s tests -p "test_cli_contract.py" -v`
+  - [ ] `python -m editor capabilities --json`
+- **Deps:** T5
+- **Arquivos:** `src/editor/cli.py`, `src/editor/contracts.py`, `skills/vibe-editor/SKILL.md`, `tests/test_cli_contract.py`
+- **Size:** `medium, 4/10 (1+1+1+0+1), mapeamento sobre resolução de T5`
+- **Risk:** `medium, quebra de help ou envelope afeta testes vigentes`
+
+### T7: Reportar Metal best effort com transcrição CPU garantida
+
+- [ ] T7 concluída
+- **Spec:** A5, C3
+- **O quê:** Sondar Metal sem tratar ausência como erro, expor `devices.metal` em `capabilities` e garantir transcrição CPU `int8` com `auto` sem falha por ausência de Metal.
+- **Aceite:**
+  - [ ] `capabilities` informa `devices.metal` sem erro e recomenda CPU quando Metal ausente
+  - [ ] Transcrição real com modelo `base` local publica artefato em CPU `int8`
+  - [ ] `--device` permanece `auto|cpu|cuda` nesta fatia sem novo flag obrigatório
+- **Verificação:**
+  - [ ] `python -m editor capabilities --json`
+  - [ ] `python -m unittest discover -s tests -p "test_capabilities.py" -v`
+- **Deps:** T1
+- **Arquivos:** `src/editor/dependencies.py`, `src/editor/capabilities.py`, `src/editor/whisper_backend.py`, `tests/test_capabilities.py`
+- **Size:** `medium, 5/10 (2+1+1+1+0), três módulos com sonda best effort`
+- **Risk:** `low`
+
+### T8: Aplicar fontes e filtro por sistema mantendo renderer
+
+- [ ] T8 concluída
+- **Spec:** A2, C1, C3
+- **O quê:** Manter renderer `fontfile` com origem por sistema e transporte de filtro por arquivo com flag e teto reportados em `capabilities`, sem fallback silencioso de família.
+- **Aceite:**
+  - [ ] Windows mantém HKCU e HKLM, demais sistemas usam `fc-match` e rejeitam fallback
+  - [ ] Windows mantém `-/filter_complex` com teto 32767, demais usam `-filter_complex` com limite do sistema reportado
+  - [ ] Resolução sem `.exe` no Mac prioriza `.tools/ffmpeg` e exige `libx264` e `aac`
+- **Verificação:**
+  - [ ] `python -m editor capabilities --json`
+  - [ ] `python -m unittest discover -s tests -p "test_capabilities.py" -v`
+- **Deps:** T7
+- **Arquivos:** `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/capabilities.py`, `src/editor/dependencies.py`, `tests/test_capabilities.py`
+- **Size:** `medium, 6/10 (2+1+1+1+1), quatro módulos com variação por sistema`
+- **Risk:** `medium, render e fontes compartilhados com preview e full`
+
+### T9: Provar jornada local ponta a ponta nos dois sistemas
+
+- [ ] T9 concluída
+- **Spec:** A1, A2, A3, A4, A5, C1, C2, C3, C4
+- **O quê:** Executar jornada curta com plano, preview, aprovação e full nos dois sistemas, com transcrição `base` local e verificação somente leitura.
+- **Aceite:**
+  - [ ] Suíte completa verde no Windows e jornada curta com preview, aprovação e full íntegras por hashes
+  - [ ] Verificação somente leitura nos dois sistemas sem criar venv nem modelos, com `capabilities` sem erro no Mac sem Metal
+  - [ ] Nenhum teste vigente de contrato muda por quebra de help ou envelope
+- **Verificação:**
+  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [ ] `python -m editor capabilities --json`
+  - [ ] `python -m unittest discover -s tests -v`
+- **Deps:** T4, T6, T8
+- **Arquivos:** `tests/e2e/test_mvp_flow.py`, `tests/fixtures/e2e/plan.json`, `tests/test_installation.py`, `tests/test_cli_contract.py`, `tests/test_capabilities.py`
+- **Size:** `high, 7/10 (2+1+2+0+2), integra instalação, CLI e paridade numa prova única; sem ela as fatias isoladas não provam A1 a A5`
+- **Risk:** `medium, regressão relevante de jornada`
+
+## Conferência
+
+- [x] Spec aprovada como fonte; mesma pasta
+- [x] Fatias verticais; score de Size ≤ 8; Risk separado
+- [x] Toda T* tem aceite + verificação + Spec: A*/C* quando couber
+- [x] Ferramentas essenciais (gitleaks, chrome-devtools) validadas ou com task de setup
+- [x] T1 estabelece ponto de entrada real (smoke test / walking skeleton)
+- [x] UI greenfield/sem DS → T* de kit antes das telas (ou N/A)
+- [x] Cada T* possui unidade de execução, verificação e commit própria
+- [ ] Aprovação humana (leu o arquivo e confirmou)
+
+## Handoff
+
+vibe-implement
+
+- Chat: recomende novo chat para `vibe-implement`; continuidade no mesmo chat só por escolha consciente. O `plan.md` vivo é a ponte.
