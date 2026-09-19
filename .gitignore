@@ -11,3 +11,8 @@
 # Ambiente Python e pesos de modelos são provisionados localmente e não fazem parte da fonte.
 .venv/
 models/
+
+# Bytecode gerado localmente não faz parte da fonte versionada.
+__pycache__/
+*.pyc
+*.pyo

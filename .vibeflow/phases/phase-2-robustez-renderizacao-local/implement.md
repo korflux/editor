@@ -279,6 +279,13 @@
 - Prova: `.venv\Scripts\python.exe -B -m unittest tests.test_installation -v` -> `Ran 7 tests ... OK`.
 - Arquivos: `scripts/install.ps1`, `tests/test_installation.py`.
 
+### R2: Bytecode versionado e higiene do índice
+
+- Causa raiz: `.gitignore` não cobria `__pycache__/` nem `*.pyc`, então 50 binários (311 e 313) foram versionados e poluíam todo diff.
+- Correção mínima: `git rm --cached` dos 5 diretórios `__pycache__` e novas entradas `__pycache__/`, `*.pyc`, `*.pyo` no `.gitignore`; arquivos locais mantidos, apenas desindexados.
+- Prova: `git ls-files | Select-String pyc` -> `0`, `git check-ignore` confirma o padrão e `python -m editor --help` continua verde.
+- Arquivos: `.gitignore`, remoções do índice dos `__pycache__`.
+
 ## Handoff
 
 Fila zerada. Handoff para `vibe-review`.
