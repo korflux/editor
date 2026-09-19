@@ -22,7 +22,7 @@ from .integrity.approval import approve_workdir
 from .plan.validation import validate_plan
 from .render.full import render_full
 from .render.preview import render_preview
-from .workdir import init_workdir
+from .workdir import derive_source_id, init_workdir, resolve_workdir
 
 
 class HelpRequested(Exception):
@@ -93,7 +93,7 @@ def build_parser() -> CliArgumentParser:
         help="prepara a estrutura técnica do trabalho sem criar estado editorial",
         description="prepara o diretório de trabalho sem escolher fontes ou criar artefatos",
     )
-    init_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    init_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     init_parser.add_argument(
         "--json",
         action="store_true",
@@ -123,8 +123,8 @@ def build_parser() -> CliArgumentParser:
         help="gera análise de loudness, níveis por janela e silêncio",
         description="gera análise local de áudio com guardrails de mídia",
     )
-    audio_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
-    audio_parser.add_argument("--source-id", required=True, help="identificador seguro da fonte")
+    audio_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
+    audio_parser.add_argument("--source-id", required=False, default=None, help="identificador seguro da fonte (padrão: basename do --input)")
     audio_parser.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
     audio_parser.add_argument(
         "--window-s",
@@ -144,8 +144,8 @@ def build_parser() -> CliArgumentParser:
         help="gera transcrição local com timestamps por palavra",
         description="gera transcrição local sem enviar a fonte para a rede",
     )
-    transcribe_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
-    transcribe_parser.add_argument("--source-id", required=True, help="identificador seguro da fonte")
+    transcribe_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
+    transcribe_parser.add_argument("--source-id", required=False, default=None, help="identificador seguro da fonte (padrão: basename do --input)")
     transcribe_parser.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
     transcribe_parser.add_argument(
         "--language",
@@ -191,8 +191,8 @@ def build_parser() -> CliArgumentParser:
         help="extrai PNGs por timestamps explícitos ou intervalo regular",
         description="extrai frames de vídeo e publica um manifesto temporal",
     )
-    frames_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
-    frames_parser.add_argument("--source-id", required=True, help="identificador seguro da fonte")
+    frames_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
+    frames_parser.add_argument("--source-id", required=False, default=None, help="identificador seguro da fonte (padrão: basename do --input)")
     frames_parser.add_argument("--input", required=True, help="arquivo local MP4 com vídeo H.264")
     selection = frames_parser.add_mutually_exclusive_group(required=True)
     selection.add_argument(
@@ -237,7 +237,7 @@ def build_parser() -> CliArgumentParser:
         help="valida exclusivamente plan.json no diretório de trabalho",
         description="valida exclusivamente plan.json no diretório de trabalho",
     )
-    validate_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    validate_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     validate_parser.add_argument(
         "--json",
         action="store_true",
@@ -250,7 +250,7 @@ def build_parser() -> CliArgumentParser:
         help="registra aprovação do plano e da preview por hash",
         description="valida o plano e publica approval.json com hashes locais",
     )
-    approve_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    approve_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     approve_parser.add_argument(
         "--json",
         action="store_true",
@@ -280,7 +280,7 @@ def build_parser() -> CliArgumentParser:
         help="gera ou substitui a única preview.mp4 do trabalho",
         description="gera ou substitui preview.mp4 a partir de um plano validado",
     )
-    preview_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    preview_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     preview_parser.add_argument(
         "--json",
         action="store_true",
@@ -293,7 +293,7 @@ def build_parser() -> CliArgumentParser:
         help="gera ou substitui a full.mp4 após validar a aprovação vigente",
         description="valida aprovação, fontes e plano antes de gerar full.mp4",
     )
-    full_parser.add_argument("--workdir", required=True, help="diretório absoluto do trabalho")
+    full_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     full_parser.add_argument(
         "--json",
         action="store_true",
@@ -319,6 +319,14 @@ def configure_output_encoding() -> None:
         except (AttributeError, ValueError):
             # Test doubles e streams já fechados podem não expor reconfigure.
             continue
+
+
+def effective_source_id(explicit: str | None, input_path: str) -> str:
+    """Devolve o source-id informado ou o derivado do input, mantendo o erro público estável."""
+
+    if explicit is not None:
+        return explicit
+    return derive_source_id(input_path)
 
 
 def handle_error(error: CliError, json_output: bool) -> int:
@@ -354,14 +362,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "init":
-            result = init_workdir(args.workdir)
+            result = init_workdir(resolve_workdir(args.workdir))
             write_json(success_envelope("init", result))
             return 0
 
         if args.command == "analyze" and args.analyze_command == "audio":
             result = analyze_audio(
-                workdir=args.workdir,
-                source_id=args.source_id,
+                workdir=resolve_workdir(args.workdir),
+                source_id=effective_source_id(args.source_id, args.input),
                 input_path=args.input,
                 window_seconds=args.window_s,
             )
@@ -370,8 +378,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "analyze" and args.analyze_command == "transcribe":
             result = analyze_transcription(
-                workdir=args.workdir,
-                source_id=args.source_id,
+                workdir=resolve_workdir(args.workdir),
+                source_id=effective_source_id(args.source_id, args.input),
                 input_path=args.input,
                 language=args.language,
                 model=args.model,
@@ -382,8 +390,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "extract" and args.extract_command == "frames":
             result = extract_frames(
-                workdir=args.workdir,
-                source_id=args.source_id,
+                workdir=resolve_workdir(args.workdir),
+                source_id=effective_source_id(args.source_id, args.input),
                 input_path=args.input,
                 timestamps=args.timestamps,
                 interval_seconds=args.interval_s,
@@ -394,22 +402,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "plan" and args.plan_command == "validate":
-            result = validate_plan(args.workdir)
+            result = validate_plan(resolve_workdir(args.workdir))
             write_json(success_envelope("plan validate", result))
             return 0
 
         if args.command == "approve":
-            result = approve_workdir(args.workdir)
+            result = approve_workdir(resolve_workdir(args.workdir))
             write_json(success_envelope("approve", result))
             return 0
 
         if args.command == "render" and args.render_command == "preview":
-            result = render_preview(args.workdir)
+            result = render_preview(resolve_workdir(args.workdir))
             write_json(success_envelope("render preview", result))
             return 0
 
         if args.command == "render" and args.render_command == "full":
-            result = render_full(args.workdir)
+            result = render_full(resolve_workdir(args.workdir))
             write_json(success_envelope("render full", result))
             return 0
 

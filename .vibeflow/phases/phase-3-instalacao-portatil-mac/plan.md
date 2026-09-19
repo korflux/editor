@@ -115,18 +115,20 @@ Entregar instalação por comando único no Windows e no Mac com `editor` no PAT
 
 ### T5: Aplicar defaults opcionais de contexto sem criar estado
 
-- [ ] T5 concluída
+- [x] T5 concluída
 - **Spec:** A3, C4
 - **O quê:** Tornar `--workdir` opcional com default para diretório atual absoluto e `--source-id` opcional derivado do basename do `--input`, mantendo validação vigente e sem criar estado em caminho inválido.
 - **Aceite:**
-  - [ ] Dentro do trabalho, comandos longos executam sem `--workdir` com mesma validação e `WORKDIR_INVALID` sem criar estado
-  - [ ] `--source-id` omitido deriva para `^[a-z0-9][a-z0-9_-]{0,63}$`, derivação impossível retorna `ARGUMENT_INVALID`
-  - [ ] Ajuda, envelopes, códigos e artefatos dos longos permanecem byte a byte
+  - [x] Dentro do trabalho, comandos longos executam sem `--workdir` com mesma validação e `WORKDIR_INVALID` sem criar estado
+  - [x] `--source-id` omitido deriva para `^[a-z0-9][a-z0-9_-]{0,63}$`, derivação impossível retorna `ARGUMENT_INVALID`
+  - [x] Ajuda, envelopes, códigos e artefatos dos longos permanecem byte a byte
 - **Verificação:**
-  - [ ] `python -m editor capabilities --json`
-  - [ ] `python -m unittest discover -s tests -p "test_cli_contract.py" -v`
+  - [x] `python -m editor capabilities --json`
+  - [x] `python -m unittest discover -s tests -p "test_cli_contract.py" -v`
+- **Prova:** `capabilities --json` -> exit 0; `discover -s tests -p "test_cli_contract.py" -v` -> `Ran 9 tests ... OK` (4 vigentes + 5 novos); `unittest tests.test_init tests.test_cli_contract -v` -> `Ran 15 tests ... OK`; `git diff --check` -> 0.
+- **Decisões:** `resolve_workdir` devolve cwd quando omitido sem validar nem criar; `derive_source_id` normaliza basename para minúsculas com `-` para inválidos, `lstrip -_` e teto 64, `ARGUMENT_INVALID` se vazio; `effective_source_id` centraliza a seleção na borda; parser com `required=False default=None` e help documentando defaults; `contracts.py` sem delta pois `WORKDIR_INVALID`/`ARGUMENT_INVALID` já cobrem; `ponytail` registra colisão por basename, exigir `--source-id` explícito com nomes iguais; A3/C4 seguem com aceite final em T9.
 - **Deps:** T1
-- **Arquivos:** `src/editor/cli.py`, `src/editor/workdir.py`, `src/editor/contracts.py`, `tests/test_cli_contract.py`
+- **Arquivos:** `src/editor/cli.py`, `src/editor/workdir.py`, `tests/test_cli_contract.py`
 - **Size:** `medium, 4/10 (1+1+1+0+1), defaults sobre parser e validadores vigentes`
 - **Risk:** `medium, contrato CLI compartilhado com agentes`
 

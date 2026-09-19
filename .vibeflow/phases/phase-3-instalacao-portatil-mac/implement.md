@@ -1,7 +1,7 @@
 # Implement: instalação portátil Mac com atalhos compatíveis
 # Alvo: phase-3-instalacao-portatil-mac
 # Status: rascunho
-# Route: medium · modo A · T4
+# Route: medium · modo A · T5
 
 ## Reconhecimento
 
@@ -115,8 +115,37 @@
 - **Arquivos:** `scripts/install.sh`, `.gitattributes`, `scripts/install.ps1`, `tests/test_installation.py`.
 - **Decisão:** espelho Unix desbloqueia a jornada Mac e T9; T5/T7 seguem elegíveis em seams distintas.
 
+## T5: Aplicar defaults opcionais de contexto sem criar estado
+
+### Reconhecimento
+
+- A pergunta da T5 é como omitir `--workdir` e `--source-id` sem enfraquecer a validação vigente nem criar estado parcial.
+- O fluxo real passa por `src/editor/cli.py` (parser, despacho e conversão central), `src/editor/workdir.py` (`validate_workdir`, `validate_source_id`, `prepare_*`) e `tests/test_cli_contract.py` (contrato dos entry points).
+- Reutilizadas as validações `validate_workdir`/`validate_source_id`, os envelopes de `contracts.py` sem delta e a publicação atômica vigente; nenhum helper resolvia default ou derivava id, então a adição foi mínima.
+
+### Implementação
+
+- `src/editor/workdir.py`: novas funções `resolve_workdir` (devolve o informado ou o cwd, sem validar nem criar) e `derive_source_id` (basename em minúsculas com `-` para inválidos, `lstrip -_`, teto 64, `ARGUMENT_INVALID` se vazio); `ponytail` registra colisão por basename.
+- `src/editor/cli.py`: parser com `--workdir` e `--source-id` opcionais (`required=False default=None`) e help documentando defaults; nova função `effective_source_id` (explícito ou derivado, erro público estável); despacho resolve workdir e source-id antes de chamar `init`, `analyze`, `extract`, `plan validate`, `approve`, `render preview` e `render full`.
+- `tests/test_cli_contract.py`: helpers `workspace_tempdir`/`run_module_in_workdir` e 5 testes (`init` sem `--workdir` no cwd, mesma validação de `plan validate` sem estado, normalização do basename, derivação impossível com `ARGUMENT_INVALID` sem mídia, `analyze audio` com defaults gerando o mesmo artefato do longo explícito).
+- Comentários semânticos em todas as funções criadas ou alteradas; `contracts.py` sem delta pois os códigos vigentes já cobrem.
+
+### Prova
+
+- `python -m editor capabilities --json` -> exit 0.
+- `python -m unittest discover -s tests -p "test_cli_contract.py" -v` -> `Ran 9 tests ... OK` (4 vigentes + 5 novos).
+- `python -m unittest tests.test_init tests.test_cli_contract -v` -> `Ran 15 tests ... OK`.
+- `git diff --check` -> 0.
+
+## Registro T5
+
+- **Plan:** T5 marcada como concluída, com prova e decisões sob a seção da task.
+- **Spec comprovada nesta fatia:** nenhuma caixa marcada; A3/C4 seguem com aceite final em T9.
+- **Arquivos:** `src/editor/cli.py`, `src/editor/workdir.py`, `tests/test_cli_contract.py`.
+- **Decisão:** defaults desbloqueiam atalhos e T6; T6|T7 seguem elegíveis em seams distintas.
+
 ## Handoff
 
-próxima T* (T5)
+próxima T* (T6)
 
-- Chat: fila restante T5-T9 com T5|T7 elegíveis após este commit; recomendo T5 (menor n, desbloqueia atalhos e T9). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.
+- Chat: fila restante T6-T9 com T6|T7 elegíveis após este commit; recomendo T6 (menor n, desbloqueia atalhos e T9). Recomende um novo chat focado na próxima T*; continuidade no mesmo chat só por escolha consciente. O commit da task já foi criado; sem push nesta porta.

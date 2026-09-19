@@ -335,6 +335,40 @@ def init_workdir(workdir: str | Path) -> dict[str, object]:
     }
 
 
+def resolve_workdir(raw_path: str | Path | None) -> str | Path:
+    """Devolve o trabalho informado ou o diretório atual, sem validar nem criar estado."""
+
+    if raw_path is None:
+        return Path(os.getcwd())
+    return raw_path
+
+
+def derive_source_id(input_path: str | Path) -> str:
+    """Deriva um source-id válido do basename do input, sem tocar no disco."""
+
+    try:
+        stem = Path(input_path).stem.strip().lower()
+    except (OSError, TypeError, ValueError) as error:
+        raise _error(
+            "ARGUMENT_INVALID",
+            "Não foi possível derivar um source-id válido a partir do input.",
+            EXIT_CODES["ARGUMENT"],
+        ) from error
+    # Normaliza para o alfabeto do contrato, sem nova dependência.
+    # ponytail: derivação por basename pode colidir, exigir --source-id explícito quando houver múltiplas fontes com mesmo nome.
+    normalized = "".join(
+        char if ("a" <= char <= "z" or "0" <= char <= "9" or char in ("-", "_")) else "-"
+        for char in stem
+    ).lstrip("-_")[:64]
+    if not normalized:
+        raise _error(
+            "ARGUMENT_INVALID",
+            "Não foi possível derivar um source-id válido a partir do input.",
+            EXIT_CODES["ARGUMENT"],
+        )
+    return validate_source_id(normalized)
+
+
 def validate_source_id(source_id: str) -> str:
     """Aceita somente IDs que podem virar nome de arquivo sem traversal."""
 
