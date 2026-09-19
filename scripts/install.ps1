@@ -22,6 +22,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Saída UTF-8 consistente: o host Windows pode usar página de código legada no
+# pipe, o que quebrava a decodificação estrita do harness de teste.
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 $script:PythonExecutable = $null
 $script:PythonPrefix = @()
 $script:RuntimePython = $null

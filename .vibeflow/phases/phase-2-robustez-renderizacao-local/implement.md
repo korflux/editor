@@ -270,6 +270,15 @@
 - **Arquivos:** `src/editor/capabilities.py`, `tests/test_capabilities.py`, `tests/e2e/test_phase_2_flow.py`, `.vibeflow/REGRAS.md` e os artefatos vivos da Phase 2.
 - **Decisão:** a jornada detalhada prova escala estrutural com fontes pequenas repetidas; saídas acima de 4 GiB continuam cobertas pelo teste unitário de política, sem versionar mídia grande.
 
+## Correções pós-review (R1 a R4)
+
+### R1: Encoding do harness do instalador
+
+- Causa raiz: `install.ps1` emitia acentos na página de código legada do Windows e `tests/test_installation.py` decodificava com `encoding="utf-8"` estrito, o que quebrava a thread de leitura com `UnicodeDecodeError` e deixava `stdout`/`stderr` como `None`.
+- Correção mínima: `$OutputEncoding` e `[Console]::OutputEncoding` UTF-8 no instalador, mais `errors="replace"` nos 5 `subprocess.run` do teste, seguindo o padrão já usado em `src/editor/process.py`.
+- Prova: `.venv\Scripts\python.exe -B -m unittest tests.test_installation -v` -> `Ran 7 tests ... OK`.
+- Arquivos: `scripts/install.ps1`, `tests/test_installation.py`.
+
 ## Handoff
 
 Fila zerada. Handoff para `vibe-review`.

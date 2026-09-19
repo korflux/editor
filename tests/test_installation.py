@@ -28,12 +28,16 @@ class InstallationContractTests(unittest.TestCase):
 
     def run_installer(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         """Executa o script sem shell intermediário para testar seu contrato de processo."""
+        # Decodificação tolerante: o host Windows pode emitir bytes fora do UTF-8
+        # (página de código do console), o que quebrava a thread de leitura com
+        # UnicodeDecodeError; errors="replace" preserva as asserções ASCII.
         return subprocess.run(
             [self.pwsh, "-NoProfile", "-File", str(SCRIPT), *arguments],
             cwd=ROOT,
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
             check=False,
         )
 
@@ -42,6 +46,8 @@ class InstallationContractTests(unittest.TestCase):
         """Cria um diretório temporário pelo PowerShell para respeitar a ACL do host gerenciado."""
         temporary_path = ROOT / f"tmp-installation-{uuid4().hex}"
         quoted_path = "'" + str(temporary_path).replace("'", "''") + "'"
+        # Mesma tolerância do run_installer: comandos auxiliares também herdam a
+        # página de código do host e não podem falhar a decodificação.
         create = subprocess.run(
             [
                 self.pwsh,
@@ -53,6 +59,7 @@ class InstallationContractTests(unittest.TestCase):
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
             check=False,
         )
         self.assertEqual(create.returncode, 0, create.stdout + create.stderr)
@@ -70,6 +77,7 @@ class InstallationContractTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                errors="replace",
                 check=False,
             )
 
@@ -156,6 +164,7 @@ class InstallationContractTests(unittest.TestCase):
             link = temporary_path / "link"
             quoted_link = "'" + str(link).replace("'", "''") + "'"
             quoted_target = "'" + str(target).replace("'", "''") + "'"
+            # Decodificação tolerante pelos mesmos motivos do run_installer.
             create = subprocess.run(
                 [
                     self.pwsh,
@@ -167,6 +176,7 @@ class InstallationContractTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                errors="replace",
                 check=False,
             )
             self.assertEqual(create.returncode, 0, create.stdout + create.stderr)
@@ -183,6 +193,7 @@ class InstallationContractTests(unittest.TestCase):
                 self.assertIn("componente linkado", result.stdout + result.stderr)
                 self.assertFalse((target / "deep" / "models").exists())
             finally:
+                # Decodificação tolerante pelos mesmos motivos do run_installer.
                 subprocess.run(
                     [
                         self.pwsh,
@@ -194,6 +205,7 @@ class InstallationContractTests(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
+                    errors="replace",
                     check=False,
                 )
 
