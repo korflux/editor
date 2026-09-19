@@ -16,6 +16,7 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install.ps1"
 LOCKFILE = ROOT / "requirements.lock"
+MACOS_LOCKFILE = ROOT / "requirements.macos.lock"
 
 
 class InstallationContractTests(unittest.TestCase):
@@ -359,6 +360,65 @@ class InstallationContractTests(unittest.TestCase):
                 self.assertEqual(self.count_shim_in_user_path(shim_dir), 1)
             finally:
                 self.set_user_path(original_path)
+
+    def test_macos_lockfile_is_hash_pinned_and_contains_runtime_contract(self) -> None:
+        """Garante que o lock do Mac pinou o mesmo contrato de runtime com hashes obrigatórios."""
+        text = MACOS_LOCKFILE.read_text(encoding="utf-8")
+        for package in ("faster-whisper", "ctranslate2", "pip-audit", "setuptools", "wheel"):
+            self.assertRegex(text, rf"(?m)^{package}==[^\s\\]+")
+        self.assertGreaterEqual(text.count("--hash=sha256:"), 40)
+
+    def test_platform_lock_selection_uses_windows_and_macos_locks(self) -> None:
+        """Confirma que a seleção por plataforma usa requirements.lock no Windows e macos.lock fora dele."""
+        script_text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("Get-PlatformLockName", script_text)
+        self.assertIn("requirements.macos.lock", script_text)
+        self.assertIn("--require-hashes", script_text)
+        # Extrai só a função para não executar o bloco principal do instalador no dot-source.
+        command = (
+            "$text = Get-Content -Raw -LiteralPath '" + str(SCRIPT).replace("'", "''") + "'; "
+            "$match = [regex]::Match($text, '(?s)function Get-PlatformLockName.*?\\n\\}'); "
+            "if (-not $match.Success) { exit 1 }; "
+            "Invoke-Expression $match.Value; "
+            "Get-PlatformLockName -IsWindowsPlatform $true; "
+            "Get-PlatformLockName -IsWindowsPlatform $false"
+        )
+        probe = subprocess.run(
+            [self.pwsh, "-NoProfile", "-Command", command],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        lines = [line.strip() for line in (probe.stdout or "").splitlines() if line.strip()]
+        self.assertEqual(probe.returncode, 0, probe.stdout + probe.stderr)
+        self.assertIn("requirements.lock", lines)
+        self.assertIn("requirements.macos.lock", lines)
+
+    def test_install_fails_closed_when_platform_lock_is_missing_before_venv(self) -> None:
+        """Confirma que o lock ausente falha antes de criar o venv, sem rede implícita."""
+        venv_python = ROOT / ".venv" / "Scripts" / "python.exe"
+        if not venv_python.is_file():
+            raise unittest.SkipTest("venv 3.11 local não está disponível para provar falha fechada do lock")
+        backup = LOCKFILE.read_bytes()
+        with self.workspace_tempdir() as temporary_path:
+            venv_path = temporary_path / "venv"
+            LOCKFILE.unlink()
+            try:
+                result = self.run_installer(
+                    "-Install",
+                    "-PythonPath",
+                    str(venv_python),
+                    "-VenvPath",
+                    str(venv_path),
+                )
+            finally:
+                LOCKFILE.write_bytes(backup)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("requirements.lock", result.stdout + result.stderr)
+            self.assertFalse(venv_path.exists())
 
 
 if __name__ == "__main__":

@@ -76,18 +76,20 @@ Entregar instalação por comando único no Windows e no Mac com `editor` no PAT
 
 ### T3: Selecionar lock por plataforma com falha fechada
 
-- [ ] T3 concluída
+- [x] T3 concluída
 - **Spec:** A1, A2, C2
 - **O quê:** Criar `requirements.macos.lock` pinado com hashes e selecionar lock por plataforma antes de criar o venv, com falha fechada em lock ausente ou sem hashes.
 - **Aceite:**
-  - [ ] Lock ausente ou sem hashes falha antes de criar venv nos dois sistemas
-  - [ ] Windows usa `requirements.lock`, Mac usa `requirements.macos.lock` com mesma exigência
-  - [ ] Instalação do venv usa `--require-hashes` sem rede implícita
+  - [x] Lock ausente ou sem hashes falha antes de criar venv nos dois sistemas
+  - [x] Windows usa `requirements.lock`, Mac usa `requirements.macos.lock` com mesma exigência
+  - [x] Instalação do venv usa `--require-hashes` sem rede implícita
 - **Verificação:**
-  - [ ] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
-  - [ ] `python -m unittest discover -s tests -p "test_installation.py" -v`
+  - [x] `pwsh -NoProfile -File scripts/install.ps1 -Verify`
+  - [x] `python -m unittest discover -s tests -p "test_installation.py" -v`
+- **Prova:** `scripts/install.ps1 -Verify` -> exit 0 com `requirements.lock: 50 pacotes pinados, 648 hashes SHA-256`; `discover -s tests -p "test_installation.py" -v` -> `Ran 13 tests ... OK` (10 vigentes + 3 novos de lock por plataforma); `git diff --check` -> 0.
+- **Decisões:** seleção central em `Get-PlatformLockName` (`requirements.lock` no Windows, `requirements.macos.lock` fora dele) com `Get-PlatformLockPath` para o SCA; `Test-Lockfile` valida o lock da plataforma com mesma exigência de pins e hashes; `Install-PythonEnvironment` falha antes de criar venv com mensagem do lock vigente; mac lock resolvido via `uv pip compile --python-platform aarch64-apple-darwin` com mesmos diretos (`faster-whisper==1.2.1`, `ctranslate2==4.8.0`, `pip-audit==2.10.1`, `setuptools==84.0.0`, `wheel==0.48.0`); `ponytail` em `Get-PlatformLockName` registra alvo arm64, universal só com prova real em Intel x64; A1/A2/C2 seguem com aceite final em T9.
 - **Deps:** T2
-- **Arquivos:** `scripts/install.ps1`, `requirements.lock`, `requirements.macos.lock`, `tests/test_installation.py`
+- **Arquivos:** `scripts/install.ps1`, `requirements.macos.lock`, `tests/test_installation.py`
 - **Size:** `medium, 4/10 (1+1+1+0+1), seleção de lock sobre instalador vigente`
 - **Risk:** `medium, contrato compartilhado de instalação nas duas plataformas`
 

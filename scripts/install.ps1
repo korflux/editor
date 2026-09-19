@@ -263,11 +263,29 @@ function Get-LockedVersion {
     return $null
 }
 
-# Confirma que o lockfile tem os pacotes críticos pinados e hashes para impedir resolução flutuante.
+# Seleciona o lock por plataforma sem rede nem shell, mantendo Windows no lock vigente e Unix no lock do Mac.
+# ponytail: lock macOS resolvido para aarch64-arm64, trocar por resolução universal se Mac Intel x64 exigir prova real.
+function Get-PlatformLockName {
+    param([bool]$IsWindowsPlatform = $IsWindows)
+
+    if ($IsWindowsPlatform) {
+        return 'requirements.lock'
+    }
+    return 'requirements.macos.lock'
+}
+
+# Resolve o caminho absoluto do lock da plataforma atual, reutilizando a raiz do repositório já validada.
+function Get-PlatformLockPath {
+    $lockName = Get-PlatformLockName
+    return (Join-Path $script:RepoRoot $lockName)
+}
+
+# Confirma que o lock da plataforma atual tem os pacotes críticos pinados e hashes para impedir resolução flutuante.
 function Test-Lockfile {
-    $lockPath = Join-Path $script:RepoRoot 'requirements.lock'
+    $lockName = Get-PlatformLockName
+    $lockPath = Join-Path $script:RepoRoot $lockName
     if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf) -or -not (Test-RegularPath $lockPath)) {
-        Add-Check 'requirements.lock' $false $false 'Arquivo ausente ou linkado.'
+        Add-Check $lockName $false $false 'Arquivo ausente ou linkado.'
         return $null
     }
 
@@ -281,7 +299,7 @@ function Test-Lockfile {
     } else {
         'Pacotes sem pin ou hashes ausentes: ' + ($missing -join ', ')
     }
-    Add-Check 'requirements.lock' $passed $false $detail
+    Add-Check $lockName $passed $false $detail
     return [pscustomobject]@{ path = $lockPath; text = $lockText }
 }
 
@@ -330,6 +348,9 @@ function Test-Ffmpeg {
 function Test-PythonPackages {
     param([Parameter(Mandatory)][pscustomobject]$Lock)
 
+    # Deriva o nome do lock vigente para mensagens seguras sem duplicar o contrato de plataforma.
+    $lockName = Split-Path -Leaf $Lock.path
+
     $code = "import importlib.metadata as m, importlib.util, json; specs=[('faster-whisper','faster_whisper'),('ctranslate2','ctranslate2'),('pip-audit','pip_audit')]; out={}; [out.update({d:{'version':m.version(d),'module':importlib.util.find_spec(mod) is not None}}) for d,mod in specs]; print(json.dumps(out))"
     $result = Invoke-Python @('-c', $code)
     if ($result.exit_code -ne 0) {
@@ -353,13 +374,13 @@ function Test-PythonPackages {
         $ok = $null -ne $entry -and $entry.module -eq $true -and $entry.version -eq $expected
         if (-not $ok) { $backendPassed = $false }
     }
-    $backendDetail = if ($backendPassed) { 'faster-whisper e CTranslate2 estão pinados e importáveis.' } else { 'Backend ausente ou divergente do requirements.lock.' }
+    $backendDetail = if ($backendPassed) { 'faster-whisper e CTranslate2 estão pinados e importáveis.' } else { "Backend ausente ou divergente de $lockName." }
     Add-Check 'backend Whisper' $backendPassed $false $backendDetail
 
     $auditEntry = $installed.'pip-audit'
     $auditExpected = Get-LockedVersion $Lock.text 'pip-audit'
     $auditPassed = $null -ne $auditEntry -and $auditEntry.module -eq $true -and $auditEntry.version -eq $auditExpected
-    $auditDetail = if ($auditPassed) { "pip-audit $auditExpected está disponível no venv." } else { 'pip-audit ausente ou divergente do requirements.lock; execute -Install.' }
+    $auditDetail = if ($auditPassed) { "pip-audit $auditExpected está disponível no venv." } else { "pip-audit ausente ou divergente de $lockName; execute -Install." }
     Add-Check 'pip-audit' $auditPassed $false $auditDetail
 }
 
@@ -452,14 +473,14 @@ function Test-PipCheck {
     Add-Check 'pip check' $passed $false $detail
 }
 
-# Cria o venv apenas em modo explícito e instala exatamente o lockfile com hashes obrigatórios.
+# Cria o venv apenas em modo explícito e instala exatamente o lock da plataforma com hashes obrigatórios.
 function Install-PythonEnvironment {
     if (-not (Test-PythonTarget)) {
         throw 'Python 3.11 x64 é obrigatório para -Install.'
     }
     $lock = Test-Lockfile
     if (-not $lock) {
-        throw 'requirements.lock inválido ou ausente.'
+        throw "$(Get-PlatformLockName) inválido ou ausente."
     }
     if (Test-Path -LiteralPath $script:VenvAbsolutePath) {
         if (-not (Test-RegularPath $script:VenvAbsolutePath)) {
@@ -492,7 +513,7 @@ function Install-PythonEnvironment {
 
     $install = Invoke-Python @('-m', 'pip', 'install', '--require-hashes', '--no-input', '--disable-pip-version-check', '--requirement', $lock.path)
     if ($install.exit_code -ne 0) {
-        throw 'Falha ao instalar requirements.lock; o ambiente pode estar incompleto.'
+        throw "Falha ao instalar $(Split-Path -Leaf $lock.path); o ambiente pode estar incompleto."
     }
     $editable = Invoke-Python @('-m', 'pip', 'install', '--no-deps', '--no-build-isolation', '--no-input', '--disable-pip-version-check', '--editable', $script:RepoRoot)
     if ($editable.exit_code -ne 0) {
@@ -692,7 +713,8 @@ function Invoke-SecurityGates {
     if (-not $script:RuntimePython) {
         throw 'Gate SCA indisponível: ambiente virtual não validado.'
     }
-    $lockPath = Join-Path $script:RepoRoot 'requirements.lock'
+    # Usa o lock da plataforma atual para que o SCA audite exatamente o que o venv instala.
+    $lockPath = Get-PlatformLockPath
     $scaGate = Invoke-Python @('-m', 'pip_audit', '-r', $lockPath)
     if ($scaGate.exit_code -ne 0) {
         throw 'Gate SCA bloqueado por pip-audit.'
