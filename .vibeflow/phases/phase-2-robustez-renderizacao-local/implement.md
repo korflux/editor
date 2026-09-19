@@ -1,7 +1,7 @@
 # Implement: Robustez da renderização local e da transcrição real
 # Alvo: phase-2-robustez-renderizacao-local
 # Status: aprovado
-# Route: high · modo A · T6
+# Route: high · modo A · T7
 
 ## Reconhecimento
 
@@ -228,6 +228,48 @@
 - **Arquivos:** `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `tests/test_vibe_editor_skill.py` e os artefatos vivos da Phase 2.
 - **Decisão:** a aprovação só é solicitada depois de evidência estrutural, auditoria temporal e inspeção visual/editorial registradas; o agente não automatiza tradução, cortes ou julgamento de qualidade.
 
+## T7: Provar a jornada detalhada da Phase 2
+
+### Reconhecimento
+
+- A fila tinha somente T7 elegível, com T1 a T6 concluídas e `analyze.md` limpo.
+- `collect_capabilities()` expunha schema v2, movimento, cortes e camadas, mas não
+  documentava `profile.max_full_width`, o transporte do filtro por arquivo, a
+  tolerância da transcrição nem a resolução concreta de fontes para `fontfile`.
+- O grafo do fixture de workflow tinha 2.068 caracteres; a escala real exigia
+  69 fontes, 231 segmentos e 43 camadas para ultrapassar 100.000 caracteres sem
+  versionar mídia grande.
+
+### Implementação
+
+- `capabilities.py` passou a publicar `plan.profile` com padrão 1920 e limites
+  32..3840 em múltiplos de 32, o bloco `render` com transporte `file` e teto de
+  32.767 caracteres, o bloco `transcription` com tolerância de 0,5 s e contadores,
+  e o bloco `fonts` com entrada por nome e renderer `fontfile`.
+- `tests/test_capabilities.py` verifica os novos contratos no envelope real da CLI.
+- `tests/e2e/test_phase_2_flow.py` repete mídias pequenas em 69 fontes, escreve o
+  plano de 231 segmentos e 43 camadas, e executa init, capabilities, validate,
+  preview, approve e full somente pela CLI, sem rough cuts, monkey patch ou
+  script lateral.
+- `.vibeflow/REGRAS.md` teve o mapa estrutural, a evidência e a seção de robustez
+  da Phase 2 sincronizados com os contratos implementados.
+
+### Prova
+
+- `.venv\\Scripts\\python.exe -B -m unittest tests.test_capabilities -v` -> `Ran 7 tests ... OK`.
+- `.venv\\Scripts\\python.exe -B -m unittest tests.e2e.test_phase_2_flow -v` -> `Ran 1 test in 36.864s ... OK`; filtro em memória com 105.925 caracteres, preview e full em 320x180 com 46,2 s, `.tmp` limpo e mutação de perfil bloqueada por `APPROVAL_STALE`.
+- `.venv\\Scripts\\python.exe -B -m unittest discover -s tests -v` -> `Ran 118 tests`, 113 OK e 5 erros preexistentes em `tests/test_installation.py`, confirmados no baseline sem as alterações da T7 e registrados em `.erros-encontrados/2026-09-19-test-installation-encoding.md`.
+- `gitleaks detect --source . --no-banner` -> `no leaks found`.
+- `.venv\\Scripts\\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` -> `No known vulnerabilities found`.
+- `git diff --check` passou.
+
+### Registro
+
+- **Plan:** T7 marcada como concluída.
+- **Spec comprovada nesta fatia:** A1 a A10, C1 a C8.
+- **Arquivos:** `src/editor/capabilities.py`, `tests/test_capabilities.py`, `tests/e2e/test_phase_2_flow.py`, `.vibeflow/REGRAS.md` e os artefatos vivos da Phase 2.
+- **Decisão:** a jornada detalhada prova escala estrutural com fontes pequenas repetidas; saídas acima de 4 GiB continuam cobertas pelo teste unitário de política, sem versionar mídia grande.
+
 ## Handoff
 
-Próxima task elegível: T7.
+Fila zerada. Handoff para `vibe-review`.

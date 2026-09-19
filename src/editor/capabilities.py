@@ -18,20 +18,26 @@ from .media import (
 )
 from .plan.schema import (
     CUT_TYPES,
+    DEFAULT_MAX_FULL_WIDTH,
     LAYER_FIT_MODES,
     LAYER_TYPES,
     MAX_CUT_DURATION_SECONDS,
+    MAX_FULL_WIDTH_STEP,
+    MAX_MAX_FULL_WIDTH,
+    MIN_MAX_FULL_WIDTH,
     MOTION_ZOOM_MAX,
     MOTION_ZOOM_MIN,
     PLAN_SCHEMA_VERSION,
     SOURCE_KINDS,
 )
 from .plan.validation import (
+    FONT_FILE_EXTENSIONS,
     MAX_LAYERS,
     MAX_PLAN_BYTES,
     MAX_SEGMENTS,
     MAX_TIMELINE_DURATION_SECONDS,
 )
+from .render.preview import MAX_PREVIEW_DIMENSION
 
 def default_model_root() -> Path:
     """Seleciona o diretório de modelos configurado ou o padrão local do repositório."""
@@ -250,6 +256,13 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
         "plan": {
             "schema_version": PLAN_SCHEMA_VERSION,
             "source_kinds": sorted(SOURCE_KINDS),
+            "profile": {
+                "aspect_ratio": "16:9",
+                "max_full_width_default": DEFAULT_MAX_FULL_WIDTH,
+                "max_full_width_min": MIN_MAX_FULL_WIDTH,
+                "max_full_width_max": MAX_MAX_FULL_WIDTH,
+                "max_full_width_step": MAX_FULL_WIDTH_STEP,
+            },
             "motion": {
                 "status": "available",
                 "interpolation": "linear",
@@ -267,6 +280,37 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
                 "max_count": MAX_LAYERS,
             },
         },
+        "render": {
+            "status": "available",
+            # O grafo nunca volta à linha de comando; o FFmpeg 9.0.1 do host
+            # lê o filtro UTF-8 por arquivo para respeitar o teto do Windows.
+            "filter_transport": "file",
+            "filter_option": "-/filter_complex",
+            "max_command_characters": 32_767,
+            "preview_max_dimension": MAX_PREVIEW_DIMENSION,
+            "full_default_max_width": DEFAULT_MAX_FULL_WIDTH,
+        },
+        "transcription": {
+            "status": "available",
+            # Tolerância observada no Whisper real; deriva maior falha sem
+            # substituir o artefato vigente, com textos reconstruídos das palavras.
+            "word_drift_tolerance_seconds": 0.5,
+            "counters": [
+                "discarded_word_count",
+                "clamped_word_count",
+                "discarded_segment_count",
+            ],
+        },
+        "fonts": {
+            "status": "available",
+            # O plano aceita somente o nome humano; o validador resolve o
+            # arquivo concreto e o grafo desenha com drawtext=fontfile=...
+            "input": "name",
+            "renderer": "fontfile",
+            "extensions": sorted(FONT_FILE_EXTENSIONS),
+            "registry": ["HKCU", "HKLM"],
+            "fallback": "fontconfig",
+        },
         "limits": {
             "max_plan_bytes": MAX_PLAN_BYTES,
             "max_source_size_bytes": MAX_SOURCE_SIZE_BYTES,
@@ -282,6 +326,12 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "max_image_size_bytes": MAX_IMAGE_SIZE_BYTES,
             "max_image_dimension": MAX_IMAGE_DIMENSION,
             "max_timeline_duration_seconds": MAX_TIMELINE_DURATION_SECONDS,
+            "max_full_width_default": DEFAULT_MAX_FULL_WIDTH,
+            "max_full_width_min": MIN_MAX_FULL_WIDTH,
+            "max_full_width_max": MAX_MAX_FULL_WIDTH,
+            "max_full_width_step": MAX_FULL_WIDTH_STEP,
+            "max_command_characters": 32_767,
+            "whisper_word_drift_tolerance_seconds": 0.5,
             "jobs_in_parallel": 1,
         },
         "operations": operations,

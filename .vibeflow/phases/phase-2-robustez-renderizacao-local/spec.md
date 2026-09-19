@@ -148,7 +148,7 @@ final e fontes de texto determinísticos.
 - [x] A6: Anomalias Whisper dentro do contrato tolerante são normalizadas com texto e palavras coerentes.
 - [x] A7: Anomalias fora do contrato falham sem substituir a transcrição vigente.
 - [x] A8: Arial Bold registrada produz `fontfile` apontando para o arquivo bold real, sem `fontconfig.xml` lateral.
-- [ ] A9: Preview e full continuam consumindo o mesmo grafo, plano e fontes aprovados.
+- [x] A9: Preview e full continuam consumindo o mesmo grafo, plano e fontes aprovados.
 - [x] A10: A skill impede pedido de aprovação antes das auditorias editorial, temporal e visual documentadas.
 
 ### Critérios de sucesso
@@ -160,7 +160,7 @@ final e fontes de texto determinísticos.
 - [x] C5: Testes cobrem palavra de duração zero, clamp nas duas fronteiras, clamp que zera a palavra, segmento esvaziado, desvio acima de 0,5 s e resultado totalmente vazio.
 - [x] C6: Testes confirmam que `transcription.text` equivale à concatenação dos textos reconstruídos dos segmentos publicados.
 - [x] C7: Testes do resolvedor de fonte cobrem HKLM, HKCU, arquivo ausente, extensão recusada e reparse point; o grafo usa `fontfile`.
-- [ ] C8: A jornada E2E vigente e a suíte completa continuam passando sem scripts de `A:\Youtube\Teste\.tmp`.
+- [x] C8: A jornada E2E vigente e a suíte completa continuam passando sem scripts de `A:\Youtube\Teste\.tmp`.
 
 ## Implementação
 

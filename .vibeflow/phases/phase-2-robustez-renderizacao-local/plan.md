@@ -180,21 +180,24 @@ equivalente ao primeiro plano detalhado.
 
 ### T7: Provar a jornada detalhada da Phase 2
 
-- [ ] T7 concluída
+- [x] T7 concluída
 - **Spec:** A1 a A10, C1 a C8
 - **O quê:** Criar a prova ponta a ponta com estrutura equivalente ao plano real,
   atualizar capacidades e Documento Vivo e executar a suíte completa e gates. A fixture
   repete mídias pequenas para atingir 69 fontes, 231 segmentos, 43 camadas e filtro acima
   de 100.000 caracteres sem incorporar os arquivos do trabalho do usuário.
 - **Aceite:**
-  - [ ] A jornada valida plano, renderiza preview, aprova e renderiza full sem rough cuts, monkey patch ou script lateral.
-  - [ ] O teste confirma grafo por arquivo, perfil efetivo, hashes vigentes, fonte concreta e `.tmp` limpo.
-  - [ ] Capacidades, regras e mapa estrutural documentam os contratos implementados; suíte, gitleaks e SCA passam.
+  - [x] A jornada valida plano, renderiza preview, aprova e renderiza full sem rough cuts, monkey patch ou script lateral.
+  - [x] O teste confirma grafo por arquivo, perfil efetivo, hashes vigentes, fonte concreta e `.tmp` limpo.
+  - [x] Capacidades, regras e mapa estrutural documentam os contratos implementados; suíte, gitleaks e SCA passam.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_2_flow -v`
-  - [ ] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
-  - [ ] `gitleaks detect --source . --no-banner`
-  - [ ] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_2_flow -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
+  - [x] `gitleaks detect --source . --no-banner`
+  - [x] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
+- **Prova:** E2E `Ran 1 test in 36.864s ... OK` com filtro de 105.925 caracteres, preview e full 320x180 de 46,2 s e mutação de perfil bloqueada; `tests.test_capabilities` -> `Ran 7 tests ... OK`; discover -> `Ran 118 tests` com 5 erros preexistentes do instalador confirmados no baseline; gitleaks -> `no leaks found`; pip-audit -> `No known vulnerabilities found`.
+- **Arquivos produzidos:** `src/editor/capabilities.py`, `tests/test_capabilities.py`, `tests/e2e/test_phase_2_flow.py`, `.vibeflow/REGRAS.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/implement.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/plan.md`, `.erros-encontrados/2026-09-19-test-installation-encoding.md`
+- **Decisões:** A1 a A10 e C1 a C8 implementadas. A escala é provada com fontes pequenas repetidas; saídas acima de 4 GiB seguem cobertas pelo teste unitário de política.
 - **Deps:** T1, T2, T3, T4, T5, T6
 - **Arquivos:** `src/editor/capabilities.py`, `tests/test_capabilities.py`, `tests/e2e/test_phase_2_flow.py`, `.vibeflow/REGRAS.md`, `.vibeflow/phases/phase-2-robustez-renderizacao-local/implement.md`
 - **Size:** `high, 7/10, cruza todos os contratos em E2E com FFmpeg real e gates externos`

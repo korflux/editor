@@ -52,16 +52,16 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
   - `__main__.py`: execução por `python -m editor`.
   - `cli.py`: parser, ajuda, despacho inicial e conversão central de erros.
   - `contracts.py`: schema de envelopes, exit codes e erro de domínio público.
-- `src/editor/capabilities.py`: contrato de inventário local, limites, operações e recomendação.
+- `src/editor/capabilities.py`: inventário local, perfil `max_full_width`, transporte do filtro por arquivo, normalização da transcrição, fontes `fontfile`, operações e recomendação.
 - `src/editor/dependencies.py`: sondagem segura de ferramentas, hardware, backend e modelos locais.
 - `src/editor/workdir.py`: validação do trabalho, source IDs, diretórios permitidos e publicação atômica.
 - `src/editor/media.py`: inspeção FFprobe e allowlist de áudio, vídeo e imagens raster estáticas, com limites de tamanho, duração e dimensão.
 - `src/editor/process.py`: execução estruturada e streaming PCM de processos locais sem shell intermediário.
 - `src/editor/analysis/audio.py`: análise de loudness, pico verdadeiro, níveis por janela e silêncio por amplitude.
 - `src/editor/analysis/frames.py`: seleção temporal, extração de PNGs e manifesto de frames efetivos.
-- `src/editor/analysis/transcription.py`: validação da resposta do Whisper e publicação de transcrição com timestamps por palavra.
-- `src/editor/plan/schema.py`: allowlist estrutural e opções suportadas do schema v2 do plano.
-- `src/editor/plan/validation.py`: validação de fontes, segmentos, áudio, movimento, cortes J/L, camadas e timeline linear.
+- `src/editor/analysis/transcription.py`: validação da resposta do Whisper, normalização tolerante até 0,5 s e publicação de transcrição com timestamps por palavra.
+- `src/editor/plan/schema.py`: allowlist estrutural e opções suportadas do schema v2 do plano, incluindo `profile.max_full_width` opcional.
+- `src/editor/plan/validation.py`: validação de fontes, segmentos, áudio, movimento, cortes J/L, camadas, timeline linear, perfil efetivo sem upscale e arquivo concreto de fonte para `fontfile`.
 - `src/editor/plan/canonical.py`: serialização UTF-8 canônica e SHA-256 do plano.
 - `src/editor/integrity/hashes.py`: hashing em blocos de artefatos locais para registros de integridade.
 - `src/editor/integrity/approval.py`: validação do plano, cálculo de hashes e publicação atômica de `approval.json`.
@@ -94,7 +94,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `skills/vibe-editor/`: skill que ensina agentes a conduzir o fluxo de edição de vídeo local, incluindo verificação do ambiente, análise, preview, aprovação e full.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: MVP implementado até a jornada E2E em 2026-09-12; Phase 1 T1 a T8 implementadas e T9 de capacidades/documentação verificada em 2026-09-13. -->
+<!-- evidência: MVP implementado até a jornada E2E em 2026-09-12; Phase 1 T1 a T8 implementadas e T9 de capacidades/documentação verificada em 2026-09-13; Phase 2 T1 a T6 implementadas e T7 de jornada detalhada verificada em 2026-09-19. -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -252,3 +252,11 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Dependências:** FFprobe para validar a fonte e FFmpeg local com `libx264` para a composição.
 - **Limitação conhecida:** não há loop, freeze, alteração de velocidade ou áudio de camada; `ponytail: adicionar essas operações somente se uma necessidade editorial real exigir contrato e validação próprios`.
 - **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render -v` e `.venv\Scripts\python.exe -B -m unittest tests.test_full_render -v`.
+
+### Robustez da renderização local, Phase 2 T1 a T7
+
+- **Capacidades:** `capabilities --json` informa `profile.max_full_width` (padrão 1920, múltiplos de 32 entre 32 e 3840), transporte do filtro por arquivo (`-/filter_complex`, teto de 32.767 caracteres), tolerância de 0,5 s na transcrição com contadores e fontes resolvidas para `fontfile`.
+- **Limites:** a full usa `effective_full_width` sem upscale; saídas renderizadas não herdam os tetos de 4 GiB e 3.600 s das fontes.
+- **Fluxo:** a jornada detalhada valida o plano de 69 fontes, 231 segmentos e 43 camadas, renderiza preview e full pelo mesmo grafo, aprova por hashes e bloqueia mutação de perfil.
+- **Segurança:** grafo UTF-8 exclusivo em `.tmp` com limpeza em sucesso, erro, exceção e timeout; caminho de fonte nunca entra no plano canônico nem no envelope público.
+- **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_2_flow -v`, `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`, gitleaks e pip-audit.

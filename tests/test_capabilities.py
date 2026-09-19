@@ -79,6 +79,28 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(data["operations"]["capabilities"]["status"], "available")
         self.assertEqual(data["operations"]["init"]["status"], "available")
         self.assertEqual(data["plan"]["schema_version"], 2)
+        self.assertEqual(
+            data["plan"]["profile"],
+            {
+                "aspect_ratio": "16:9",
+                "max_full_width_default": 1_920,
+                "max_full_width_min": 32,
+                "max_full_width_max": 3_840,
+                "max_full_width_step": 32,
+            },
+        )
+        self.assertEqual(data["render"]["filter_transport"], "file")
+        self.assertEqual(data["render"]["preview_max_dimension"], 720)
+        self.assertEqual(data["render"]["full_default_max_width"], 1_920)
+        self.assertEqual(data["render"]["max_command_characters"], 32_767)
+        self.assertEqual(data["transcription"]["word_drift_tolerance_seconds"], 0.5)
+        self.assertEqual(
+            data["transcription"]["counters"],
+            ["discarded_word_count", "clamped_word_count", "discarded_segment_count"],
+        )
+        self.assertEqual(data["fonts"]["renderer"], "fontfile")
+        self.assertEqual(data["limits"]["max_full_width_default"], 1_920)
+        self.assertEqual(data["limits"]["max_command_characters"], 32_767)
         self.assertEqual(data["formats"]["image"], ["png", "jpg", "jpeg", "webp"])
         self.assertEqual(data["limits"]["max_layers"], 1_000)
         self.assertEqual(data["limits"]["max_cuts"], 999)
