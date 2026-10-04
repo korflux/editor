@@ -6,10 +6,10 @@
 
 ## Contexto
 
-- Rota: high, etapa 1 first-pass.
+- Rota: high, etapa 2 re-run após fila R1-R4.
 - Alvo: `phase-2-robustez-renderizacao-local`.
 - Cadeia: `spec.md` / `plan.md` / `analyze.md` / `implement.md` e este `review.md`. Sem `interview.md` (fase de correção técnica, sem ambiguidade de intenção).
-- Diff auditado: `origin/main..HEAD` (7 commits, T1 a T7 da Phase 2). Working tree contém apenas `__pycache__/*.pyc` modificados (24 arquivos binários, ver R2).
+- Diff auditado: `origin/main..HEAD` (11 commits, T1 a T7 mais R1 a R4). Working tree limpo; `git status --short --branch` mostra apenas `main...origin/main [ahead 11]`.
 - O que muda: grafo FFmpeg por arquivo, perfil `max_full_width` sem upscale, validação separada de saída, normalização do Whisper, `fontfile` concreto, gate editorial da skill e jornada E2E detalhada.
 
 ## Cobertura
@@ -33,7 +33,7 @@
 | C5 | ok | T4. Matriz cobre duração zero, clamp inicial/final, clamp que zera palavra, segmento esvaziado, desvio superior e vazio total. |
 | C6 | ok | T4. `transcription.text` equivale à concatenação dos textos reconstruídos publicados. |
 | C7 | ok | T5. HKLM, HKCU, ausente, extensão recusada e reparse point; grafo usa `fontfile`. |
-| C8 | ok | T7 com ressalva R1. E2E vigente passa; suíte completa tem 5 erros preexistentes do instalador, confirmados no baseline e registrados em `.erros-encontrados/`. |
+| C8 | ok | T7 sem ressalva na etapa 2. E2E vigente passa; suíte completa `Ran 118 tests ... OK` reexecutada nesta review, sem erros do instalador. |
 
 ## Checklist de correções
 
@@ -62,26 +62,26 @@
 - [x] Fatias rápidas reexecutadas: `tests.test_transcription` mais `tests.test_capabilities` mais `tests.test_vibe_editor_skill` -> `Ran 22 tests ... OK`.
 - [x] `git diff --check` limpo; `gitleaks detect --source . --no-banner` -> `no leaks found`.
 - [x] T1-T7 marcadas `[x]` em `plan.md` com aceite, verificação, prova e arquivos; `implement.md` declara fila zerada.
-- [ ] Suíte completa verde: pendente por R1; E2E `test_phase_2_flow` passou na T7, mas `discover -s tests` tem 5 erros preexistentes do instalador.
-- [ ] `git status` limpo: pendente por R2 (apenas binários `__pycache__` modificados).
+- [x] Suíte completa verde: `.venv\Scripts\python.exe -B -m unittest discover -s tests -v` -> `Ran 118 tests in 47.179s ... OK` (etapa 2); E2E `tests.e2e.test_phase_2_flow` -> `Ran 1 test in 40.763s ... OK`.
+- [x] `git status` limpo: apenas `main...origin/main [ahead 11]`, sem arquivos modificados; `git ls-files` com `pyc` -> `0`.
 
 ## Notas
 
-- Fila de correção registrada: R1 (encoding do instalador), R2 (pycache versionado) e R4 (verificar registro inquirer de 2026-09-10); R3 é deriva documental menor da T1.
-- Push pendente: `main` está 7 commits à frente de `origin/main`; finalização Git só após Approve confirmado e sem `Co-Authored-By`.
+- Fila de correção zerada na etapa 2: R1, R2, R3 e R4 permanecem `[x]` com provas reexecutadas abaixo.
+- Push pendente: `main` está 11 commits à frente de `origin/main` (T1-T7 mais R1-R4); finalização Git só após Approve confirmado e sem `Co-Authored-By`.
 
 ## Veredito vigente
 
-- [ ] **Approve**: nenhum Critical/Required em `[ ]`
+- [x] **Approve**: nenhum Critical/Required em `[ ]`
 - [ ] **Request changes**: há Critical/Required em `[ ]`
-- [x] **Approve com defer**: R1 e R2 deferidos para a fila vibe-implement; funcionalidade Phase 2 aprovada porque o núcleo (grafo por arquivo, perfil, validação de saída, transcrição, fontfile, gate e E2E) está implementado e provado, e os dois Required são higiene/harness preexistentes fora do contrato editorial. R3 (Nit) e R4 (Optional) não bloqueiam.
+- [ ] **Approve com defer**: <qual R* e por quê>
 
 ## Handoff
 
-vibe-implement
+finalização Git da phase
 
-- Corrigir na ordem R1, R2, depois R3 e R4; novo chat focado é recomendado. O `review.md` vivo e o diff `origin/main..HEAD` são a ponte.
-- Após correção, rodar novo `vibe-review` etapa 2 no mesmo arquivo para fechar R1-R2 e revalidar DoD antes de qualquer finalização Git.
+- Nenhum R* bloqueante em `[ ]`; fila R1-R4 fechada e provada na etapa 2. O `review.md` vivo e o diff `origin/main..HEAD` são a ponte.
+- Após confirmação humana, executar suíte final, `git diff --check` e gitleaks, commitar somente residuais autorizados e fazer `git push` sem `--force`.
 - [ ] Aprovação humana (leu o arquivo e confirmou)
 
 ## Finalização Git da phase
@@ -99,3 +99,13 @@ vibe-implement
 - Abriu: R1, R2 (Required, deferidos), R3 (Nit), R4 (Optional).
 - Fechou: nenhum.
 - Veredito desta etapa: Approve com defer (R1, R2 na fila; R3, R4 não bloqueiam).
+
+### Etapa 2 - re-run - T1-T7 mais R1-R4, diff origin/main..HEAD, provas verdes
+
+- Leu: `spec.md`, `plan.md`, `analyze.md`, `implement.md`, `.erros-encontrados/` (2 arquivos) e código/testes do fluxo real. `rg` indisponível no host; usados `Get-ChildItem` e `Select-String` como equivalentes para inventário e busca de símbolos.
+- Reexecutou: smoke `--help` (exit 0), `tests.test_installation` (`Ran 7 tests ... OK`), fatias rápidas `test_transcription` mais `test_capabilities` mais `test_vibe_editor_skill` (`Ran 22 tests ... OK`), E2E `test_phase_2_flow` (`Ran 1 test in 40.763s ... OK`), suíte completa `discover -s tests` (`Ran 118 tests in 47.179s ... OK`), `git diff --check` limpo, gitleaks (`no leaks found`), `pip_audit` (`No known vulnerabilities found`) e `quick_validate.py skills/vibe-editor` (`Skill is valid!`).
+- Cobertura: A1-A10 e C1-C8 confirmados no código real (`preview.py:172-253` com `-/filter_complex`, `schema.py:23-27`, `validation.py:350-378,970-994`, `media.py:292-373`, `transcription.py:25,83-185`, `ffmpeg_graph.py:399`, `capabilities.py:261-332`); T1-T7 todas `[x]` em `plan.md`, sem stubs, `TODO` ou mocks falsos (`pass` restantes são criação de arquivo e limpeza best-effort).
+- Segurança: `process.py:41,51,98` com `shell=False`; nenhum `shell=True`, `os.system` ou interpolação em shell no diff; fontes validadas na borda, caminho de fonte fora do envelope público, erros sem stack trace nem stderr do FFmpeg.
+- Abriu: nenhum.
+- Fechou: R1, R2, R3, R4 (todos já `[x]`; etapa 2 apenas revalidou com provas verdes, sem renumerar).
+- Veredito desta etapa: Approve.
