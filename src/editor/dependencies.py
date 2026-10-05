@@ -19,6 +19,9 @@ from typing import Any, Sequence
 ALLOWED_MODEL_NAMES = ("tiny", "base", "small")
 REPARSE_POINT_ATTRIBUTE = 0x400
 RENDER_ENCODERS = ("libx264", "aac")
+# Aceleração opcional por GPU NVIDIA: encoder H.264 e decode CUDA; o baseline continua libx264.
+GPU_VIDEO_ENCODER = "h264_nvenc"
+GPU_HWACCEL = "cuda"
 WINDOWS_MAX_COMMAND_CHARACTERS = 32_767
 FALLBACK_POSIX_MAX_COMMAND_CHARACTERS = 131_072
 _ENCODER_LINE = re.compile(r"^\s*[A-Z.]{6}\s+(\S+)")
@@ -195,6 +198,23 @@ def probe_ffmpeg_encoders(executable: Path | None = None) -> dict[str, Any]:
             if not missing
             else "um ou mais encoders exigidos não estão disponíveis"
         ),
+    }
+
+
+def gpu_acceleration_available(executable: Path | None = None) -> bool:
+    """Informa se o FFmpeg expõe NVENC e decode CUDA, sem provar que a GPU funciona."""
+
+    # ponytail: listar não garante driver ou GPU operantes; o render confirma ao abrir o encoder
+    # e cai para CPU. Sondar com um encode mínimo se o fallback por falha deixar de bastar.
+    candidate = executable or resolve_executable("ffmpeg")
+    if candidate is None:
+        return False
+    encoders = run_local_probe(candidate, ("-hide_banner", "-encoders"))
+    hwaccels = run_local_probe(candidate, ("-hide_banner", "-hwaccels"))
+    if encoders is None or hwaccels is None or encoders["returncode"] != 0 or hwaccels["returncode"] != 0:
+        return False
+    return GPU_VIDEO_ENCODER in _encoder_names(encoders["output"]) and GPU_HWACCEL in {
+        line.strip() for line in hwaccels["output"].splitlines()
     }
 
 

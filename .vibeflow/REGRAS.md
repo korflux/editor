@@ -185,10 +185,12 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 ### Renderização de preview, T8
 
 - **Propósito:** transformar um plano v2 validado em uma única preview linear com cortes, junções, movimento, b-roll, áudio explícito, processamento e camadas de texto, imagem e vídeo.
-- **Entrada:** `editor render preview --workdir <caminho-absoluto> --json`, usando somente o `plan.json` e as fontes locais declaradas.
+- **Entrada:** `editor render preview --workdir <caminho-absoluto> [--accel none|gpu] --json`, usando somente o `plan.json` e as fontes locais declaradas. `--accel gpu` (padrão `none`) tenta decode CUDA nas fontes de vídeo (até 4 simultâneas) e NVENC `p3`/`cq 31`, e cai para `libx264` se a GPU falhar, informando o modo usado em `video.accel`; `capabilities` expõe `render.gpu_acceleration`.
 - **Saída:** envelope JSON em `stdout` e `<workdir>/preview.mp4`, publicado somente depois de o arquivo temporário ser validado como MP4 H.264/AAC, 16:9, até 720 pixels e com a duração da timeline.
 - **Dependências:** Python 3.11 x64, FFmpeg/FFprobe locais com encoders `libx264` e `aac`; nenhum processo usa shell intermediário ou rede.
 - **Limitação conhecida:** a preview usa um único canvas 16:9 derivado da largura do primeiro vídeo e codificação H.264 `libx264` com preset `veryfast`; camadas de vídeo não têm loop, freeze, áudio implícito ou alteração de velocidade; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.
+- **Desempenho medido (2026-10-04, i5-13600K, RTX 3060 Ti, fonte 4K H.264 de ~100 Mbps para 1080p, 30 s de saída):** o custo dominante é o decode da fonte (~90 de ~127 s de CPU) e, em vídeos com zoom animado, o `scale eval=frame` por quadro, que o grafo agora compõe no canvas de saída em vez de um canvas 4x maior. A codificação `libx264 veryfast` custa pouco relógio (~0,4 s). `--accel gpu` reduz a CPU de ~127 s para ~15 s (8x mais leve) com saída equivalente (SSIM 0,993 contra a CPU), mas **não é mais rápido**: o NVDEC desta placa decodifica 4K a ~125 fps contra ~224 fps da CPU (relógio de 9,6 s para 14,2 s). Use `gpu` para liberar a CPU, não para ganhar tempo. Medir sempre por CPU consumida (`ffmpeg -benchmark`) quando houver outros renders na máquina.
+- **Não adotado, medido:** decode por GPU com `scale_cuda` (CPU ~4 s, mas relógio igual ao `gpu`, limitado pelo NVDEC); scale `bilinear` e limite de threads (sem ganho útil); `libx264 ultrafast`. Evitar decodificar trechos descartados exigiria decoders por segmento, inviável pelo limite de linha de comando e de VRAM; `ponytail: reavaliar com fontes de GOP curto e muita filmagem não usada`.
 - **Verificação:** `python -m editor render preview --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_preview_render.py" -v`.
 
 ### Aprovação por hashes, T9
@@ -203,7 +205,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 ### Renderização final com aprovação, T10
 
 - **Propósito:** transformar a timeline aprovada em uma única full linear, sem reinterpretar o plano ou o conteúdo.
-- **Entrada:** `editor render full --workdir <caminho-absoluto> --json`; exige `plan.json`, `preview.mp4`, `approval.json` e todas as fontes locais declaradas.
+- **Entrada:** `editor render full --workdir <caminho-absoluto> [--accel none|gpu] --json`; exige `plan.json`, `preview.mp4`, `approval.json` e todas as fontes locais declaradas. `--accel` segue o contrato da preview.
 - **Saída:** envelope JSON em `stdout` e `<workdir>/full.mp4`, publicado somente depois de a aprovação, o plano, a preview e as fontes coincidirem por SHA-256 e o MP4 final passar pela inspeção de mídia.
 - **Dependências:** biblioteca padrão, FFmpeg/FFprobe locais com encoders `libx264` e `aac`; usa a mesma timeline, grafo de filtros e processamento de áudio da preview, sem rede.
 - **Limitação conhecida:** a full usa a largura do primeiro vídeo e canvas 16:9, com codificação H.264 `libx264` e preset `veryfast`; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.

@@ -28,6 +28,18 @@ from .ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
 MAX_PREVIEW_DIMENSION = 720
 """Maior dimensão permitida para reduzir o custo da aprovação visual."""
 
+ACCEL_CHOICES = ("none", "gpu")
+"""Valores de `--accel`: `none` mantém CPU; `gpu` tenta decode CUDA + NVENC e cai para CPU se falhar."""
+
+GPU_MAX_VIDEO_INPUTS = 4
+"""Teto de fontes de vídeo com decode por GPU, pois cada decoder CUDA ocupa VRAM simultaneamente."""
+# ponytail: teto fixo conservador para ~8 GB de VRAM, ler a VRAM livre (nvidia-smi) se projetos reais
+# com muitas fontes simultâneas precisarem de decode por GPU.
+
+
+class _RenderTimeout(CliError):
+    """Distingue timeout de falha de abertura do encoder, que é o único caso com fallback."""
+
 
 def _error(code: str, message: str, exit_code: int) -> CliError:
     """Cria erros públicos de renderização sem expor comandos ou stderr do FFmpeg."""
@@ -220,6 +232,33 @@ def _create_filter_script(
                 pass
 
 
+def _video_encoder_arguments(accel: str) -> list[str]:
+    """Parâmetros de vídeo por modo, ambos com qualidade constante e yuv420p."""
+
+    if accel == "gpu":
+        # cq 31 equivale em SSIM ao crf 23 do x264 (medido, 1080p); cq 23 gerava arquivo ~2x maior.
+        # p3 foi o equilíbrio medido entre velocidade e tamanho.
+        return [
+            "-c:v", dependencies.GPU_VIDEO_ENCODER, "-preset", "p3",
+            "-rc", "vbr", "-cq", "31", "-b:v", "0", "-pix_fmt", "yuv420p",
+        ]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]
+
+
+def _accel_modes(accel: str) -> list[str]:
+    """Ordem de tentativa por pedido: `gpu` tenta GPU quando o FFmpeg a expõe e termina em CPU."""
+
+    if accel not in ACCEL_CHOICES:
+        raise _error(
+            "ARGUMENT_INVALID",
+            "O modo de aceleração informado não é suportado.",
+            EXIT_CODES["ARGUMENT"],
+        )
+    if accel == "gpu" and dependencies.gpu_acceleration_available():
+        return ["gpu", "cpu"]
+    return ["cpu"]
+
+
 def _build_ffmpeg_arguments(
     graph: FfmpegGraph,
     source_records: Sequence[Mapping[str, Any]],
@@ -228,11 +267,18 @@ def _build_ffmpeg_arguments(
     filter_script: Path,
     duration_seconds: float,
     frame_rate: float | None,
+    accel: str = "cpu",
 ) -> list[str]:
     """Monta a lista estruturada de argumentos sem interpolar caminhos em shell."""
 
     records = {str(record["id"]): record for record in source_records}
     arguments = ["-hide_banner", "-nostdin", "-loglevel", "error"]
+    video_inputs = sum(
+        1 for source_id in graph.input_source_ids if records.get(source_id, {}).get("kind") == "video"
+    )
+    # Decode CUDA só nas fontes de vídeo e só até o teto de VRAM; o FFmpeg cai para decode em
+    # software sozinho quando o formato não é suportado, e os quadros voltam à RAM para o grafo.
+    gpu_decode = accel == "gpu" and 0 < video_inputs <= GPU_MAX_VIDEO_INPUTS
     for source_id in graph.input_source_ids:
         record = records.get(source_id)
         if record is None:
@@ -243,6 +289,8 @@ def _build_ffmpeg_arguments(
             )
         if record["kind"] == "image":
             arguments.extend(["-loop", "1", "-framerate", "25"])
+        elif gpu_decode and record["kind"] == "video":
+            arguments.extend(["-hwaccel", dependencies.GPU_HWACCEL])
         arguments.extend(["-i", str(record["path"])])
 
     arguments.extend(
@@ -254,14 +302,7 @@ def _build_ffmpeg_arguments(
             f"[{graph.video_label}]",
             "-map_metadata",
             "-1",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
+            *_video_encoder_arguments(accel),
         ]
     )
     if frame_rate is not None:
@@ -316,10 +357,10 @@ def _run_ffmpeg(
                 EXIT_CODES["DEPENDENCY"],
             ) from error
         if error.timed_out:
-            raise _error(
-                "RENDER_FAILED",
-                f"A renderização da {artifact_name} excedeu o tempo permitido.",
-                EXIT_CODES["OPERATION"],
+            raise _RenderTimeout(
+                code="RENDER_FAILED",
+                message=f"A renderização da {artifact_name} excedeu o tempo permitido.",
+                exit_code=EXIT_CODES["OPERATION"],
             ) from error
         raise _error(
             "RENDER_FAILED",
@@ -332,6 +373,49 @@ def _run_ffmpeg(
             f"O FFmpeg não conseguiu renderizar a {artifact_name}.",
             EXIT_CODES["OPERATION"],
         )
+
+
+def _render_with_fallback(
+    modes: Sequence[str],
+    graph: FfmpegGraph,
+    source_records: Sequence[Mapping[str, Any]],
+    staging: Path,
+    *,
+    filter_script: Path,
+    duration_seconds: float,
+    frame_rate: float | None,
+    artifact_name: str = "preview",
+) -> str:
+    """Renderiza no primeiro modo que funcionar e devolve qual modo produziu o arquivo."""
+
+    for index, accel in enumerate(modes):
+        arguments = _build_ffmpeg_arguments(
+            graph,
+            source_records,
+            staging,
+            filter_script=filter_script,
+            duration_seconds=duration_seconds,
+            frame_rate=frame_rate,
+            accel=accel,
+        )
+        try:
+            _run_ffmpeg(arguments, duration_seconds, artifact_name)
+        except CliError as error:
+            # Fallback só para falha de abertura de GPU/encoder (driver ausente, formato não suportado,
+            # dimensão mínima do NVENC); timeout e dependência ausente não melhoram trocando de modo.
+            if (
+                index == len(modes) - 1
+                or error.code != "RENDER_FAILED"
+                or isinstance(error, _RenderTimeout)
+            ):
+                raise
+            continue
+        return accel
+    raise _error(
+        "RENDER_FAILED",
+        f"O FFmpeg não conseguiu renderizar a {artifact_name}.",
+        EXIT_CODES["OPERATION"],
+    )
 
 
 def _validate_rendered_preview(
@@ -420,7 +504,7 @@ def _cleanup_filter_script(filter_script: Path | None) -> None:
         pass
 
 
-def render_preview(workdir: str | Path) -> dict[str, Any]:
+def render_preview(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
     """Valida o plano, renderiza a preview em `.tmp` e publica um único arquivo completo."""
 
     document, validation = load_validated_plan(workdir)
@@ -438,6 +522,7 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
         canvas_height=canvas_height,
     )
     _require_encoders(graph.has_audio)
+    modes = _accel_modes(accel)
 
     expected_duration = float(validation["timeline"]["duration_seconds"])
     first_source_id = str(document["segments"][0]["video"]["source_id"])
@@ -449,7 +534,8 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
     try:
         staging = _create_staging_file(layout)
         filter_script = _create_filter_script(layout, graph)
-        arguments = _build_ffmpeg_arguments(
+        used_accel = _render_with_fallback(
+            modes,
             graph,
             source_records,
             staging,
@@ -457,7 +543,6 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
             duration_seconds=expected_duration,
             frame_rate=float(frame_rate) if frame_rate is not None else None,
         )
-        _run_ffmpeg(arguments, expected_duration)
         metadata = _validate_rendered_preview(
             staging,
             expected_duration=expected_duration,
@@ -484,6 +569,7 @@ def render_preview(workdir: str | Path) -> dict[str, Any]:
         "profile": validation["profile"],
         "video": {
             "codec": metadata.video_codec,
+            "accel": used_accel,
             "width": metadata.video_width,
             "height": metadata.video_height,
             "frame_rate": metadata.video_frame_rate,

@@ -8,8 +8,6 @@ import math
 import textwrap
 from typing import Any
 
-from ..plan.schema import MOTION_ZOOM_MAX
-
 
 MIN_LIMITER_DBFS = 20 * math.log10(0.0625)
 """Menor teto representável diretamente pelo filtro `alimiter` do FFmpeg."""
@@ -94,39 +92,36 @@ def _motion_filter_graph(
     canvas_width: int,
     canvas_height: int,
 ) -> tuple[str, str]:
-    """Transforma o quadro normalizado e retorna o grafo com canvas preto de dimensão fixa."""
+    """Transforma o quadro normalizado e retorna o grafo com canvas preto do tamanho da saída."""
 
     start = motion["from"]
     end = motion["to"]
     focal_x = _linear_motion_expression(start["x"], end["x"], segment_duration)
     focal_y = _linear_motion_expression(start["y"], end["y"], segment_duration)
     zoom = _linear_motion_expression(start["zoom"], end["zoom"], segment_duration)
-    padded_width = int(canvas_width * MOTION_ZOOM_MAX)
-    padded_height = int(canvas_height * MOTION_ZOOM_MAX)
     rate = _number(frame_rate if frame_rate and frame_rate > 0 else 25.0)
     scaled_width = f"trunc(iw*{zoom}/2)*2"
     scaled_height = f"trunc(ih*{zoom}/2)*2"
-    crop_x = f"min(max((iw-ow)*{focal_x}\\,0)\\,iw-ow)"
-    crop_y = f"min(max((ih-oh)*{focal_y}\\,0)\\,ih-oh)"
     scaled_label = f"m{segment_index}s"
     background_label = f"m{segment_index}b"
-    composited_label = f"m{segment_index}p"
-    output_label = f"m{segment_index}c"
+    output_label = f"m{segment_index}p"
+    # A imagem escalada é posicionada em (W-w)*fx dentro do próprio canvas de saída; o overlay
+    # recorta o que excede (zoom > 1) e preenche com preto o que falta (zoom < 1). Antes o quadro
+    # era composto num canvas preto 4x maior e recortado depois, o que custava ~16x mais por frame
+    # para chegar à mesma posição.
+    # ponytail: `scale eval=frame` recria o scaler a cada frame (~8 ms/frame em 1080p, o maior custo
+    # do render com movimento), trocar por um caminho sem reinicialização se o zoom animado dominar o tempo.
     graph = ";".join(
         [
             f"[{input_label}]scale=w={scaled_width}:h={scaled_height}:eval=frame[{scaled_label}]",
             (
-                f"color=c=black:s={padded_width}x{padded_height}:r={rate}:"
+                f"color=c=black:s={canvas_width}x{canvas_height}:r={rate}:"
                 f"d={_number(segment_duration)}[{background_label}]"
             ),
             (
                 f"[{background_label}][{scaled_label}]overlay="
                 f"x=(W-w)*{focal_x}:y=(H-h)*{focal_y}:eval=frame:shortest=1"
-                f"[{composited_label}]"
-            ),
-            (
-                f"[{composited_label}]crop=w={canvas_width}:h={canvas_height}:"
-                f"x={crop_x}:y={crop_y}[{output_label}]"
+                f"[{output_label}]"
             ),
         ]
     )

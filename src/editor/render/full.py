@@ -15,19 +15,19 @@ from ..workdir import (
 )
 from .ffmpeg_graph import build_ffmpeg_graph
 from .preview import (
-    _build_ffmpeg_arguments,
+    _accel_modes,
     _cleanup_filter_script,
     _cleanup_staging,
     _create_filter_script,
     _create_staging_file,
     _preview_dimensions,
+    _render_with_fallback,
     _require_encoders,
-    _run_ffmpeg,
     _validate_rendered_preview,
 )
 
 
-def render_full(workdir: str | Path) -> dict[str, Any]:
+def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
     """Revalida a aprovação e renderiza exatamente a timeline aprovada em `full.mp4`."""
 
     document, validation = load_validated_plan(workdir)
@@ -55,6 +55,7 @@ def render_full(workdir: str | Path) -> dict[str, Any]:
         canvas_height=canvas_height,
     )
     _require_encoders(graph.has_audio)
+    modes = _accel_modes(accel)
 
     expected_duration = float(validation["timeline"]["duration_seconds"])
     first_source_id = str(document["segments"][0]["video"]["source_id"])
@@ -66,15 +67,16 @@ def render_full(workdir: str | Path) -> dict[str, Any]:
     try:
         staging = _create_staging_file(layout, "full")
         filter_script = _create_filter_script(layout, graph, "full")
-        arguments = _build_ffmpeg_arguments(
+        used_accel = _render_with_fallback(
+            modes,
             graph,
             source_records,
             staging,
             filter_script=filter_script,
             duration_seconds=expected_duration,
             frame_rate=float(frame_rate) if frame_rate is not None else None,
+            artifact_name="full",
         )
-        _run_ffmpeg(arguments, expected_duration, "full")
         metadata = _validate_rendered_preview(
             staging,
             expected_duration=expected_duration,
@@ -108,6 +110,7 @@ def render_full(workdir: str | Path) -> dict[str, Any]:
         "profile": validation["profile"],
         "video": {
             "codec": metadata.video_codec,
+            "accel": used_accel,
             "width": metadata.video_width,
             "height": metadata.video_height,
             "frame_rate": metadata.video_frame_rate,

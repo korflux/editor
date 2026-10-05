@@ -297,6 +297,20 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "max_command_characters": dependencies.max_command_characters(),
             "preview_max_dimension": MAX_PREVIEW_DIMENSION,
             "full_default_max_width": DEFAULT_MAX_FULL_WIDTH,
+            # `--accel gpu` é opt-in: "available" significa que o FFmpeg expõe NVENC e decode CUDA;
+            # a GPU só é confirmada ao renderizar, e a falha cai para CPU (campo video.accel do envelope).
+            "gpu_acceleration": {
+                "status": (
+                    "available"
+                    if ffmpeg["tools"]["ffmpeg"]["status"] == "available"
+                    and dependencies.gpu_acceleration_available(Path(ffmpeg["tools"]["ffmpeg"]["path"]))
+                    else "unavailable"
+                ),
+                "flag": "--accel gpu",
+                "encoder": dependencies.GPU_VIDEO_ENCODER,
+                "decoder": dependencies.GPU_HWACCEL,
+                "fallback": "cpu",
+            },
         },
         "transcription": {
             "status": "available",

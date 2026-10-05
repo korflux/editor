@@ -190,6 +190,11 @@ Execute:
 
 O atalho `preview` equivale ao longo acima com envelope `render preview`. Os longos permanecem válidos.
 
+`render preview` e `render full` aceitam `--accel gpu` (padrão `none`), que usa decode CUDA e NVENC e cai
+para CPU se a GPU falhar. Ele deixa o render até 8x mais leve para a CPU, mas não é mais rápido; use
+somente quando `capabilities` informar `render.gpu_acceleration.status` como `available` e o usuário
+precisar da CPU livre. O envelope informa o modo realmente usado em `video.accel`.
+
 Informe ao usuário onde está `preview.mp4` e peça que ele assista. Traduza o
 feedback em alterações no plano. Depois de qualquer alteração, repita a validação
 e gere uma nova preview. Ainda não peça aprovação: execute primeiro o gate editorial

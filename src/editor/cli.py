@@ -21,7 +21,7 @@ from .contracts import (
 from .integrity.approval import approve_workdir
 from .plan.validation import validate_plan
 from .render.full import render_full
-from .render.preview import render_preview
+from .render.preview import ACCEL_CHOICES, render_preview
 from .workdir import derive_source_id, init_workdir, resolve_workdir
 
 
@@ -66,6 +66,17 @@ def _add_workdir_argument(parser: argparse.ArgumentParser) -> None:
     """Registra `--workdir` opcional com default para o diretório atual, como nos longos."""
 
     parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
+
+
+def _add_accel_argument(parser: argparse.ArgumentParser) -> None:
+    """Registra `--accel` nos renders; `gpu` usa decode CUDA e NVENC com fallback para CPU."""
+
+    parser.add_argument(
+        "--accel",
+        choices=ACCEL_CHOICES,
+        default="none",
+        help="aceleração do render, padrão: none (CPU); gpu usa NVIDIA e cai para CPU se falhar",
+    )
 
 
 def _add_source_id_argument(parser: argparse.ArgumentParser) -> None:
@@ -157,6 +168,7 @@ def register_shortcut_parsers(subparsers: argparse._SubParsersAction) -> None:
         description="atalho para render preview",
     )
     _add_workdir_argument(preview_shortcut)
+    _add_accel_argument(preview_shortcut)
     _add_json_argument(preview_shortcut)
     # Atalho `full` equivale a `render full`; o envelope usa o nome canônico.
     full_shortcut = subparsers.add_parser(
@@ -165,6 +177,7 @@ def register_shortcut_parsers(subparsers: argparse._SubParsersAction) -> None:
         description="atalho para render full",
     )
     _add_workdir_argument(full_shortcut)
+    _add_accel_argument(full_shortcut)
     _add_json_argument(full_shortcut)
 
 
@@ -399,6 +412,7 @@ def build_parser() -> CliArgumentParser:
         description="gera ou substitui preview.mp4 a partir de um plano validado",
     )
     preview_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
+    _add_accel_argument(preview_parser)
     preview_parser.add_argument(
         "--json",
         action="store_true",
@@ -412,6 +426,7 @@ def build_parser() -> CliArgumentParser:
         description="valida aprovação, fontes e plano antes de gerar full.mp4",
     )
     full_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
+    _add_accel_argument(full_parser)
     full_parser.add_argument(
         "--json",
         action="store_true",
@@ -531,12 +546,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if (args.command == "render" and args.render_command == "preview") or args.command == "preview":
-            result = render_preview(resolve_workdir(args.workdir))
+            result = render_preview(resolve_workdir(args.workdir), accel=args.accel)
             write_json(success_envelope("render preview", result))
             return 0
 
         if (args.command == "render" and args.render_command == "full") or args.command == "full":
-            result = render_full(resolve_workdir(args.workdir))
+            result = render_full(resolve_workdir(args.workdir), accel=args.accel)
             write_json(success_envelope("render full", result))
             return 0
 
