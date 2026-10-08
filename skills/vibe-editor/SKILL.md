@@ -195,6 +195,20 @@ para CPU se a GPU falhar. Ele deixa o render até 8x mais leve para a CPU, mas n
 somente quando `capabilities` informar `render.gpu_acceleration.status` como `available` e o usuário
 precisar da CPU livre. O envelope informa o modo realmente usado em `video.accel`.
 
+Os renders leem só os trechos das fontes que a timeline usa (janelas de decode), por padrão e
+sem flag; `data.decode` informa se isso ocorreu. Com fontes grandes (acima de 1280x720) e várias
+iterações de preview previstas, construa proxies leves uma vez, sempre por comando explícito:
+
+```text
+.venv\Scripts\python.exe -B -m editor proxy build --workdir "<workdir>" [--source-id "<id>"] --json
+```
+
+O comando decodifica cada fonte inteira, por isso a preview nunca o dispara; ele reutiliza proxies
+válidos e refaz os obsoletos em `<workdir>\proxy\`. A preview usa `--proxy auto` (padrão), que lê
+o proxy válido de cada fonte e o original das demais; `--proxy off` lê só os originais. O
+envelope informa `data.proxy` com `sources` e `stale`. A full nunca usa proxy e a aprovação
+continua vinculada aos originais; apagar `<workdir>\proxy\` é sempre seguro.
+
 Informe ao usuário onde está `preview.mp4` e peça que ele assista. Traduza o
 feedback em alterações no plano. Depois de qualquer alteração, repita a validação
 e gere uma nova preview. Ainda não peça aprovação: execute primeiro o gate editorial

@@ -1,6 +1,6 @@
 """Benchmark local do render: relógio e CPU consumida por variante, com repetições intercaladas.
 
-Uso: `.venv\\Scripts\\python.exe -B scripts\\bench_render.py --scenario windows --reps 3`.
+Uso: `.venv\\Scripts\\python.exe -B scripts\\bench_render.py --scenario windows|proxy --reps 3`.
 
 Cada cenário gera suas fontes num diretório temporário do sistema (apagado ao terminar),
 grava um `plan.json` e roda `render preview` uma vez por variante a cada repetição, em
@@ -13,8 +13,12 @@ no Windows por um Job Object (contabilidade do kernel), nos demais sistemas por
 `RUSAGE_CHILDREN`. Assim a medição vale mesmo com outros renders na máquina, como pede
 o `REGRAS.md`. Não usa dependência fora da biblioteca padrão.
 
-Ponto de extensão: novos cenários (ex. `proxy` na T5) entram em `SCENARIOS` com sua
-preparação e suas variantes; variantes que precisam mudar o render entram em `VARIANTS`.
+Cenários: `windows` compara a preview sem e com janelas de decode; `proxy` constrói o proxy
+uma vez (medido à parte como `setup`, fora da comparação) e compara a preview sem e com
+proxy, ambas com janelas.
+
+Ponto de extensão: novos cenários entram em `SCENARIOS` com sua preparação, etapas de
+`setup` e variantes; cada variante é uma ação de `VARIANTS` executada no processo filho.
 """
 
 from __future__ import annotations
@@ -55,29 +59,77 @@ def _windows_off() -> Iterator[None]:
         yield
 
 
-@contextmanager
-def _default() -> Iterator[None]:
-    """Render como a CLI o executa hoje, sem nenhuma alteração."""
+def _preview_summary(result: dict[str, Any]) -> dict[str, Any]:
+    """Resumo da preview impresso pelo filho: como o grafo decodificou e quais proxies leu."""
 
-    yield
+    return {"decode": result["decode"], "accel": result["video"]["accel"], "proxy": result["proxy"]}
 
 
-VARIANTS: dict[str, Callable[[], Any]] = {
-    "sem_janelas": _windows_off,
-    "com_janelas": _default,
+def _preview_without_windows(workdir: Path) -> dict[str, Any]:
+    """Preview com o grafo anterior à phase 4 (sem janelas); base do cenário `windows`."""
+
+    from editor.render.preview import render_preview
+
+    with _windows_off():
+        return _preview_summary(render_preview(workdir))
+
+
+def _preview_default(workdir: Path) -> dict[str, Any]:
+    """Preview como a CLI a executa hoje (janelas ligadas, `--proxy auto`)."""
+
+    from editor.render.preview import render_preview
+
+    return _preview_summary(render_preview(workdir))
+
+
+def _preview_proxy_off(workdir: Path) -> dict[str, Any]:
+    """Preview com janelas lendo só os originais (`--proxy off`); base do cenário `proxy`."""
+
+    from editor.render.preview import render_preview
+
+    return _preview_summary(render_preview(workdir, proxy="off"))
+
+
+def _preview_proxy_on(workdir: Path) -> dict[str, Any]:
+    """Preview com janelas lendo o proxy (`--proxy auto`); falha se nenhuma fonte o usou.
+
+    A checagem impede que um proxy obsoleto faça o benchmark medir o original duas vezes.
+    """
+
+    from editor.render.preview import render_preview
+
+    summary = _preview_summary(render_preview(workdir, proxy="auto"))
+    if not summary["proxy"]["sources"]:
+        raise SystemExit(f"a preview não leu nenhum proxy: {summary['proxy']}")
+    return summary
+
+
+def _proxy_build(workdir: Path) -> dict[str, Any]:
+    """Constrói os proxies do trabalho como `editor proxy build`; exige ao menos um `created`."""
+
+    from editor.render.proxy import build_proxies
+
+    result = build_proxies(workdir)
+    if not any(item["status"] == "created" for item in result["proxies"]):
+        raise SystemExit(f"nenhum proxy foi criado: {result['proxies']}")
+    return result
+
+
+VARIANTS: dict[str, Callable[[Path], dict[str, Any]]] = {
+    "sem_janelas": _preview_without_windows,
+    "com_janelas": _preview_default,
+    "sem_proxy": _preview_proxy_off,
+    "com_proxy": _preview_proxy_on,
+    "proxy_build": _proxy_build,
 }
-"""Variantes conhecidas pelo processo filho; o nome é o rótulo impresso na tabela."""
+"""Ações conhecidas pelo processo filho; o nome é o rótulo impresso na tabela."""
 
 
 def _child(workdir: Path, variant: str) -> int:
-    """Processo filho: espera o pai vinculá-lo à contabilidade de CPU e renderiza a preview."""
+    """Processo filho: espera o pai vinculá-lo à contabilidade de CPU e executa a ação medida."""
 
     sys.stdin.readline()  # sincronia: nada roda antes de o pai registrar este processo no Job Object
-    from editor.render.preview import render_preview
-
-    with VARIANTS[variant]():
-        result = render_preview(workdir)
-    print(json.dumps({"decode": result["decode"], "accel": result["video"]["accel"]}))
+    print(json.dumps(VARIANTS[variant](workdir)))
     return 0
 
 
@@ -227,11 +279,16 @@ def _prepare_windows(root: Path) -> Path:
 
 @dataclass(frozen=True)
 class Scenario:
-    """Cenário de benchmark: prepara o trabalho e lista as variantes, a primeira é a base do ganho."""
+    """Cenário de benchmark: prepara o trabalho e lista as variantes, a primeira é a base do ganho.
+
+    `setup` lista ações medidas uma vez, depois da preparação e antes das variantes, com custo
+    reportado à parte (ex. o `proxy build`, que não entra na comparação das previews).
+    """
 
     prepare: Callable[[Path], Path]
     variants: tuple[str, ...]
     description: str
+    setup: tuple[str, ...] = ()
 
 
 SCENARIOS: dict[str, Scenario] = {
@@ -239,6 +296,12 @@ SCENARIOS: dict[str, Scenario] = {
         prepare=_prepare_windows,
         variants=("sem_janelas", "com_janelas"),
         description="C1: 4K H.264 GOP 1 s, 60 s, 6 trechos de 5 s, preview CPU",
+    ),
+    "proxy": Scenario(
+        prepare=_prepare_windows,
+        variants=("sem_proxy", "com_proxy"),
+        description="C1: 4K H.264 GOP 1 s, 60 s, 6 trechos de 5 s, preview CPU com janelas, sem e com proxy",
+        setup=("proxy_build",),
     ),
 }
 
@@ -253,6 +316,10 @@ def run_scenario(name: str, reps: int) -> dict[str, Any]:
     root = Path(tempfile.mkdtemp(prefix="editor-bench-"))
     try:
         workdir = scenario.prepare(root)
+        setup: dict[str, Measurement] = {}
+        for action in scenario.setup:
+            setup[action] = measure(workdir, action)
+            print(f"setup {action}: relogio {setup[action].wall_s:.2f} s, cpu {setup[action].cpu_s:.2f} s", file=sys.stderr)
         runs: dict[str, list[Measurement]] = {variant: [] for variant in scenario.variants}
         for rep in range(reps):
             # Ordem alternada: a variante que roda primeiro não leva sempre o disco frio.
@@ -265,34 +332,49 @@ def run_scenario(name: str, reps: int) -> dict[str, Any]:
         shutil.rmtree(root, ignore_errors=True)
 
     base = scenario.variants[0]
-    report: dict[str, Any] = {"scenario": name, "description": scenario.description, "reps": reps, "variants": {}}
+    report: dict[str, Any] = {
+        "scenario": name,
+        "description": scenario.description,
+        "reps": reps,
+        "setup": {
+            action: {"wall_s": round(item.wall_s, 3), "cpu_s": round(item.cpu_s, 3), "summary": item.summary}
+            for action, item in setup.items()
+        },
+        "variants": {},
+    }
     for variant, measurements in runs.items():
         report["variants"][variant] = {
             "wall_s": [round(item.wall_s, 3) for item in measurements],
             "cpu_s": [round(item.cpu_s, 3) for item in measurements],
             "wall_median_s": round(statistics.median(item.wall_s for item in measurements), 3),
             "cpu_median_s": round(statistics.median(item.cpu_s for item in measurements), 3),
-            "decode": measurements[-1].summary["decode"],
+            "summary": measurements[-1].summary,
         }
     base_wall = report["variants"][base]["wall_median_s"]
     base_cpu = report["variants"][base]["cpu_median_s"]
     for variant, data in report["variants"].items():
         data["wall_gain_pct"] = round((1 - data["wall_median_s"] / base_wall) * 100, 1)
         data["cpu_gain_pct"] = round((1 - data["cpu_median_s"] / base_cpu) * 100, 1)
+        # Razão frente à base; a meta do proxy é relógio da preview com proxy <= 0,5 da sem proxy.
+        data["wall_ratio"] = round(data["wall_median_s"] / base_wall, 3)
+        data["cpu_ratio"] = round(data["cpu_median_s"] / base_cpu, 3)
     return report
 
 
 def print_table(report: dict[str, Any]) -> None:
-    """Imprime a tabela legível com execuções, medianas e ganho frente à variante base."""
+    """Imprime a tabela legível com setup, execuções, medianas, ganho e razão frente à variante base."""
 
     print(f"cenario {report['scenario']}: {report['description']} ({report['reps']} execucoes intercaladas)")
-    print(f"{'variante':<14}{'relogio (s)':<28}{'mediana':>9}{'ganho':>8}   {'cpu (s)':<28}{'mediana':>9}{'ganho':>8}")
+    for action, data in report["setup"].items():
+        print(f"setup {action} (uma vez, fora da comparacao): relogio {data['wall_s']:.2f} s, cpu {data['cpu_s']:.2f} s")
+    print(f"{'variante':<14}{'relogio (s)':<28}{'mediana':>9}{'ganho':>8}   {'cpu (s)':<28}{'mediana':>9}{'ganho':>8}   razao rel/cpu")
     for variant, data in report["variants"].items():
         wall = ", ".join(f"{value:.2f}" for value in data["wall_s"])
         cpu = ", ".join(f"{value:.2f}" for value in data["cpu_s"])
         print(
             f"{variant:<14}{wall:<28}{data['wall_median_s']:>9.2f}{data['wall_gain_pct']:>7.1f}%   "
             f"{cpu:<28}{data['cpu_median_s']:>9.2f}{data['cpu_gain_pct']:>7.1f}%"
+            f"   razao {data['wall_ratio']:.3f} / {data['cpu_ratio']:.3f}"
         )
 
 

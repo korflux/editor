@@ -114,6 +114,52 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertNotIn("max_overlays", data["limits"])
         self.assertIn(data["recommendation"]["status"], {"recommended", "missing"})
 
+        # Phase 4: operação `proxy build`, janelas de decode e `--proxy` da preview.
+        proxy_build = data["operations"]["proxy_build"]
+        self.assertIn(proxy_build["status"], {"available", "missing", "unsupported"})
+        self.assertEqual(proxy_build["requires"], ["ffmpeg", "ffprobe", "libx264"])
+        windows = data["render"]["decode_windows"]
+        self.assertEqual(windows["default"], "on")
+        self.assertEqual(windows["applies_to"], ["render_preview", "render_full"])
+        self.assertEqual(windows["source_kinds"], ["video"])
+        self.assertEqual(windows["merge_gap_seconds"], 2.0)
+        self.assertEqual(windows["end_slack_seconds"], 0.5)
+        self.assertEqual(windows["max_windows_per_source"], 8)
+        self.assertEqual(windows["max_video_inputs"], 24)
+        self.assertEqual(windows["min_read_reduction"], 0.2)
+        self.assertEqual(windows["fallback"], "unwindowed")
+        proxy = data["render"]["proxy"]
+        self.assertEqual(proxy["flag"], "--proxy")
+        self.assertEqual(proxy["modes"], ["auto", "off"])
+        self.assertEqual(proxy["default"], "auto")
+        self.assertEqual(proxy["applies_to"], ["render_preview"])
+        self.assertEqual(proxy["build_command"], "proxy build")
+        self.assertIs(proxy["automatic_build"], False)
+        self.assertEqual(proxy["directory"], "proxy")
+        self.assertEqual(
+            proxy["eligibility"],
+            {
+                "source_kinds": ["video"],
+                "width_greater_than": 1_280,
+                "height_greater_than": 720,
+                "match": "any_dimension",
+            },
+        )
+        self.assertEqual(
+            proxy["parameters"],
+            {
+                "version": 1,
+                "max_width": 1_280,
+                "max_height": 720,
+                "upscale": False,
+                "encoder": "libx264",
+                "pixel_format": "yuv420p",
+                "gop": 15,
+                "crf": 20,
+                "audio": "copy",
+            },
+        )
+
     def test_documentation_describes_only_the_v2_contract(self) -> None:
         """Impede que a descoberta e o fluxo do agente voltem a documentar o contrato antigo."""
 
@@ -220,6 +266,35 @@ class CapabilitiesTests(unittest.TestCase):
 
         self.assertEqual(data["operations"]["render_preview"]["status"], "unsupported")
         self.assertEqual(data["operations"]["render_full"]["status"], "unsupported")
+        self.assertEqual(data["operations"]["proxy_build"]["status"], "unsupported")
+        self.assertEqual(data["render"]["proxy"]["status"], "unsupported")
+
+    def test_proxy_build_requires_only_the_video_encoder(self) -> None:
+        """Confirma que `proxy build` segue disponível sem AAC, pois copia o áudio da fonte."""
+
+        ffmpeg = {
+            "status": "available",
+            "version": "fixture",
+            "tools": {
+                "ffmpeg": {"status": "available", "path": "ffmpeg", "version": "fixture"},
+                "ffprobe": {"status": "available", "path": "ffprobe", "version": "fixture"},
+            },
+            "encoders": {
+                "status": "unsupported",
+                "available": ["libx264"],
+                "missing": ["aac"],
+                "reason": "aac ausente",
+            },
+        }
+        with workspace_tempdir() as root:
+            with patch(
+                "editor.capabilities.dependencies.detect_ffmpeg",
+                return_value=ffmpeg,
+            ):
+                data = collect_capabilities(root)
+
+        self.assertEqual(data["operations"]["render_preview"]["status"], "unsupported")
+        self.assertEqual(data["operations"]["proxy_build"]["status"], "available")
 
     def test_cuda_capability_requires_a_working_ctranslate_runtime(self) -> None:
         """Confirma que driver e backend presentes não bastam para recomendar CUDA."""

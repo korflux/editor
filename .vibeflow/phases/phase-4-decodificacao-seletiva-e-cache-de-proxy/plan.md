@@ -104,7 +104,10 @@ Esta entrega reduz o tempo de render do editor sem alterar o resultado: o grafo 
 
 ### T5: Expor, documentar e provar a entrega
 
-- [ ] T5 concluída
+- [x] T5 concluída
+- **Prova:** `tests.test_capabilities tests.test_cli_contract` -> 32 OK. `bench_render.py --scenario proxy --reps 3` (4K, 6 trechos de 5 s, ambas com janelas): preview sem proxy 8,96 s de relógio e 66,38 s de CPU (medianas); com proxy 1,67 s e 8,20 s, razão 0,186 no relógio e 0,124 na CPU (meta <= 0,5); `proxy build` uma vez: 13,15 s de relógio e 134,69 s de CPU. `unittest discover -s tests` -> 177 OK; jornadas E2E à parte (`test_mvp_flow`, `test_phase_2_flow`, `test_phase_1_flow`) -> OK. `quick_validate.py` -> válida. `gitleaks` -> sem vazamentos. `pip_audit` -> 3 achados em `urllib3==2.7.0`, pré-existentes e já registrados em `.erros-encontrados/2026-10-04-urllib3-vulneravel-no-lockfile.md`; não introduzidos nesta phase, por isso C4 fica aberto na spec.
+- **Arquivos:** `src/editor/capabilities.py`, `tests/test_capabilities.py`, `scripts/bench_render.py`, `skills/vibe-editor/SKILL.md`, `.vibeflow/REGRAS.md`, `src/editor/render/proxy.py`, `src/editor/workdir.py`, `.erros-encontrados/2026-10-08-discover-nao-executa-e2e.md`
+- **Decisões:** constantes `PROXY_DIRECTORY`, `PROXY_VIDEO_ENCODER` e `PROXY_PIXEL_FORMAT` extraídas para fonte única com `capabilities`, sem mudar argumentos nem `PROXY_PARAMETERS_VERSION`. `proxy_build` exige só ffmpeg, ffprobe e libx264 (áudio é cópia). O benchmark passou a ter `setup` medido à parte e `summary` com `wall_ratio`/`cpu_ratio`. A replicação do `REGRAS.md` em `CLAUDE.md` e `AGENTS.md` fica para a finalização aprovada. Erro registrado: `tests/e2e/` sem `__init__.py`, então o `discover` não roda as jornadas E2E.
 - **Spec:** A8, C1, C2, C4
 - **O quê:** `capabilities` informa a operação `proxy_build`, as janelas de decode e o `--proxy`; a skill `vibe-editor` e o `REGRAS.md` documentam as capacidades, o mapa de estrutura e as medições; o benchmark prova o ganho do proxy e fecha a tabela de C1.
 - **Aceite:**

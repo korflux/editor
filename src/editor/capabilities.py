@@ -37,7 +37,24 @@ from .plan.validation import (
     MAX_SEGMENTS,
     MAX_TIMELINE_DURATION_SECONDS,
 )
-from .render.preview import MAX_PREVIEW_DIMENSION
+from .render.preview import GPU_MAX_VIDEO_INPUTS, MAX_PREVIEW_DIMENSION, PROXY_CHOICES
+from .render.proxy import (
+    PROXY_CRF,
+    PROXY_GOP,
+    PROXY_MAX_HEIGHT,
+    PROXY_MAX_WIDTH,
+    PROXY_PARAMETERS_VERSION,
+    PROXY_PIXEL_FORMAT,
+    PROXY_VIDEO_ENCODER,
+)
+from .render.windows import (
+    END_SLACK_S,
+    MAX_VIDEO_INPUTS,
+    MAX_WINDOWS_PER_SOURCE,
+    MERGE_GAP_S,
+    MIN_READ_REDUCTION,
+)
+from .workdir import PROXY_DIRECTORY
 
 def default_model_root() -> Path:
     """Seleciona o diretório de modelos configurado ou o padrão local do repositório."""
@@ -169,6 +186,15 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
     render_requires = ["ffmpeg", "ffprobe", *dependencies.RENDER_ENCODERS]
     max_cut_boundaries = max(0, MAX_SEGMENTS - 1)
 
+    # `proxy build` só codifica vídeo (o áudio é copiado), então exige libx264 e não o AAC dos renders.
+    proxy_build_status = (
+        ffmpeg["status"]
+        if ffmpeg["status"] != "available"
+        else "available"
+        if PROXY_VIDEO_ENCODER in ffmpeg["encoders"]["available"]
+        else "unsupported"
+    )
+
     transcribe_status = _combine_statuses(whisper["status"], models["status"])
     operations = {
         "capabilities": _operation("available", [], "consulta local sem efeitos colaterais"),
@@ -211,6 +237,11 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             render_status,
             render_requires,
             "renderização final condicionada à aprovação vigente",
+        ),
+        "proxy_build": _operation(
+            proxy_build_status,
+            ["ffmpeg", "ffprobe", PROXY_VIDEO_ENCODER],
+            "cria ou reutiliza proxies leves das fontes de vídeo grandes, só por comando explícito",
         ),
     }
 
@@ -310,6 +341,55 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
                 "encoder": dependencies.GPU_VIDEO_ENCODER,
                 "decoder": dependencies.GPU_HWACCEL,
                 "fallback": "cpu",
+            },
+            # Decodificação seletiva (phase 4, F1): ligada por padrão e sem flag, pois a saída é
+            # provada equivalente. Os tetos vêm do planejador `render/windows.py`; se o render
+            # janelado falhar (exceto timeout) ele é repetido uma vez sem janelas. `data.decode`
+            # do envelope informa `windowed`, `inputs` e `sources` do grafo publicado.
+            "decode_windows": {
+                "status": "available",
+                "default": "on",
+                "applies_to": ["render_preview", "render_full"],
+                "source_kinds": ["video"],
+                "merge_gap_seconds": MERGE_GAP_S,
+                "end_slack_seconds": END_SLACK_S,
+                "max_windows_per_source": MAX_WINDOWS_PER_SOURCE,
+                "max_video_inputs": MAX_VIDEO_INPUTS,
+                "min_read_reduction": MIN_READ_REDUCTION,
+                "gpu_decode_max_video_inputs": GPU_MAX_VIDEO_INPUTS,
+                "fallback": "unwindowed",
+                "envelope": "decode",
+            },
+            # Proxies (phase 4, F2/F3): `proxy build` é sempre explícito e só a preview os lê,
+            # por `--proxy` (padrão `auto`); a full e a aprovação usam sempre os originais.
+            # Parâmetros reais de `render/proxy.py`; `envelope` aponta `data.proxy` da preview.
+            "proxy": {
+                "status": proxy_build_status,
+                "flag": "--proxy",
+                "modes": list(PROXY_CHOICES),
+                "default": "auto",
+                "applies_to": ["render_preview"],
+                "build_command": "proxy build",
+                "automatic_build": False,
+                "directory": PROXY_DIRECTORY,
+                "eligibility": {
+                    "source_kinds": ["video"],
+                    "width_greater_than": PROXY_MAX_WIDTH,
+                    "height_greater_than": PROXY_MAX_HEIGHT,
+                    "match": "any_dimension",
+                },
+                "parameters": {
+                    "version": PROXY_PARAMETERS_VERSION,
+                    "max_width": PROXY_MAX_WIDTH,
+                    "max_height": PROXY_MAX_HEIGHT,
+                    "upscale": False,
+                    "encoder": PROXY_VIDEO_ENCODER,
+                    "pixel_format": PROXY_PIXEL_FORMAT,
+                    "gop": PROXY_GOP,
+                    "crf": PROXY_CRF,
+                    "audio": "copy",
+                },
+                "envelope": "proxy",
             },
         },
         "transcription": {

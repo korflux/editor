@@ -48,13 +48,14 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `pyproject.toml`: metadados do pacote Python e entry point `editor`.
 - `requirements.lock`: resolução pinada para Python 3.11 x64 no Windows, com hashes dos artefatos Python.
 - `scripts/install.ps1`: verificação e instalação explícita do venv, dependências, ferramentas locais, modelos e CUDA opcional.
+- `scripts/bench_render.py`: benchmark local da preview (cenários `windows` e `proxy`), com relógio e CPU consumida do processo e descendentes por Job Object, repetições intercaladas e medianas; gera a fonte 4K sintética em diretório temporário e a apaga ao terminar.
 - `src/editor/`: pacote da CLI.
   - `__main__.py`: execução por `python -m editor`.
   - `cli.py`: parser, ajuda, despacho inicial e conversão central de erros.
   - `contracts.py`: schema de envelopes, exit codes e erro de domínio público.
-- `src/editor/capabilities.py`: inventário local, perfil `max_full_width`, transporte do filtro por arquivo, normalização da transcrição, fontes `fontfile`, operações e recomendação.
+- `src/editor/capabilities.py`: inventário local, perfil `max_full_width`, transporte do filtro por arquivo, janelas de decode, proxies de preview, normalização da transcrição, fontes `fontfile`, operações e recomendação.
 - `src/editor/dependencies.py`: sondagem segura de ferramentas, hardware, backend e modelos locais.
-- `src/editor/workdir.py`: validação do trabalho, source IDs, diretórios permitidos e publicação atômica.
+- `src/editor/workdir.py`: validação do trabalho, source IDs, diretórios permitidos, layout da pasta `proxy/` e publicação atômica.
 - `src/editor/media.py`: inspeção FFprobe e allowlist de áudio, vídeo e imagens raster estáticas, com limites de tamanho, duração e dimensão.
 - `src/editor/process.py`: execução estruturada e streaming PCM de processos locais sem shell intermediário.
 - `src/editor/analysis/audio.py`: análise de loudness, pico verdadeiro, níveis por janela e silêncio por amplitude.
@@ -68,6 +69,8 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `src/editor/render/ffmpeg_graph.py`: composição determinística de vídeo, áudio, texto e camadas raster compartilhada pela preview e full.
 - `src/editor/render/preview.py`: renderização, validação de metadados e publicação atômica da única `preview.mp4`.
 - `src/editor/render/full.py`: revalidação da aprovação e renderização final da única `full.mp4`.
+- `src/editor/render/windows.py`: planejador puro das janelas de decode (união dos intervalos por fonte de vídeo, mescla de lacunas, folga final, tetos e ganho mínimo), aplicado ao grafo por `-ss`/`-t` por entrada.
+- `src/editor/render/proxy.py`: `proxy build` (codificação, verificação por FFprobe e publicação atômica de `proxy/<id>.mp4` e `.json`) e `lookup_proxy`, a leitura de validade por metadados consumida pela preview.
 - `src/editor/whisper_backend.py`: seleção local de modelo/dispositivo e ponte lazy com faster-whisper sem download.
 - `tests/test_audio_analysis.py`: processo real da CLI, validação precoce e preservação em falha de FFmpeg.
 - `tests/test_frame_extraction.py`: seleção explícita/regular, timestamps efetivos, PNGs e preservação em falha de FFmpeg.
@@ -75,6 +78,9 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `tests/test_preview_render.py`: composição real da preview, áudio explícito do b-roll, perfil, mute e preservação em falha.
 - `tests/test_approval.py`: aprovação real por hashes, ordenação das fontes, invariância de formatação e preservação do estado vigente.
 - `tests/test_full_render.py`: full real com aprovação vigente, bloqueio por mutação, aprovação inválida e preservação em falha de FFmpeg.
+- `tests/test_decode_windows.py`: planejador de janelas, equivalência `framemd5` de vídeo e áudio com e sem janelas nos casos de borda, render real de preview e full, fallback sem janelas e timeout sem repetição.
+- `tests/test_proxy_build.py`: `proxy build` real, reutilização, proxy reprovado não publicado, fonte alterada como obsoleta, metadado fora do formato e limpeza de `.tmp`.
+- `tests/test_preview_proxy.py`: preview com proxy numa fonte e original noutra, `--proxy off`, proxy obsoleto em `stale`, aprovação e full independentes do proxy.
 - `tests/test_transcription.py`: contrato canônico, seleção CPU/CUDA, timestamps obrigatórios e erros seguros da transcrição.
 - `tests/fixtures/media/main.mp4`: fixture curta H.264/AAC com trechos silenciosos para o contrato de áudio.
 - `tests/fixtures/workflow/`: plan.json v2, fontes locais, preview, aprovação e full do cenário de validação do MVP.
@@ -94,7 +100,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `skills/vibe-editor/`: skill que ensina agentes a conduzir o fluxo de edição de vídeo local, incluindo verificação do ambiente, análise, preview, aprovação e full.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: MVP implementado até a jornada E2E em 2026-09-12; Phase 1 T1 a T8 implementadas e T9 de capacidades/documentação verificada em 2026-09-13; Phase 2 T1 a T6 implementadas e T7 de jornada detalhada verificada em 2026-09-19. -->
+<!-- evidência: MVP implementado até a jornada E2E em 2026-09-12; Phase 1 T1 a T8 implementadas e T9 de capacidades/documentação verificada em 2026-09-13; Phase 2 T1 a T6 implementadas e T7 de jornada detalhada verificada em 2026-09-19; Phase 4 T1 a T4 implementadas e T5 de capacidades, documentação e benchmark verificada em 2026-10-08. -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.
@@ -141,7 +147,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 
 - **Propósito:** expor o inventário local consumível por agentes antes de iniciar análise ou edição, incluindo o contrato editorial da Phase 1.
 - **Entrada:** `editor capabilities --json`; o comando também preserva a saída estruturada quando `--json` é omitido.
-- **Saída:** envelope JSON com sistema, CPU, memória, GPU/VRAM, FFmpeg/FFprobe, backend Whisper, modelos locais, dispositivos, formatos de vídeo, áudio e imagem, plano schema v2, limites, operações incluindo `init` e recomendação.
+- **Saída:** envelope JSON com sistema, CPU, memória, GPU/VRAM, FFmpeg/FFprobe, backend Whisper, modelos locais, dispositivos, formatos de vídeo, áudio e imagem, plano schema v2, limites, operações incluindo `init` e `proxy_build`, `render.decode_windows`, `render.proxy` e recomendação.
 - **Dependências:** biblioteca padrão; FFmpeg/FFprobe, `nvidia-smi`, faster-whisper, CTranslate2 e modelos são sondados somente quando fornecidos localmente.
 - **Limitação conhecida:** GPU é detectada via `nvidia-smi` e a recomendação só usa modelos `tiny`, `base` ou `small` com os arquivos CTranslate2 mínimos; movimento usa interpolação linear, cortes J/L têm duração máxima de 30 segundos, e imagens aceitas são PNG, JPEG/JPG e WebP estáticos até 100 MiB e 8.192 pixels por dimensão; `ponytail: adicionar adaptadores para outros fornecedores de GPU ou catálogos de modelos somente quando houver necessidade real`.
 - **Verificação:** `python -m editor capabilities --json` e `python -m unittest discover -s tests -p "test_capabilities.py" -v`.
@@ -185,12 +191,13 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 ### Renderização de preview, T8
 
 - **Propósito:** transformar um plano v2 validado em uma única preview linear com cortes, junções, movimento, b-roll, áudio explícito, processamento e camadas de texto, imagem e vídeo.
-- **Entrada:** `editor render preview --workdir <caminho-absoluto> [--accel none|gpu] --json`, usando somente o `plan.json` e as fontes locais declaradas. `--accel gpu` (padrão `none`) tenta decode CUDA nas fontes de vídeo (até 4 simultâneas) e NVENC `p3`/`cq 31`, e cai para `libx264` se a GPU falhar, informando o modo usado em `video.accel`; `capabilities` expõe `render.gpu_acceleration`.
-- **Saída:** envelope JSON em `stdout` e `<workdir>/preview.mp4`, publicado somente depois de o arquivo temporário ser validado como MP4 H.264/AAC, 16:9, até 720 pixels e com a duração da timeline.
+- **Entrada:** `editor render preview --workdir <caminho-absoluto> [--accel none|gpu] [--proxy auto|off] --json`, usando somente o `plan.json` e as fontes locais declaradas. `--accel gpu` (padrão `none`) tenta decode CUDA quando o comando tem até 4 entradas de vídeo e NVENC `p3`/`cq 31`, e cai para `libx264` se a GPU falhar, informando o modo usado em `video.accel`; `capabilities` expõe `render.gpu_acceleration`. `--proxy auto` (padrão) lê o proxy válido de cada fonte de vídeo e o original das demais; `off` lê só os originais (ver "Proxies de preview, Phase 4").
+- **Janelas de decode (padrão, sem flag):** cada fonte de vídeo é lida só nos intervalos que a timeline usa (segmentos, camadas de vídeo e trilhas de áudio), uma entrada `-ss`/`-t` por janela, com lacunas menores que 2 s mescladas, folga final de 0,5 s, até 8 janelas por fonte e 24 entradas de vídeo, e só quando a leitura estimada cai pelo menos 20%; senão o comando de entrada é o anterior. Falha com janelas (exceto timeout) repete uma vez sem janelas. Quadros e áudio são provados iguais por `framemd5`; `capabilities` expõe `render.decode_windows`.
+- **Saída:** envelope JSON em `stdout` e `<workdir>/preview.mp4`, publicado somente depois de o arquivo temporário ser validado como MP4 H.264/AAC, 16:9, até 720 pixels e com a duração da timeline. `data.decode` informa `windowed`, `inputs` e `sources`; `data.proxy` informa `mode`, `sources` e `stale`.
 - **Dependências:** Python 3.11 x64, FFmpeg/FFprobe locais com encoders `libx264` e `aac`; nenhum processo usa shell intermediário ou rede.
 - **Limitação conhecida:** a preview usa um único canvas 16:9 derivado da largura do primeiro vídeo e codificação H.264 `libx264` com preset `veryfast`; camadas de vídeo não têm loop, freeze, áudio implícito ou alteração de velocidade; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.
 - **Desempenho medido (2026-10-04, i5-13600K, RTX 3060 Ti, fonte 4K H.264 de ~100 Mbps para 1080p, 30 s de saída):** o custo dominante é o decode da fonte (~90 de ~127 s de CPU) e, em vídeos com zoom animado, o `scale eval=frame` por quadro, que o grafo agora compõe no canvas de saída em vez de um canvas 4x maior. A codificação `libx264 veryfast` custa pouco relógio (~0,4 s). `--accel gpu` reduz a CPU de ~127 s para ~15 s (8x mais leve) com saída equivalente (SSIM 0,993 contra a CPU), mas **não é mais rápido**: o NVDEC desta placa decodifica 4K a ~125 fps contra ~224 fps da CPU (relógio de 9,6 s para 14,2 s). Use `gpu` para liberar a CPU, não para ganhar tempo. Medir sempre por CPU consumida (`ffmpeg -benchmark`) quando houver outros renders na máquina.
-- **Não adotado, medido:** decode por GPU com `scale_cuda` (CPU ~4 s, mas relógio igual ao `gpu`, limitado pelo NVDEC); scale `bilinear` e limite de threads (sem ganho útil); `libx264 ultrafast`. Evitar decodificar trechos descartados exigiria decoders por segmento, inviável pelo limite de linha de comando e de VRAM; `ponytail: reavaliar com fontes de GOP curto e muita filmagem não usada`.
+- **Não adotado, medido:** decode por GPU com `scale_cuda` (CPU ~4 s, mas relógio igual ao `gpu`, limitado pelo NVDEC); scale `bilinear` e limite de threads (sem ganho útil); `libx264 ultrafast`. Decoders por segmento foram substituídos na Phase 4 por janelas por fonte com tetos, que cabem na linha de comando; ver as medições em "Decodificação seletiva e proxies, Phase 4".
 - **Verificação:** `python -m editor render preview --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_preview_render.py" -v`.
 
 ### Aprovação por hashes, T9
@@ -205,8 +212,8 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 ### Renderização final com aprovação, T10
 
 - **Propósito:** transformar a timeline aprovada em uma única full linear, sem reinterpretar o plano ou o conteúdo.
-- **Entrada:** `editor render full --workdir <caminho-absoluto> [--accel none|gpu] --json`; exige `plan.json`, `preview.mp4`, `approval.json` e todas as fontes locais declaradas. `--accel` segue o contrato da preview.
-- **Saída:** envelope JSON em `stdout` e `<workdir>/full.mp4`, publicado somente depois de a aprovação, o plano, a preview e as fontes coincidirem por SHA-256 e o MP4 final passar pela inspeção de mídia.
+- **Entrada:** `editor render full --workdir <caminho-absoluto> [--accel none|gpu] --json`; exige `plan.json`, `preview.mp4`, `approval.json` e todas as fontes locais declaradas. `--accel` e as janelas de decode seguem o contrato da preview; a full não aceita `--proxy` e lê sempre os originais.
+- **Saída:** envelope JSON em `stdout` e `<workdir>/full.mp4`, publicado somente depois de a aprovação, o plano, a preview e as fontes coincidirem por SHA-256 e o MP4 final passar pela inspeção de mídia; `data.decode` informa `windowed`, `inputs` e `sources`.
 - **Dependências:** biblioteca padrão, FFmpeg/FFprobe locais com encoders `libx264` e `aac`; usa a mesma timeline, grafo de filtros e processamento de áudio da preview, sem rede.
 - **Limitação conhecida:** a full usa a largura do primeiro vídeo e canvas 16:9, com codificação H.264 `libx264` e preset `veryfast`; `ponytail: permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets`.
 - **Verificação:** `python -m editor render full --workdir <caminho-absoluto> --json` e `python -m unittest discover -s tests -p "test_full_render.py" -v`.
@@ -262,3 +269,30 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - **Fluxo:** a jornada detalhada valida o plano de 69 fontes, 231 segmentos e 43 camadas, renderiza preview e full pelo mesmo grafo, aprova por hashes e bloqueia mutação de perfil.
 - **Segurança:** grafo UTF-8 exclusivo em `.tmp` com limpeza em sucesso, erro, exceção e timeout; caminho de fonte nunca entra no plano canônico nem no envelope público.
 - **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_2_flow -v`, `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`, gitleaks e pip-audit.
+
+### Proxies de preview, Phase 4
+
+- **Propósito:** acelerar as iterações de preview com fontes grandes, lendo uma cópia leve de cada fonte de vídeo construída uma vez e reaproveitada, sem afetar a full nem a aprovação.
+- **Entrada:** `editor proxy build --workdir <caminho-absoluto> [--source-id <id>]... --json`, sempre explícito e nunca disparado por `render preview`; `--source-id` é repetível, segue `^[a-z0-9][a-z0-9_-]{0,63}$` e precisa existir no plano. A preview consome os proxies com `--proxy auto|off` (padrão `auto`).
+- **Saída:** `<workdir>/proxy/<id>.mp4` e `<id>.json` publicados por substituição atômica, e envelope com `data.proxies[]` (`source_id`, `status` `created`, `reused`, `skipped` ou `failed`, `reason` `NOT_ELIGIBLE`, `STREAM_MISMATCH`, `FFMPEG_FAILED` ou `TIMEOUT`, `width`, `height`, `size_bytes`). Elegível é a fonte de vídeo com largura acima de 1280 ou altura acima de 720; o proxy é H.264 `libx264` `yuv420p` que cabe em 1280x720 sem upscale, GOP 15, `crf 20`, áudio por cópia e timestamps preservados (`-copyts`, `-fps_mode passthrough`, `-enc_time_base demux`). Só é publicado se a contagem de pacotes de vídeo coincidir, o `start_time` diferir até 1 ms e a duração até um quadro. Validade por metadados (tamanho e `mtime_ns` da fonte, versão dos parâmetros, tamanho do proxy); obsoleto é refeito no próximo build e aparece em `data.proxy.stale` da preview, que então lê o original. `capabilities` expõe `operations.proxy_build` e `render.proxy`.
+- **Dependências:** biblioteca padrão, FFmpeg com `libx264` e FFprobe locais; sem rede e sem shell, com timeout proporcional à duração da fonte e temporários em `.tmp` limpos em sucesso, erro e timeout.
+- **Limitação conhecida:** a preview com proxy não é bit a bit idêntica à sem proxy (rascunho visual aceito); a full nunca usa proxy e a aprovação vincula os originais. Proxy com metadados válidos e conteúdo corrompido falha a preview com `RENDER_FAILED` em vez de cair para o original (contorno: refazer o build ou `--proxy off`); não há limpeza automática, e apagar `<workdir>/proxy/` é sempre seguro; `ponytail: adicionar fallback ao original e limpeza do cache quando o uso real mostrar proxy corrompido ou consumo de disco incômodo`.
+- **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.test_proxy_build tests.test_preview_proxy -v` e `.venv\Scripts\python.exe -B scripts\bench_render.py --scenario proxy --reps 3`.
+
+### Decodificação seletiva e proxies, Phase 4
+
+- **Capacidades:** `capabilities --json` informa `operations.proxy_build`, `render.decode_windows` (padrão ligado com fallback sem janelas, lacuna de mescla 2 s, folga 0,5 s, 8 janelas por fonte, 24 entradas de vídeo, ganho mínimo 20%) e `render.proxy` (modos `auto|off`, padrão `auto`, só preview, parâmetros, elegibilidade e pasta `proxy/`), todos lidos das constantes de `render/windows.py`, `render/proxy.py`, `render/preview.py` e `workdir.py`.
+- **Segurança:** os tempos do plano e o hash canônico nunca mudam (o deslocamento existe só no grafo); o proxy não entra em hash de aprovação; caminhos derivados só do id validado, sem links nem reparse points.
+- **Medições (2026-10-08, i5-13600K, RTX 3060 Ti, Windows 11):** cenário C1 de `scripts/bench_render.py`, fonte sintética 4K H.264 de GOP 1 s (30 quadros) com ~90 Mbps e AAC, 60 s, plano com 6 trechos de 5 s, preview de até 720 pixels por CPU (`--accel none`), mediana de 3 execuções intercaladas; CPU é a soma de usuário e sistema do processo e descendentes (Job Object).
+
+| Medição | Relógio mediano | CPU mediana | Resultado |
+|---|---|---|---|
+| Janelas (T2, 2026-10-07): preview sem janelas | 12,58 s | 97,20 s | base |
+| Janelas (T2, 2026-10-07): preview com janelas | 10,86 s | 70,05 s | relógio -13,7%, CPU -27,9%; meta C1 ajustada (CPU -20% sem piora de relógio) atingida |
+| Proxy (T5): `proxy build` da fonte, uma vez | 13,15 s | 134,69 s | proxy 1280x720 de 28,5 MB; custo pago uma vez, fora da comparação |
+| Proxy (T5): preview com janelas, `--proxy off` | 8,96 s | 66,38 s | base |
+| Proxy (T5): preview com janelas, `--proxy auto` | 1,67 s | 8,20 s | razão de relógio 0,186 (meta 0,5 atingida), CPU 0,124 |
+
+Nesse cenário cada preview com proxy economiza ~7,3 s de relógio e ~58 s de CPU, então o build se paga em relógio a partir da segunda preview e em CPU a partir da terceira. As duas linhas de base diferem entre as medições por variação da máquina entre os dias; cada comparação usa execuções intercaladas no mesmo dia.
+
+- **Verificação:** `.venv\Scripts\python.exe -B scripts\bench_render.py --scenario windows --reps 3`, `.venv\Scripts\python.exe -B scripts\bench_render.py --scenario proxy --reps 3` e `.venv\Scripts\python.exe -B -m unittest tests.test_decode_windows tests.test_capabilities -v`.

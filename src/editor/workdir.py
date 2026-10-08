@@ -15,6 +15,8 @@ from .dependencies import is_regular_path
 
 
 SOURCE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+PROXY_DIRECTORY = "proxy"
+"""Pasta do cache de proxies dentro do trabalho; fonte única para o layout e para `capabilities`."""
 INIT_DIRECTORY_PATHS = (".tmp", "analysis", "analysis/audio", "analysis/transcription", "frames")
 _KNOWN_ROOT_ARTIFACTS = ("plan.json", "approval.json", "preview.mp4", "full.mp4")
 _KNOWN_FRAME_FILE = re.compile(r"^frame-\d{4}\.png$")
@@ -643,7 +645,7 @@ def proxy_paths(root: Path, source_id: str) -> tuple[Path, Path, Path]:
     """
 
     safe_source_id = validate_source_id(source_id)
-    directory = root / "proxy"
+    directory = root / PROXY_DIRECTORY
     return directory, directory / f"{safe_source_id}.mp4", directory / f"{safe_source_id}.json"
 
 

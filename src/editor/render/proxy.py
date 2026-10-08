@@ -44,6 +44,8 @@ PROXY_MAX_WIDTH = 1280
 PROXY_MAX_HEIGHT = 720
 PROXY_GOP = 15
 PROXY_CRF = 20
+PROXY_VIDEO_ENCODER = "libx264"
+PROXY_PIXEL_FORMAT = "yuv420p"
 MAX_METADATA_BYTES = 4 * 1024
 METADATA_FIELDS = frozenset(
     {
@@ -218,7 +220,7 @@ def _ffmpeg_arguments(source: Path, staging: Path) -> list[str]:
             ":force_original_aspect_ratio=decrease:force_divisible_by=2"
         ),
         "-c:v",
-        "libx264",
+        PROXY_VIDEO_ENCODER,
         "-preset",
         "veryfast",
         "-crf",
@@ -226,7 +228,7 @@ def _ffmpeg_arguments(source: Path, staging: Path) -> list[str]:
         "-g",
         str(PROXY_GOP),
         "-pix_fmt",
-        "yuv420p",
+        PROXY_PIXEL_FORMAT,
         "-fps_mode",
         "passthrough",
         "-enc_time_base",
@@ -318,7 +320,7 @@ def _verify_proxy(original: _VideoStream, proxy: _VideoStream) -> None:
         or abs(proxy.start_time - original.start_time) > START_TIME_TOLERANCE_SECONDS
         or abs(proxy.duration - original.duration) > frame_seconds + 1e-9
         or proxy.codec != "h264"
-        or proxy.pix_fmt != "yuv420p"
+        or proxy.pix_fmt != PROXY_PIXEL_FORMAT
         or proxy.width > PROXY_MAX_WIDTH
         or proxy.height > PROXY_MAX_HEIGHT
         or proxy.width % 2
@@ -436,7 +438,7 @@ def _require_libx264() -> None:
             message="FFmpeg não está disponível localmente.",
             exit_code=EXIT_CODES["DEPENDENCY"],
         )
-    if "libx264" not in set(dependencies.probe_ffmpeg_encoders()["available"]):
+    if PROXY_VIDEO_ENCODER not in set(dependencies.probe_ffmpeg_encoders()["available"]):
         raise CliError(
             code="DEPENDENCY_MISSING",
             message="O encoder H.264 libx264 não está disponível localmente.",
