@@ -296,3 +296,10 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 Nesse cenário cada preview com proxy economiza ~7,3 s de relógio e ~58 s de CPU, então o build se paga em relógio a partir da segunda preview e em CPU a partir da terceira. As duas linhas de base diferem entre as medições por variação da máquina entre os dias; cada comparação usa execuções intercaladas no mesmo dia.
 
 - **Verificação:** `.venv\Scripts\python.exe -B scripts\bench_render.py --scenario windows --reps 3`, `.venv\Scripts\python.exe -B scripts\bench_render.py --scenario proxy --reps 3` e `.venv\Scripts\python.exe -B -m unittest tests.test_decode_windows tests.test_capabilities -v`.
+
+## Decisões vigentes
+
+| ID | Decisão vigente | Fonte |
+|---|---|---|
+| RENDER-01 | Preview e full leem por padrão só as janelas usadas de cada fonte de vídeo, com fallback sem janelas; tempos do plano e hash canônico nunca mudam | `.vibeflow/phases/phase-4-decodificacao-seletiva-e-cache-de-proxy/review.md` |
+| RENDER-02 | Proxy só na preview, por `proxy build` explícito; full e aprovação usam sempre os originais e o proxy nunca entra em hash | `.vibeflow/phases/phase-4-decodificacao-seletiva-e-cache-de-proxy/review.md` |
