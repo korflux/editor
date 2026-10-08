@@ -37,12 +37,12 @@
 
 ### Required
 
-- [ ] R1: **Required (defer aceito pelo humano em 2026-10-08)** - `requirements.lock` - `pip_audit` acusa PYSEC-2026-4175, 4176 e 4177 em `urllib3==2.7.0`, o que deixa C4 da spec parcial. O achado é anterior à phase (registrado em `.erros-encontrados/2026-10-04-urllib3-vulneravel-no-lockfile.md`, lockfile intocado desde `05671c8`) e o diff da phase não adiciona uso de rede. - remédio: `vibe-implement` em entrega própria, atualizar `urllib3` para versão corrigida (>= 2.8.0) compatível com a resolução, regenerar hashes do lockfile e repetir suíte, gitleaks e pip-audit. - prova: `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` sem achados. - source: C4 - gap: partial
+- [x] R1: **Required (defer aceito pelo humano em 2026-10-08; corrigido em 2026-10-08: `urllib3` 2.8.0 no lockfile, `pip_audit` sem achados)** - `requirements.lock` - `pip_audit` acusa PYSEC-2026-4175, 4176 e 4177 em `urllib3==2.7.0`, o que deixa C4 da spec parcial. O achado é anterior à phase (registrado em `.erros-encontrados/2026-10-04-urllib3-vulneravel-no-lockfile.md`, lockfile intocado desde `05671c8`) e o diff da phase não adiciona uso de rede. - remédio: `vibe-implement` em entrega própria, atualizar `urllib3` para versão corrigida (>= 2.8.0) compatível com a resolução, regenerar hashes do lockfile e repetir suíte, gitleaks e pip-audit. - prova: `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip` sem achados. - source: C4 - gap: partial
 
 ### Optional / Nit
 
-- [ ] R2: **FYI** - `tests/e2e/` - o `discover` não entra nas jornadas E2E (sem `__init__.py`); já registrado em `.erros-encontrados/2026-10-08-discover-nao-executa-e2e.md`. Não bloqueia: as três jornadas foram executadas à parte na T5.
-- [ ] R3: **Nit** - `src/editor/capabilities.py` - `render.proxy.parameters` não expõe o preset `veryfast` usado em `_ffmpeg_arguments`; incluir se agentes precisarem reproduzir o proxy.
+- [x] R2: **FYI (corrigido: `tests/e2e/__init__.py`, o discover passa a rodar 180 testes)** - `tests/e2e/` - o `discover` não entra nas jornadas E2E (sem `__init__.py`); já registrado em `.erros-encontrados/2026-10-08-discover-nao-executa-e2e.md`. Não bloqueia: as três jornadas foram executadas à parte na T5.
+- [x] R3: **Nit (corrigido: `PROXY_PRESET` exposto em `render.proxy.parameters`)** - `src/editor/capabilities.py` - `render.proxy.parameters` não expõe o preset `veryfast` usado em `_ffmpeg_arguments`; incluir se agentes precisarem reproduzir o proxy.
 
 ## Segurança
 
@@ -105,3 +105,12 @@ finalização Git da phase (após confirmação humana do defer de R1)
 - Abriu: R1 (Required, defer proposto), R2 (FYI), R3 (Nit).
 - Fechou: nenhum.
 - Veredito desta etapa: Approve com defer.
+
+### Etapa 2 - correção pós-aprovação dos R1 a R3, a pedido do humano (2026-10-08)
+
+- Tipo: correção (sem nova review delegada; conferida pelo coordenador contra o diff e a prova).
+- R1: só o bloco `urllib3` do `requirements.lock` mudou (2.7.0 para 2.8.0, hashes do PyPI); instalação com `--require-hashes` verde, `pip_audit` sem achados, `pip check` limpo.
+- R2: `tests/e2e/__init__.py` adicionado; `unittest discover -s tests` passa de 177 para 180 testes, todos OK, incluindo as três jornadas E2E.
+- R3: constante `PROXY_PRESET` usada no encode e exposta em `capabilities`; argumentos do FFmpeg idênticos, `PROXY_PARAMETERS_VERSION` inalterada.
+- Registros resolvidos removidos de `.erros-encontrados/` (urllib3 e discover sem E2E). Gitleaks do histórico sem achados; varredura do working tree sem achados fora de `.venv/`.
+- Veredito: Approve final, sem R* abertos.

@@ -153,6 +153,7 @@ class CapabilitiesTests(unittest.TestCase):
                 "max_height": 720,
                 "upscale": False,
                 "encoder": "libx264",
+                "preset": "veryfast",
                 "pixel_format": "yuv420p",
                 "gop": 15,
                 "crf": 20,

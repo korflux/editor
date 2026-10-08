@@ -45,6 +45,8 @@ PROXY_MAX_HEIGHT = 720
 PROXY_GOP = 15
 PROXY_CRF = 20
 PROXY_VIDEO_ENCODER = "libx264"
+# Preset do encoder; fonte única do encode e da exposição em `capabilities.render.proxy.parameters`.
+PROXY_PRESET = "veryfast"
 PROXY_PIXEL_FORMAT = "yuv420p"
 MAX_METADATA_BYTES = 4 * 1024
 METADATA_FIELDS = frozenset(
@@ -222,7 +224,7 @@ def _ffmpeg_arguments(source: Path, staging: Path) -> list[str]:
         "-c:v",
         PROXY_VIDEO_ENCODER,
         "-preset",
-        "veryfast",
+        PROXY_PRESET,
         "-crf",
         str(PROXY_CRF),
         "-g",

@@ -45,6 +45,7 @@ from .render.proxy import (
     PROXY_MAX_WIDTH,
     PROXY_PARAMETERS_VERSION,
     PROXY_PIXEL_FORMAT,
+    PROXY_PRESET,
     PROXY_VIDEO_ENCODER,
 )
 from .render.windows import (
@@ -384,6 +385,7 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
                     "max_height": PROXY_MAX_HEIGHT,
                     "upscale": False,
                     "encoder": PROXY_VIDEO_ENCODER,
+                    "preset": PROXY_PRESET,
                     "pixel_format": PROXY_PIXEL_FORMAT,
                     "gop": PROXY_GOP,
                     "crf": PROXY_CRF,
