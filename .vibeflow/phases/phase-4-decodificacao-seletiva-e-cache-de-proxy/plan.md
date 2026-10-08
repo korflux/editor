@@ -65,8 +65,10 @@ Esta entrega reduz o tempo de render do editor sem alterar o resultado: o grafo 
 
 ### T3: Construir e validar proxies com `editor proxy build`
 
-- [ ] T3 concluída
-- **Checkpoint:** delegada ao implementador (em paralelo à pergunta da T2, paths disjuntos); próximo passo: conferir o relatório; HEAD `2bb386709bb0e01fdfb9efc4fb55bb60d0e77123`.
+- [x] T3 concluída
+- **Prova:** `tests.test_proxy_build tests.test_cli_contract` -> 19 testes OK (37 s); `tests.test_capabilities tests.test_init` -> 21 OK; nenhum `tmp-*` residual.
+- **Arquivos:** `src/editor/render/proxy.py`, `src/editor/workdir.py`, `src/editor/cli.py`, `tests/test_proxy_build.py`
+- **Decisões:** encode com `-copyts -fps_mode passthrough -enc_time_base demux` (PTS dos pacotes idênticos ao original, inclusive com `start_time` 0,5 s e B-frames), `scale=...:force_original_aspect_ratio=decrease:force_divisible_by=2`, `libx264 -preset veryfast -crf 20 -g 15 -pix_fmt yuv420p`, áudio por cópia; `PROXY_PARAMETERS_VERSION = 1`. Timeout igual ao da preview. Publicação troca o `.mp4` e depois o `.json`, de modo que o intervalo entre as trocas lê como obsoleto; o estado da fonte é lido antes do encode. Falha por fonte vira `failed`; falha de layout ou publicação do trabalho interrompe com `OUTPUT_INVALID`/`OUTPUT_PUBLISH_FAILED`. API para a T4: `editor.render.proxy.lookup_proxy(root, source_id, source_path) -> ProxyStatus` (`valid`, `stale`, `absent`), e `workdir.proxy_paths` como fonte única do layout.
 - **Spec:** A4, A5, C4
 - **O quê:** comando `editor proxy build --workdir <abs> [--source-id <id>]... --json` que gera, para cada fonte de vídeo elegível, `proxy/<id>.mp4` e `proxy/<id>.json` por substituição atômica, reutiliza proxy válido e reporta `created`, `reused`, `skipped` ou `failed` por fonte.
 - **Aceite:**

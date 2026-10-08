@@ -22,6 +22,7 @@ from .integrity.approval import approve_workdir
 from .plan.validation import validate_plan
 from .render.full import render_full
 from .render.preview import ACCEL_CHOICES, render_preview
+from .render.proxy import build_proxies
 from .workdir import derive_source_id, init_workdir, resolve_workdir
 
 
@@ -434,6 +435,33 @@ def build_parser() -> CliArgumentParser:
         default=argparse.SUPPRESS,
         help="retorna o resultado estruturado em JSON pelo stdout",
     )
+    # Grupo `proxy`: cache explícito de proxies leves usado só pela preview (spec da phase 4, F2).
+    proxy_parser = subparsers.add_parser(
+        "proxy",
+        help="gera proxies leves das fontes de vídeo para acelerar a preview",
+        description="gera e reutiliza proxies das fontes de vídeo do plano validado",
+    )
+    _add_json_argument(proxy_parser)
+    proxy_subparsers = proxy_parser.add_subparsers(
+        dest="proxy_command",
+        title="operações de proxy",
+        metavar="OPERATION",
+    )
+    proxy_build_parser = proxy_subparsers.add_parser(
+        "build",
+        help="cria ou reutiliza proxy/<id>.mp4 das fontes maiores que 1280x720",
+        description="cria ou reutiliza proxies H.264 até 1280x720 das fontes de vídeo do plano",
+    )
+    _add_workdir_argument(proxy_build_parser)
+    proxy_build_parser.add_argument(
+        "--source-id",
+        action="append",
+        dest="source_ids",
+        default=None,
+        metavar="ID",
+        help="restringe a uma fonte do plano; repetível (padrão: todas)",
+    )
+    _add_json_argument(proxy_build_parser)
     register_shortcut_parsers(subparsers)
     return parser
 
@@ -553,6 +581,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if (args.command == "render" and args.render_command == "full") or args.command == "full":
             result = render_full(resolve_workdir(args.workdir), accel=args.accel)
             write_json(success_envelope("render full", result))
+            return 0
+
+        if args.command == "proxy" and args.proxy_command == "build":
+            result = build_proxies(resolve_workdir(args.workdir), args.source_ids)
+            write_json(success_envelope("proxy build", result))
             return 0
 
         if args.command is None:

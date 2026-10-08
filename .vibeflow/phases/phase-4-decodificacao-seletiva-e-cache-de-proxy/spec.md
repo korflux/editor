@@ -105,7 +105,7 @@ O operador (agente ou humano) renderiza preview e full mais rápido com a mesma 
 - [x] A1: Preview e full de um plano que usa menos da metade da fonte produzem os mesmos quadros e o mesmo áudio com e sem janelas.
 - [x] A2: Casos de borda produzem o mesmo resultado: trecho no início e no fim da fonte, trechos adjacentes, camada de vídeo e trilha de áudio da mesma fonte, trilha com `loop` e cortes J e L.
 - [x] A3: Quando o ganho é menor que 20% ou um teto estoura, o comando de entrada é o atual e `windowed` é `false`; falha com janelas repete sem janelas e informa `windowed: false`.
-- [ ] A4: `proxy build` cria o proxy das fontes elegíveis e uma nova execução o reutiliza sem recodificar.
+- [x] A4: `proxy build` cria o proxy das fontes elegíveis e uma nova execução o reutiliza sem recodificar.
 - [ ] A5: Proxy reprovado na verificação não é publicado; fonte alterada após o build torna o proxy obsoleto e ele deixa de ser usado.
 - [ ] A6: A preview usa o proxy nas fontes que o têm válido e o original nas demais, e o envelope informa `mode`, `sources` e `stale`.
 - [ ] A7: A full e a aprovação independem do proxy: a full parte dos originais, `approve` registra o hash da preview vigente (com ou sem proxy) e os hashes do plano e dos originais, que são idênticos nos dois casos, e `--proxy off` reproduz a preview sem proxy.

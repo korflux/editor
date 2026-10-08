@@ -59,6 +59,17 @@ class FullLayout:
 
 
 @dataclass(frozen=True)
+class ProxyLayout:
+    """Representa os destinos do proxy de uma fonte (`proxy/<id>.mp4` e `.json`) e o temporário."""
+
+    root: Path
+    temporary: Path
+    directory: Path
+    video: Path
+    metadata: Path
+
+
+@dataclass(frozen=True)
 class ApprovalLayout:
     """Representa o destino do registro de aprovação e o temporário do trabalho."""
 
@@ -622,6 +633,102 @@ def prepare_approval_layout(workdir: str | Path) -> ApprovalLayout:
             EXIT_CODES["STATE"],
         )
     return ApprovalLayout(root=root, temporary=temporary, destination=destination)
+
+
+def proxy_paths(root: Path, source_id: str) -> tuple[Path, Path, Path]:
+    """Deriva pasta, vídeo e metadado do proxy só do ID validado, sem tocar no disco.
+
+    Fonte única do layout `proxy/<id>.mp4` + `proxy/<id>.json`, usada pelo build e pela leitura
+    de validade consumida na preview; `root` já deve ter passado por `validate_workdir`.
+    """
+
+    safe_source_id = validate_source_id(source_id)
+    directory = root / "proxy"
+    return directory, directory / f"{safe_source_id}.mp4", directory / f"{safe_source_id}.json"
+
+
+def _ensure_proxy_destinations(layout: ProxyLayout, code: str) -> None:
+    """Rejeita destino de proxy que exista como link, reparse point ou tipo especial."""
+
+    for destination in (layout.video, layout.metadata):
+        if _lexists(destination) and (
+            not is_regular_path(destination) or _has_reparse_ancestor(destination.parent)
+        ):
+            raise _error(
+                code,
+                "O destino do proxy deve ser um arquivo regular dentro do trabalho.",
+                EXIT_CODES["STATE"] if code == "OUTPUT_INVALID" else EXIT_CODES["OPERATION"],
+            )
+
+
+def prepare_proxy_layout(workdir: str | Path, source_id: str) -> ProxyLayout:
+    """Prepara `.tmp` e `proxy/` e valida os destinos do proxy antes de chamar o FFmpeg."""
+
+    root = validate_workdir(workdir)
+    directory, video, metadata = proxy_paths(root, source_id)
+    temporary = root / ".tmp"
+    _ensure_directory(temporary)
+    _ensure_directory(directory)
+    layout = ProxyLayout(
+        root=root,
+        temporary=temporary,
+        directory=directory,
+        video=video,
+        metadata=metadata,
+    )
+    _ensure_proxy_destinations(layout, "OUTPUT_INVALID")
+    return layout
+
+
+def publish_proxy_atomic(layout: ProxyLayout, staging: Path, metadata_payload: bytes) -> None:
+    """Publica vídeo e metadado do proxy já verificados, cada um por substituição atômica.
+
+    Ordem deliberada: o vídeo novo entra antes do metadado. No intervalo entre as duas trocas o
+    metadado antigo não casa com o vídeo novo (tamanho do proxy ou estado da fonte), então o
+    leitor vê o proxy como obsoleto e nunca como válido com conteúdo trocado.
+    """
+
+    temporary_metadata: Path | None = None
+    try:
+        if not is_regular_path(staging) or _has_reparse_ancestor(staging.parent):
+            raise _error(
+                "OUTPUT_PUBLISH_FAILED",
+                "O arquivo temporário do proxy não pôde ser validado.",
+                EXIT_CODES["OPERATION"],
+            )
+        _ensure_directory(layout.temporary)
+        _ensure_directory(layout.directory)
+        _ensure_proxy_destinations(layout, "OUTPUT_PUBLISH_FAILED")
+
+        descriptor, raw_temporary_path = tempfile.mkstemp(
+            prefix=f".{layout.metadata.stem}-proxy-",
+            suffix=".json.tmp",
+            dir=layout.temporary,
+        )
+        temporary_metadata = Path(raw_temporary_path)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(metadata_payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        os.replace(staging, layout.video)
+        os.replace(temporary_metadata, layout.metadata)
+        temporary_metadata = None
+    except CliError:
+        raise
+    except OSError as error:
+        raise _error(
+            "OUTPUT_PUBLISH_FAILED",
+            "Não foi possível publicar o proxy completo.",
+            EXIT_CODES["OPERATION"],
+        ) from error
+    finally:
+        for leftover in (staging, temporary_metadata):
+            if leftover is not None and _lexists(leftover):
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
 
 
 def relative_artifact_path(
