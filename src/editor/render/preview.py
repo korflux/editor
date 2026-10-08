@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import math
 import os
 import tempfile
@@ -38,7 +38,7 @@ GPU_MAX_VIDEO_INPUTS = 4
 
 
 class _RenderTimeout(CliError):
-    """Distingue timeout de falha de abertura do encoder, que é o único caso com fallback."""
+    """Distingue timeout das falhas do FFmpeg que têm fallback (GPU/encoder ou janelas de decode)."""
 
 
 def _error(code: str, message: str, exit_code: int) -> CliError:
@@ -259,6 +259,56 @@ def _accel_modes(accel: str) -> list[str]:
     return ["cpu"]
 
 
+def _video_input_count(graph: FfmpegGraph, source_records: Sequence[Mapping[str, Any]]) -> int:
+    """Conta entradas `-i` de vídeo do comando; uma fonte janelada conta uma vez por janela.
+
+    Fonte única da contagem usada pela regra do decode por GPU e pelo envelope `data.decode`.
+    """
+
+    kinds = {str(record["id"]): record.get("kind") for record in source_records}
+    return sum(1 for source_id in graph.input_source_ids if kinds.get(source_id) == "video")
+
+
+def _windowed_source_ids(graph: FfmpegGraph) -> list[str]:
+    """Ids das fontes lidas por janelas, na ordem das entradas e sem repetição."""
+
+    windows = graph.input_windows or (None,) * len(graph.input_source_ids)
+    return list(
+        dict.fromkeys(
+            source_id
+            for source_id, window in zip(graph.input_source_ids, windows, strict=True)
+            if window is not None
+        )
+    )
+
+
+def _decode_summary(graph: FfmpegGraph, source_records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Descreve `data.decode` a partir do grafo que efetivamente publicou o artefato."""
+
+    sources = _windowed_source_ids(graph)
+    return {
+        "windowed": bool(sources),
+        "inputs": _video_input_count(graph, source_records),
+        "sources": sources,
+    }
+
+
+def _render_attempts(
+    windowed: FfmpegGraph,
+    plain: FfmpegGraph,
+    modes: Sequence[str],
+) -> list[tuple[FfmpegGraph, str]]:
+    """Ordena as tentativas de render: modo pedido com janelas, CPU com janelas, CPU sem janelas.
+
+    `modes` já termina em `cpu` (`_accel_modes`). Sem janelas o grafo janelado é igual ao
+    atual, então só os modos do grafo atual são tentados, sem repetir a mesma tentativa.
+    """
+
+    if not _windowed_source_ids(windowed):
+        return [(plain, accel) for accel in modes]
+    return [*((windowed, accel) for accel in modes), (plain, "cpu")]
+
+
 def _build_ffmpeg_arguments(
     graph: FfmpegGraph,
     source_records: Sequence[Mapping[str, Any]],
@@ -278,11 +328,10 @@ def _build_ffmpeg_arguments(
     records = {str(record["id"]): record for record in source_records}
     windows = graph.input_windows or (None,) * len(graph.input_source_ids)
     arguments = ["-hide_banner", "-nostdin", "-loglevel", "error"]
-    video_inputs = sum(
-        1 for source_id in graph.input_source_ids if records.get(source_id, {}).get("kind") == "video"
-    )
-    # Decode CUDA só nas fontes de vídeo e só até o teto de VRAM; o FFmpeg cai para decode em
-    # software sozinho quando o formato não é suportado, e os quadros voltam à RAM para o grafo.
+    video_inputs = _video_input_count(graph, source_records)
+    # Decode CUDA só nas entradas de vídeo e só até o teto de VRAM (decisão 7: conta entradas,
+    # pois cada janela abre seu próprio decoder); o FFmpeg cai para decode em software sozinho
+    # quando o formato não é suportado, e os quadros voltam à RAM para o grafo.
     gpu_decode = accel == "gpu" and 0 < video_inputs <= GPU_MAX_VIDEO_INPUTS
     for source_id, window in zip(graph.input_source_ids, windows, strict=True):
         record = records.get(source_id)
@@ -383,41 +432,51 @@ def _run_ffmpeg(
 
 
 def _render_with_fallback(
-    modes: Sequence[str],
-    graph: FfmpegGraph,
+    attempts: Sequence[tuple[FfmpegGraph, str]],
+    layout: PreviewLayout | FullLayout,
     source_records: Sequence[Mapping[str, Any]],
     staging: Path,
     *,
-    filter_script: Path,
     duration_seconds: float,
     frame_rate: float | None,
     artifact_name: str = "preview",
-) -> str:
-    """Renderiza no primeiro modo que funcionar e devolve qual modo produziu o arquivo."""
+) -> tuple[FfmpegGraph, str]:
+    """Renderiza na primeira tentativa que funcionar e devolve o grafo e o modo que produziram o arquivo.
 
-    for index, accel in enumerate(modes):
-        arguments = _build_ffmpeg_arguments(
-            graph,
-            source_records,
-            staging,
-            filter_script=filter_script,
-            duration_seconds=duration_seconds,
-            frame_rate=frame_rate,
-            accel=accel,
-        )
-        try:
-            _run_ffmpeg(arguments, duration_seconds, artifact_name)
-        except CliError as error:
-            # Fallback só para falha de abertura de GPU/encoder (driver ausente, formato não suportado,
-            # dimensão mínima do NVENC); timeout e dependência ausente não melhoram trocando de modo.
-            if (
-                index == len(modes) - 1
-                or error.code != "RENDER_FAILED"
-                or isinstance(error, _RenderTimeout)
-            ):
-                raise
-            continue
-        return accel
+    Cada grafo distinto (com e sem janelas) tem seu próprio script de filtro em `.tmp`,
+    criado só quando sua tentativa chega e removido ao final em qualquer desfecho.
+    """
+
+    filter_scripts: dict[int, Path] = {}
+    try:
+        for index, (graph, accel) in enumerate(attempts):
+            if id(graph) not in filter_scripts:
+                filter_scripts[id(graph)] = _create_filter_script(layout, graph, artifact_name)
+            arguments = _build_ffmpeg_arguments(
+                graph,
+                source_records,
+                staging,
+                filter_script=filter_scripts[id(graph)],
+                duration_seconds=duration_seconds,
+                frame_rate=frame_rate,
+                accel=accel,
+            )
+            try:
+                _run_ffmpeg(arguments, duration_seconds, artifact_name)
+            except CliError as error:
+                # Fallback só para falha do FFmpeg (GPU/encoder indisponível ou janela rejeitada);
+                # timeout e dependência ausente não melhoram trocando de modo ou de grafo.
+                if (
+                    index == len(attempts) - 1
+                    or error.code != "RENDER_FAILED"
+                    or isinstance(error, _RenderTimeout)
+                ):
+                    raise
+                continue
+            return graph, accel
+    finally:
+        for filter_script in filter_scripts.values():
+            _cleanup_filter_script(filter_script)
     raise _error(
         "RENDER_FAILED",
         f"O FFmpeg não conseguiu renderizar a {artifact_name}.",
@@ -511,6 +570,68 @@ def _cleanup_filter_script(filter_script: Path | None) -> None:
         pass
 
 
+def _render_artifact(
+    document: Mapping[str, Any],
+    validation: Mapping[str, Any],
+    layout: PreviewLayout | FullLayout,
+    *,
+    canvas_width: int,
+    canvas_height: int,
+    accel: str,
+    publish: Callable[[Any, Path], Any],
+    max_dimension: int | None = MAX_PREVIEW_DIMENSION,
+    artifact_name: str = "preview",
+) -> tuple[media.MediaMetadata, str, dict[str, Any]]:
+    """Corpo único de render de preview e full: grafos, tentativas, validação e publicação atômica.
+
+    Monta o grafo com janelas de decode (padrão, decisão 1) e o atual sem janelas, tenta-os
+    pela ordem de `_render_attempts` e publica só o MP4 validado. Devolve os metadados, o
+    modo de aceleração usado e `data.decode` da tentativa que publicou. `.tmp` fica limpo em
+    sucesso, erro, exceção e timeout; o artefato vigente só é trocado pela publicação.
+    """
+
+    plain = build_ffmpeg_graph(
+        document, validation, canvas_width=canvas_width, canvas_height=canvas_height
+    )
+    windowed = build_ffmpeg_graph(
+        document, validation, canvas_width=canvas_width, canvas_height=canvas_height, windows=True
+    )
+    _require_encoders(plain.has_audio)
+    attempts = _render_attempts(windowed, plain, _accel_modes(accel))
+
+    expected_duration = float(validation["timeline"]["duration_seconds"])
+    first_source_id = str(document["segments"][0]["video"]["source_id"])
+    source_records = list(validation["sources"])
+    first_source = next(record for record in source_records if record["id"] == first_source_id)
+    frame_rate = first_source.get("video_frame_rate")
+    staging: Path | None = None
+    try:
+        staging = _create_staging_file(layout, artifact_name)
+        graph, used_accel = _render_with_fallback(
+            attempts,
+            layout,
+            source_records,
+            staging,
+            duration_seconds=expected_duration,
+            frame_rate=float(frame_rate) if frame_rate is not None else None,
+            artifact_name=artifact_name,
+        )
+        metadata = _validate_rendered_preview(
+            staging,
+            expected_duration=expected_duration,
+            expected_audio=graph.has_audio,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            max_dimension=max_dimension,
+            artifact_name=artifact_name,
+        )
+        publish(layout, staging)
+        staging = None
+    finally:
+        _cleanup_staging(staging)
+    return metadata, used_accel, _decode_summary(graph, source_records)
+
+
 def render_preview(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
     """Valida o plano, renderiza a preview em `.tmp` e publica um único arquivo completo."""
 
@@ -522,53 +643,22 @@ def render_preview(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
         "preview",
     )
     canvas_width, canvas_height = _preview_dimensions(document, validation)
-    graph = build_ffmpeg_graph(
+    metadata, used_accel, decode = _render_artifact(
         document,
         validation,
+        layout,
         canvas_width=canvas_width,
         canvas_height=canvas_height,
+        accel=accel,
+        publish=publish_preview_atomic,
     )
-    _require_encoders(graph.has_audio)
-    modes = _accel_modes(accel)
-
-    expected_duration = float(validation["timeline"]["duration_seconds"])
-    first_source_id = str(document["segments"][0]["video"]["source_id"])
-    source_records = list(validation["sources"])
-    first_source = next(record for record in source_records if record["id"] == first_source_id)
-    frame_rate = first_source.get("video_frame_rate")
-    staging: Path | None = None
-    filter_script: Path | None = None
-    try:
-        staging = _create_staging_file(layout)
-        filter_script = _create_filter_script(layout, graph)
-        used_accel = _render_with_fallback(
-            modes,
-            graph,
-            source_records,
-            staging,
-            filter_script=filter_script,
-            duration_seconds=expected_duration,
-            frame_rate=float(frame_rate) if frame_rate is not None else None,
-        )
-        metadata = _validate_rendered_preview(
-            staging,
-            expected_duration=expected_duration,
-            expected_audio=graph.has_audio,
-            canvas_width=canvas_width,
-            canvas_height=canvas_height,
-        )
-        publish_preview_atomic(layout, staging)
-        staging = None
-    finally:
-        _cleanup_filter_script(filter_script)
-        _cleanup_staging(staging)
 
     return {
         "artifact_path": str(layout.destination),
         "relative_artifact_path": relative_artifact_path(layout),
         "plan_sha256": validation["plan_sha256"],
         "duration_seconds": round(metadata.duration_seconds, 6),
-        "timeline_duration_seconds": expected_duration,
+        "timeline_duration_seconds": float(validation["timeline"]["duration_seconds"]),
         "source_count": validation["source_count"],
         "segment_count": validation["segment_count"],
         "cut_count": validation["cut_count"],
@@ -586,4 +676,5 @@ def render_preview(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
             "present": metadata.audio_codec is not None,
             "codec": metadata.audio_codec,
         },
+        "decode": decode,
     }

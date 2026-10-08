@@ -13,22 +13,15 @@ from ..workdir import (
     publish_full_atomic,
     relative_artifact_path,
 )
-from .ffmpeg_graph import build_ffmpeg_graph
-from .preview import (
-    _accel_modes,
-    _cleanup_filter_script,
-    _cleanup_staging,
-    _create_filter_script,
-    _create_staging_file,
-    _preview_dimensions,
-    _render_with_fallback,
-    _require_encoders,
-    _validate_rendered_preview,
-)
+from .preview import _preview_dimensions, _render_artifact
 
 
 def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
-    """Revalida a aprovação e renderiza exatamente a timeline aprovada em `full.mp4`."""
+    """Revalida a aprovação e renderiza exatamente a timeline aprovada em `full.mp4`.
+
+    O render em si (janelas de decode, fallback, validação e publicação) é o mesmo corpo
+    da preview, `_render_artifact`; aqui ficam só a aprovação e o perfil final.
+    """
 
     document, validation = load_validated_plan(workdir)
     layout = prepare_full_layout(workdir)
@@ -48,55 +41,23 @@ def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
         artifact_name="full",
         width_alignment=16,
     )
-    graph = build_ffmpeg_graph(
+    metadata, used_accel, decode = _render_artifact(
         document,
         validation,
+        layout,
         canvas_width=canvas_width,
         canvas_height=canvas_height,
+        accel=accel,
+        publish=publish_full_atomic,
+        max_dimension=None,
+        artifact_name="full",
     )
-    _require_encoders(graph.has_audio)
-    modes = _accel_modes(accel)
-
-    expected_duration = float(validation["timeline"]["duration_seconds"])
-    first_source_id = str(document["segments"][0]["video"]["source_id"])
-    source_records = list(validation["sources"])
-    first_source = next(record for record in source_records if record["id"] == first_source_id)
-    frame_rate = first_source.get("video_frame_rate")
-    staging: Path | None = None
-    filter_script: Path | None = None
-    try:
-        staging = _create_staging_file(layout, "full")
-        filter_script = _create_filter_script(layout, graph, "full")
-        used_accel = _render_with_fallback(
-            modes,
-            graph,
-            source_records,
-            staging,
-            filter_script=filter_script,
-            duration_seconds=expected_duration,
-            frame_rate=float(frame_rate) if frame_rate is not None else None,
-            artifact_name="full",
-        )
-        metadata = _validate_rendered_preview(
-            staging,
-            expected_duration=expected_duration,
-            expected_audio=graph.has_audio,
-            canvas_width=canvas_width,
-            canvas_height=canvas_height,
-            max_dimension=None,
-            artifact_name="full",
-        )
-        publish_full_atomic(layout, staging)
-        staging = None
-    finally:
-        _cleanup_filter_script(filter_script)
-        _cleanup_staging(staging)
 
     return {
         "artifact_path": str(layout.destination),
         "relative_artifact_path": relative_artifact_path(layout),
         "plan_sha256": validation["plan_sha256"],
-        "timeline_duration_seconds": expected_duration,
+        "timeline_duration_seconds": float(validation["timeline"]["duration_seconds"]),
         "duration_seconds": round(metadata.duration_seconds, 6),
         "approval": {
             "approved_at": approval["approved_at"],
@@ -120,4 +81,5 @@ def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
             "present": metadata.audio_codec is not None,
             "codec": metadata.audio_codec,
         },
+        "decode": decode,
     }

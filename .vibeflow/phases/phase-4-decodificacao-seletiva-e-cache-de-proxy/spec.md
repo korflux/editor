@@ -102,9 +102,9 @@ O operador (agente ou humano) renderiza preview e full mais rápido com a mesma 
 
 ### Aceite
 
-- [ ] A1: Preview e full de um plano que usa menos da metade da fonte produzem os mesmos quadros e o mesmo áudio com e sem janelas.
-- [ ] A2: Casos de borda produzem o mesmo resultado: trecho no início e no fim da fonte, trechos adjacentes, camada de vídeo e trilha de áudio da mesma fonte, trilha com `loop` e cortes J e L.
-- [ ] A3: Quando o ganho é menor que 20% ou um teto estoura, o comando de entrada é o atual e `windowed` é `false`; falha com janelas repete sem janelas e informa `windowed: false`.
+- [x] A1: Preview e full de um plano que usa menos da metade da fonte produzem os mesmos quadros e o mesmo áudio com e sem janelas.
+- [x] A2: Casos de borda produzem o mesmo resultado: trecho no início e no fim da fonte, trechos adjacentes, camada de vídeo e trilha de áudio da mesma fonte, trilha com `loop` e cortes J e L.
+- [x] A3: Quando o ganho é menor que 20% ou um teto estoura, o comando de entrada é o atual e `windowed` é `false`; falha com janelas repete sem janelas e informa `windowed: false`.
 - [ ] A4: `proxy build` cria o proxy das fontes elegíveis e uma nova execução o reutiliza sem recodificar.
 - [ ] A5: Proxy reprovado na verificação não é publicado; fonte alterada após o build torna o proxy obsoleto e ele deixa de ser usado.
 - [ ] A6: A preview usa o proxy nas fontes que o têm válido e o original nas demais, e o envelope informa `mode`, `sources` e `stale`.
@@ -113,9 +113,9 @@ O operador (agente ou humano) renderiza preview e full mais rápido com a mesma 
 
 ### Critérios de sucesso
 
-- [ ] C1: Em fonte 4K H.264 de GOP 1 s com 6 trechos de 5 s de 60 s, o render com janelas é pelo menos 20% mais rápido que sem janelas e a preview com proxy leva no máximo 50% do tempo da sem proxy (mediana de 3 execuções intercaladas, medindo também CPU consumida).
+- [ ] C1: Em fonte 4K H.264 de GOP 1 s com 6 trechos de 5 s de 60 s, o render com janelas consome pelo menos 20% menos CPU que sem janelas, sem piora de relógio (critério ajustado pelo humano em 2026-10-07 após a medição da T2: relógio -13,7%, CPU -27,9%, pois o decode sem janelas já usava cerca de 7,7 núcleos em paralelo), e a preview com proxy leva no máximo 50% do tempo da sem proxy (mediana de 3 execuções intercaladas, medindo também CPU consumida).
 - [ ] C2: Suíte completa verde, sem alterar testes de contrato além dos campos novos nos envelopes.
-- [ ] C3: Sem regressão quando não há ganho: o comando de entrada é o mesmo de hoje.
+- [x] C3: Sem regressão quando não há ganho: o comando de entrada é o mesmo de hoje.
 - [ ] C4: Segurança preservada: ids e caminhos validados, publicação atômica, sem shell, erros públicos sem stderr do FFmpeg, gitleaks e pip-audit sem achados.
 
 ## Contratos e restrições necessárias

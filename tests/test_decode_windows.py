@@ -1,7 +1,9 @@
-"""Testes das janelas de decode: regras do planejador, comando inalterado sem ganho e equivalência real.
+"""Testes das janelas de decode: planejador, comando inalterado sem ganho, equivalência e render.
 
 A equivalência compara o `framemd5` do vídeo e do áudio produzidos pelo mesmo grafo com e
-sem janelas, numa fonte H.264/AAC de GOP curto gerada pelo próprio teste.
+sem janelas, numa fonte H.264/AAC de GOP curto gerada pelo próprio teste. Os testes de
+render (T2) provam preview e full reais com janelas por padrão, o envelope `data.decode`,
+o fallback sem janelas e a regra do decode por GPU por entradas de vídeo.
 """
 
 from __future__ import annotations
@@ -14,12 +16,16 @@ import subprocess
 import unittest
 from collections.abc import Iterator
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
-from editor import dependencies
+from editor import dependencies, process
+from editor.contracts import CliError
+from editor.integrity.approval import approve_workdir
 from editor.plan.validation import load_validated_plan
 from editor.render.ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
-from editor.render.preview import _build_ffmpeg_arguments
+from editor.render.full import render_full
+from editor.render.preview import GPU_MAX_VIDEO_INPUTS, _build_ffmpeg_arguments, render_preview
 from editor.render.windows import (
     MAX_VIDEO_INPUTS,
     MAX_WINDOWS_PER_SOURCE,
@@ -148,7 +154,7 @@ def write_plan(workdir: Path, document: dict[str, Any]) -> tuple[dict[str, Any],
     return load_validated_plan(workdir)
 
 
-def graph_arguments(graph: FfmpegGraph, validation: dict[str, Any]) -> list[str]:
+def graph_arguments(graph: FfmpegGraph, validation: dict[str, Any], accel: str = "cpu") -> list[str]:
     """Argumentos completos do render para o grafo, sem executar o FFmpeg."""
 
     return _build_ffmpeg_arguments(
@@ -158,7 +164,37 @@ def graph_arguments(graph: FfmpegGraph, validation: dict[str, Any]) -> list[str]
         filter_script=Path("filter.txt"),
         duration_seconds=float(validation["timeline"]["duration_seconds"]),
         frame_rate=25.0,
+        accel=accel,
     )
+
+
+@contextmanager
+def windows_disabled() -> Iterator[None]:
+    """Força o render a montar só o grafo atual, sem janelas, para servir de referência."""
+
+    def plain_graph(
+        document: Any, validation: Any, *, canvas_width: int, canvas_height: int, windows: bool = False
+    ) -> FfmpegGraph:
+        return build_ffmpeg_graph(
+            document, validation, canvas_width=canvas_width, canvas_height=canvas_height
+        )
+
+    with patch("editor.render.preview.build_ffmpeg_graph", side_effect=plain_graph):
+        yield
+
+
+def output_framemd5(path: Path) -> str:
+    """`framemd5` do vídeo e do áudio decodificados de um MP4 publicado."""
+
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+         "-map", "0:v", "-map", "0:a", "-f", "framemd5", "-"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr.decode(errors="replace"))
+    return result.stdout.decode()
 
 
 def decoded_framemd5(workdir: Path, graph: FfmpegGraph, validation: dict[str, Any]) -> str:
@@ -351,6 +387,168 @@ class DecodeWindowGraphTests(unittest.TestCase):
                     expected = decoded_framemd5(workdir, plain, validation)
                     self.assertIn("\n1,", expected)
                     self.assertEqual(decoded_framemd5(workdir, windowed, validation), expected)
+
+
+# --- Render real com janelas por padrão (T2) ------------------------------------------------
+
+
+WINDOWED_PLAN = plan([segment(2, 4), segment(12, 14), segment(24, 26)])
+"""Plano que usa menos da metade da fonte, com ganho de leitura para janelar `main`."""
+
+
+class WindowedRenderTests(unittest.TestCase):
+    """Preview e full reais com janelas, envelope `data.decode`, fallback e regra da GPU."""
+
+    source: Path
+    _cache: Path
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._cache = PROJECT_ROOT / f"tmp-decode-windows-render-{uuid4().hex}"
+        cls._cache.mkdir()
+        cls.source = cls._cache / "main.mp4"
+        create_gop_source(cls.source)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls._cache, ignore_errors=True)
+
+    @contextmanager
+    def job(self, document: dict[str, Any] = WINDOWED_PLAN) -> Iterator[Path]:
+        """Trabalho com a fonte sintética e o plano dado já gravado."""
+
+        with workspace_tempdir() as workdir:
+            shutil.copy2(self.source, workdir / "sources" / "main.mp4")
+            (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+            yield workdir
+
+    def test_preview_and_full_with_windows_publish_the_same_frames_and_audio(self) -> None:
+        unwindowed = {"windowed": False, "inputs": 1, "sources": []}
+        with self.job() as workdir:
+            outputs: dict[str, dict[str, str]] = {"preview": {}, "full": {}}
+            with windows_disabled():
+                self.assertEqual(render_preview(workdir)["decode"], unwindowed)
+            outputs["preview"]["plain"] = output_framemd5(workdir / "preview.mp4")
+            self.assertEqual(
+                render_preview(workdir)["decode"],
+                {"windowed": True, "inputs": 3, "sources": ["main"]},
+            )
+            outputs["preview"]["windowed"] = output_framemd5(workdir / "preview.mp4")
+
+            # A aprovação vincula a preview vigente; as duas fulls partem da mesma aprovação.
+            approve_workdir(workdir)
+            with windows_disabled():
+                self.assertEqual(render_full(workdir)["decode"], unwindowed)
+            outputs["full"]["plain"] = output_framemd5(workdir / "full.mp4")
+            self.assertTrue(render_full(workdir)["decode"]["windowed"])
+            outputs["full"]["windowed"] = output_framemd5(workdir / "full.mp4")
+
+            for artifact, hashes in outputs.items():
+                with self.subTest(artifact):
+                    self.assertIn("\n1,", hashes["plain"])
+                    self.assertEqual(hashes["windowed"], hashes["plain"])
+            self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_without_gain_envelope_reports_unwindowed_single_input(self) -> None:
+        with self.job(plan([segment(0, 6), segment(7, 9)])) as workdir:
+            result = render_preview(workdir)
+        self.assertEqual(result["decode"], {"windowed": False, "inputs": 1, "sources": []})
+
+    def run_failing(
+        self,
+        workdir: Path,
+        should_fail: Any,
+        failure: Exception | None,
+        accel: str = "none",
+    ) -> tuple[dict[str, Any] | None, list[list[str]]]:
+        """Renderiza a preview com um FFmpeg que falha quando `should_fail(argumentos)` é verdadeiro.
+
+        Devolve o resultado (ou `None` se o render falhou) e os argumentos de cada render tentado,
+        sempre conferindo que `.tmp` ficou vazio e que o erro público não traz o stderr.
+        """
+
+        calls: list[list[str]] = []
+        original = process.run_tool
+        filter_option = dependencies.ffmpeg_filter_option()
+
+        def fake_run_tool(tool: str, arguments: list[str], *, timeout_seconds: float):
+            if tool == "ffmpeg" and filter_option in arguments:
+                calls.append(list(arguments))
+                # O script de filtro de cada tentativa existe enquanto ela roda.
+                self.assertTrue(Path(arguments[arguments.index(filter_option) + 1]).is_file())
+                if should_fail(arguments):
+                    if failure is not None:
+                        raise failure
+                    return subprocess.CompletedProcess(arguments, 1, "", "falha simulada")
+            return original(tool, arguments, timeout_seconds=timeout_seconds)
+
+        with patch(
+            "editor.render.preview.dependencies.gpu_acceleration_available", return_value=True
+        ), patch("editor.render.preview.process.run_tool", side_effect=fake_run_tool):
+            try:
+                result = render_preview(workdir, accel=accel)
+            except CliError as error:
+                self.assertEqual(error.code, "RENDER_FAILED")
+                self.assertNotIn("falha simulada", error.message)
+                result = None
+        self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+        return result, calls
+
+    def test_failure_with_windows_retries_without_windows_and_timeout_does_not(self) -> None:
+        with self.subTest("falha com janelas repete sem janelas"), self.job() as workdir:
+            result, calls = self.run_failing(workdir, lambda arguments: "-ss" in arguments, None)
+            assert result is not None
+            self.assertEqual(result["decode"], {"windowed": False, "inputs": 1, "sources": []})
+            self.assertEqual(["-ss" in call for call in calls], [True, False])
+            self.assertTrue((workdir / "preview.mp4").is_file())
+
+        with self.subTest("gpu: pedido com janelas, cpu com janelas, cpu sem janelas"), self.job() as workdir:
+            result, calls = self.run_failing(
+                workdir, lambda arguments: "-ss" in arguments, None, accel="gpu"
+            )
+            assert result is not None
+            self.assertEqual(result["video"]["accel"], "cpu")
+            self.assertFalse(result["decode"]["windowed"])
+            self.assertEqual(
+                [("-ss" in call, dependencies.GPU_VIDEO_ENCODER in call) for call in calls],
+                [(True, True), (True, False), (False, False)],
+            )
+
+        with self.subTest("timeout não repete"), self.job() as workdir:
+            previous = b"preview-vigente"
+            (workdir / "preview.mp4").write_bytes(previous)
+            result, calls = self.run_failing(
+                workdir,
+                lambda arguments: True,
+                process.ProcessExecutionError("ffmpeg", timed_out=True),
+            )
+            self.assertIsNone(result)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual((workdir / "preview.mp4").read_bytes(), previous)
+
+        with self.subTest("sem janelas não há tentativa duplicada"), self.job(plan([segment(0, 6)])) as workdir:
+            result, calls = self.run_failing(workdir, lambda arguments: True, None)
+            self.assertIsNone(result)
+            self.assertEqual(len(calls), 1)
+
+    def test_gpu_decode_counts_video_inputs_not_sources(self) -> None:
+        with self.job() as workdir:
+            for count in (GPU_MAX_VIDEO_INPUTS, GPU_MAX_VIDEO_INPUTS + 1):
+                with self.subTest(inputs=count):
+                    document, validation = write_plan(
+                        workdir, plan([segment(index * 6, index * 6 + 1) for index in range(count)])
+                    )
+                    graph = build_ffmpeg_graph(
+                        document, validation, canvas_width=160, canvas_height=90, windows=True
+                    )
+                    # Uma única fonte, mas uma entrada de vídeo por janela.
+                    self.assertEqual(graph.input_source_ids, ("main",) * count)
+                    arguments = graph_arguments(graph, validation, accel="gpu")
+                    expected_hwaccel = count if count <= GPU_MAX_VIDEO_INPUTS else 0
+                    self.assertEqual(arguments.count("-hwaccel"), expected_hwaccel)
+                    self.assertEqual(
+                        arguments[arguments.index("-c:v") + 1], dependencies.GPU_VIDEO_ENCODER
+                    )
 
 
 if __name__ == "__main__":

@@ -44,7 +44,10 @@ Esta entrega reduz o tempo de render do editor sem alterar o resultado: o grafo 
 
 ### T2: Renderizar preview e full com janelas por padrão, com fallback, envelope e ganho medido
 
-- [ ] T2 concluída
+- [x] T2 concluída
+- **Prova:** suíte da Verificação -> 50 testes OK em 114,5 s (`WindowedRenderTests`: preview e full reais com `framemd5` de vídeo e áudio iguais com e sem janelas; fallback gpu+janelas -> cpu+janelas -> cpu sem janelas; timeout com tentativa única preservando a preview vigente; `.tmp` vazio e mensagem sem stderr; 4 janelas com `-hwaccel`, 5 sem e encoder NVENC mantido). `bench_render.py --scenario windows --reps 3` (4K, GOP 1 s, 60 s, 6 trechos de 5 s, preview CPU): relógio mediano 12,58 s -> 10,86 s (-13,7%), CPU mediana 97,20 s -> 70,05 s (-27,9%).
+- **Arquivos:** `src/editor/render/preview.py`, `src/editor/render/full.py`, `scripts/bench_render.py`, `tests/test_decode_windows.py`, `tests/test_preview_render.py`
+- **Decisões:** corpo de render único (`_render_artifact`) para preview e full; o laço `_render_with_fallback` recebe tentativas (grafo, modo) e cria o script `-/filter_complex` por tentativa, removendo todos no `finally`; `_video_input_count` é a fonte única da contagem de entradas (GPU e `data.decode`). O teste de grafo grande repassa `windows`/`input_windows` no fake, sem mudar asserção. O benchmark mede CPU de descendentes por Job Object no Windows (sem `psutil`) e força a variante sem janelas por patch no processo filho, sem flag no produto. C1 da T2 ajustado pelo humano para CPU.
 - **Spec:** A1, A3, C1, C2
 - **O quê:** `render_preview` e `render_full` constroem o grafo com e sem janelas e tentam, em ordem, o modo pedido com janelas, o modo CPU com janelas e o CPU sem janelas; o envelope informa `data.decode` (`windowed`, `inputs`, `sources`); a regra do decode por GPU passa a contar entradas de vídeo; `scripts/bench_render.py` mede relógio e CPU consumida com repetições intercaladas.
 - **Aceite:**
@@ -52,7 +55,7 @@ Esta entrega reduz o tempo de render do editor sem alterar o resultado: o grafo 
   - [ ] Falha simulada do render com janelas (sem timeout) repete sem janelas e informa `windowed: false`; timeout não repete.
   - [ ] Sem ganho, `windowed` é `false` e o comando de entrada é o atual.
   - [ ] Com mais de 4 entradas de vídeo, o decode por GPU não é usado e o encode segue como pedido.
-  - [ ] Medição no cenário sintético de C1 (fonte 4K H.264 de GOP 1 s, 6 trechos de 5 s de 60 s): render com janelas pelo menos 20% mais rápido que sem janelas (mediana de 3 execuções intercaladas). Se ficar abaixo, a task para e devolve a decisão à spec.
+  - [ ] Medição no cenário sintético de C1 (fonte 4K H.264 de GOP 1 s, 6 trechos de 5 s de 60 s): render com janelas consome pelo menos 20% menos CPU que sem janelas, sem piora de relógio (mediana de 3 execuções intercaladas). Critério ajustado pelo humano em 2026-10-07; a meta original era 20% de relógio.
 - **Verificação:**
   - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_decode_windows tests.test_gpu_accel tests.test_preview_render tests.test_full_render tests.e2e.test_mvp_flow tests.e2e.test_phase_2_flow -v`
   - [ ] `.venv\Scripts\python.exe -B scripts\bench_render.py --scenario windows --reps 3`
@@ -63,6 +66,7 @@ Esta entrega reduz o tempo de render do editor sem alterar o resultado: o grafo 
 ### T3: Construir e validar proxies com `editor proxy build`
 
 - [ ] T3 concluída
+- **Checkpoint:** delegada ao implementador (em paralelo à pergunta da T2, paths disjuntos); próximo passo: conferir o relatório; HEAD `2bb386709bb0e01fdfb9efc4fb55bb60d0e77123`.
 - **Spec:** A4, A5, C4
 - **O quê:** comando `editor proxy build --workdir <abs> [--source-id <id>]... --json` que gera, para cada fonte de vídeo elegível, `proxy/<id>.mp4` e `proxy/<id>.json` por substituição atômica, reutiliza proxy válido e reporta `created`, `reused`, `skipped` ou `failed` por fonte.
 - **Aceite:**

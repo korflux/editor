@@ -319,14 +319,16 @@ class PreviewRenderTests(unittest.TestCase):
                 *,
                 canvas_width: int,
                 canvas_height: int,
+                windows: bool = False,
             ) -> FfmpegGraph:
-                """Amplia apenas o grafo de prova, preservando labels e fontes reais."""
+                """Amplia apenas o grafo de prova, preservando labels, fontes e janelas reais."""
 
                 graph = original_builder(
                     document,
                     validation,
                     canvas_width=canvas_width,
                     canvas_height=canvas_height,
+                    windows=windows,
                 )
                 return FfmpegGraph(
                     filter_complex=graph.filter_complex + padding,
@@ -334,6 +336,7 @@ class PreviewRenderTests(unittest.TestCase):
                     audio_label=graph.audio_label,
                     input_source_ids=graph.input_source_ids,
                     has_audio=graph.has_audio,
+                    input_windows=graph.input_windows,
                 )
 
             def fake_run_tool(
