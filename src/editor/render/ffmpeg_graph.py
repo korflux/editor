@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 import textwrap
 from typing import Any
+
+from .windows import DecodeWindow, plan_decode_windows
 
 
 MIN_LIMITER_DBFS = 20 * math.log10(0.0625)
@@ -21,7 +24,48 @@ class FfmpegGraph:
     video_label: str
     audio_label: str | None
     input_source_ids: tuple[str, ...]
+    """Fonte de cada entrada do FFmpeg, na ordem dos `-i`; repete o id quando a fonte tem janelas."""
     has_audio: bool
+    input_windows: tuple[DecodeWindow | None, ...] = ()
+    """Janela de cada entrada (paralela a `input_source_ids`); vazio ou `None` é leitura completa sem `-ss`."""
+
+
+class _GraphInputs:
+    """Resolve qual entrada do FFmpeg lê um recorte de fonte e quanto o grafo deve deslocá-lo.
+
+    Sem janelas cada fonte tem uma entrada e deslocamento zero, o que reproduz o grafo
+    anterior byte a byte. Com janelas, o recorte usa a janela que contém seu `in_s`;
+    o planejador garante que todo recorte cabe inteiro numa única janela.
+    """
+
+    def __init__(
+        self,
+        source_order: tuple[str, ...],
+        windows: Mapping[str, tuple[DecodeWindow, ...]],
+    ) -> None:
+        self.source_ids: list[str] = []
+        self.windows: list[DecodeWindow | None] = []
+        self._first_index: dict[str, int] = {}
+        self._starts: dict[str, list[float]] = {}
+        for source_id in source_order:
+            self._first_index[source_id] = len(self.source_ids)
+            source_windows = windows.get(source_id, ())
+            self._starts[source_id] = [window.start_s for window in source_windows]
+            for window in source_windows or (None,):
+                self.source_ids.append(source_id)
+                self.windows.append(window)
+
+    def locate(self, source_id: str, in_s: object) -> tuple[int, float]:
+        """Devolve o índice da entrada e o início da janela a subtrair dos tempos do recorte."""
+
+        first = self._first_index[source_id]
+        starts = self._starts[source_id]
+        if not starts:
+            return first, 0.0
+        position = bisect_right(starts, float(in_s) + 0.000001) - 1
+        if position < 0:
+            raise ValueError("recorte fora das janelas de decode da fonte")
+        return first + position, starts[position]
 
 
 def _number(value: object) -> str:
@@ -130,19 +174,21 @@ def _motion_filter_graph(
 
 def _video_segment_filter(
     segment: Mapping[str, Any],
-    input_indexes: Mapping[str, int],
+    inputs: _GraphInputs,
     segment_index: int,
     canvas_width: int,
     canvas_height: int,
     frame_rate: float | None,
 ) -> str:
-    """Corta um vídeo e normaliza sua imagem para o canvas 16:9 da preview."""
+    """Corta um vídeo e normaliza sua imagem para o canvas 16:9 da preview.
+
+    O `trim` usa os tempos do plano menos o início da janela de decode da entrada.
+    """
 
     video = segment["video"]
-    source_id = str(video["source_id"])
-    input_index = input_indexes[source_id]
-    start = _number(video["in_s"])
-    end = _number(video["out_s"])
+    input_index, offset = inputs.locate(str(video["source_id"]), video["in_s"])
+    start = _number(float(video["in_s"]) - offset)
+    end = _number(float(video["out_s"]) - offset)
     fit = str(video["fit"])
     filters = [
         f"trim=start={start}:end={end}",
@@ -184,17 +230,19 @@ def _video_segment_filter(
 
 def _audio_track_filter(
     track: Mapping[str, Any],
-    input_indexes: Mapping[str, int],
+    inputs: _GraphInputs,
     segment_index: int,
     track_index: int,
     required_duration: float,
 ) -> str:
-    """Corta, repete quando solicitado, aplica ganho e cobre a janela global do grupo."""
+    """Corta, repete quando solicitado, aplica ganho e cobre a janela global do grupo.
 
-    source_id = str(track["source_id"])
-    input_index = input_indexes[source_id]
-    start = _number(track["in_s"])
-    end = _number(track["out_s"])
+    O `atrim` usa os tempos do plano menos o início da janela de decode da entrada.
+    """
+
+    input_index, offset = inputs.locate(str(track["source_id"]), track["in_s"])
+    start = _number(float(track["in_s"]) - offset)
+    end = _number(float(track["out_s"]) - offset)
     duration = _number(required_duration)
     gain = _number(track["gain_db"])
     filters = [
@@ -224,7 +272,7 @@ def _audio_track_filter(
 
 def _audio_segment_filter(
     segment: Mapping[str, Any],
-    input_indexes: Mapping[str, int],
+    inputs: _GraphInputs,
     segment_index: int,
     required_duration: float,
 ) -> str:
@@ -246,7 +294,7 @@ def _audio_segment_filter(
         parts.append(
             _audio_track_filter(
                 track,
-                input_indexes,
+                inputs,
                 segment_index,
                 track_index,
                 required_duration,
@@ -428,12 +476,16 @@ def _media_layer_filter(
     input_label: str,
     layer: Mapping[str, Any],
     layer_index: int,
-    input_index: int,
+    inputs: _GraphInputs,
     canvas_width: int,
     canvas_height: int,
     timeline_duration: float,
 ) -> tuple[str, str]:
-    """Dimensiona imagem ou trecho de vídeo e o sobrepõe sem mapear áudio da camada."""
+    """Dimensiona imagem ou trecho de vídeo e o sobrepõe sem mapear áudio da camada.
+
+    O recorte da camada de vídeo é deslocado pelo início da janela de decode; imagem
+    nunca tem janela.
+    """
 
     left = min(canvas_width - 1, int(float(layer["x"]) * canvas_width))
     top = min(canvas_height - 1, int(float(layer["y"]) * canvas_height))
@@ -446,12 +498,15 @@ def _media_layer_filter(
     output = f"vmedia{layer_index}"
     scale_mode = "decrease" if fit == "contain" else "increase"
     if layer["type"] == "video":
+        input_index, offset = inputs.locate(str(layer["source_id"]), layer["in_s"])
         # O PTS global posiciona o primeiro frame do recorte na abertura da camada.
         source = (
-            f"trim=start={_number(layer['in_s'])}:end={_number(layer['out_s'])},"
+            f"trim=start={_number(float(layer['in_s']) - offset)}:"
+            f"end={_number(float(layer['out_s']) - offset)},"
             f"setpts=PTS-STARTPTS+{_number(layer['start_s'])}/TB"
         )
     else:
+        input_index, _ = inputs.locate(str(layer["source_id"]), 0.0)
         source = f"trim=duration={_number(timeline_duration)},setpts=PTS-STARTPTS"
     filters = [
         f"[{input_index}:v:0]{source},format=rgba,"
@@ -477,14 +532,23 @@ def build_ffmpeg_graph(
     *,
     canvas_width: int,
     canvas_height: int,
+    windows: bool = False,
 ) -> FfmpegGraph:
-    """Cria o grafo completo de vídeo, áudio, concatenação e processamento final."""
+    """Cria o grafo completo de vídeo, áudio, concatenação e processamento final.
 
-    input_source_ids = _used_source_ids(document)
-    input_indexes = {source_id: index for index, source_id in enumerate(input_source_ids)}
+    Com `windows=True`, cada fonte de vídeo que ganha com a decodificação seletiva passa
+    a ter uma entrada por janela (`render/windows.py`); sem ganho o grafo é o mesmo de
+    `windows=False`. Os tempos do plano nunca mudam, só os recortes do grafo.
+    """
+
+    source_order = _used_source_ids(document)
+    source_records = {str(record["id"]): record for record in validation["sources"]}
+    inputs = _GraphInputs(
+        source_order,
+        plan_decode_windows(document, source_records, source_order) if windows else {},
+    )
     segments = list(document["segments"])
     timeline_segments = list(validation["timeline"]["segments"])
-    source_records = {str(record["id"]): record for record in validation["sources"]}
     has_audio = any(segment["audio"]["mode"] != "mute" for segment in segments)
     parts: list[str] = []
     video_labels: list[str] = []
@@ -498,7 +562,7 @@ def build_ffmpeg_graph(
         parts.append(
             _video_segment_filter(
                 segment,
-                input_indexes,
+                inputs,
                 segment_index,
                 canvas_width,
                 canvas_height,
@@ -510,7 +574,7 @@ def build_ffmpeg_graph(
             parts.append(
                 _audio_segment_filter(
                     segment,
-                    input_indexes,
+                    inputs,
                     segment_index,
                     float(timeline_segment["audio_duration_s"]),
                 )
@@ -549,7 +613,7 @@ def build_ffmpeg_graph(
         elif layer["type"] in {"image", "video"}:
             filter_part, video_label = _media_layer_filter(
                 video_label, layer, layer_index,
-                input_indexes[str(layer["source_id"])],
+                inputs,
                 canvas_width, canvas_height,
                 float(validation["timeline"]["duration_seconds"]),
             )
@@ -572,6 +636,7 @@ def build_ffmpeg_graph(
         filter_complex=";".join(parts),
         video_label=video_label,
         audio_label=audio_label,
-        input_source_ids=input_source_ids,
+        input_source_ids=tuple(inputs.source_ids),
+        input_windows=tuple(inputs.windows),
         has_audio=has_audio,
     )

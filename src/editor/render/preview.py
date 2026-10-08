@@ -269,9 +269,14 @@ def _build_ffmpeg_arguments(
     frame_rate: float | None,
     accel: str = "cpu",
 ) -> list[str]:
-    """Monta a lista estruturada de argumentos sem interpolar caminhos em shell."""
+    """Monta a lista estruturada de argumentos sem interpolar caminhos em shell.
+
+    Entradas com janela de decode recebem `-ss`/`-t` antes do `-i` (seek preciso de
+    entrada); sem janela o comando é o mesmo de antes da decodificação seletiva.
+    """
 
     records = {str(record["id"]): record for record in source_records}
+    windows = graph.input_windows or (None,) * len(graph.input_source_ids)
     arguments = ["-hide_banner", "-nostdin", "-loglevel", "error"]
     video_inputs = sum(
         1 for source_id in graph.input_source_ids if records.get(source_id, {}).get("kind") == "video"
@@ -279,7 +284,7 @@ def _build_ffmpeg_arguments(
     # Decode CUDA só nas fontes de vídeo e só até o teto de VRAM; o FFmpeg cai para decode em
     # software sozinho quando o formato não é suportado, e os quadros voltam à RAM para o grafo.
     gpu_decode = accel == "gpu" and 0 < video_inputs <= GPU_MAX_VIDEO_INPUTS
-    for source_id in graph.input_source_ids:
+    for source_id, window in zip(graph.input_source_ids, windows, strict=True):
         record = records.get(source_id)
         if record is None:
             raise _error(
@@ -291,6 +296,8 @@ def _build_ffmpeg_arguments(
             arguments.extend(["-loop", "1", "-framerate", "25"])
         elif gpu_decode and record["kind"] == "video":
             arguments.extend(["-hwaccel", dependencies.GPU_HWACCEL])
+        if window is not None:
+            arguments.extend(["-ss", _number(window.start_s), "-t", _number(window.duration_s)])
         arguments.extend(["-i", str(record["path"])])
 
     arguments.extend(
