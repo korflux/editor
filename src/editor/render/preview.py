@@ -22,7 +22,8 @@ from ..workdir import (
     publish_preview_atomic,
     relative_artifact_path,
 )
-from .ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
+from .ffmpeg_graph import FfmpegGraph, _used_source_ids, build_ffmpeg_graph
+from .proxy import lookup_proxy
 
 
 MAX_PREVIEW_DIMENSION = 720
@@ -30,6 +31,9 @@ MAX_PREVIEW_DIMENSION = 720
 
 ACCEL_CHOICES = ("none", "gpu")
 """Valores de `--accel`: `none` mantém CPU; `gpu` tenta decode CUDA + NVENC e cai para CPU se falhar."""
+
+PROXY_CHOICES = ("auto", "off")
+"""Valores de `--proxy` da preview (decisão 10): `auto` lê proxies válidos, `off` só originais."""
 
 GPU_MAX_VIDEO_INPUTS = 4
 """Teto de fontes de vídeo com decode por GPU, pois cada decoder CUDA ocupa VRAM simultaneamente."""
@@ -581,6 +585,7 @@ def _render_artifact(
     publish: Callable[[Any, Path], Any],
     max_dimension: int | None = MAX_PREVIEW_DIMENSION,
     artifact_name: str = "preview",
+    read_paths: Mapping[str, Path] | None = None,
 ) -> tuple[media.MediaMetadata, str, dict[str, Any]]:
     """Corpo único de render de preview e full: grafos, tentativas, validação e publicação atômica.
 
@@ -588,6 +593,10 @@ def _render_artifact(
     pela ordem de `_render_attempts` e publica só o MP4 validado. Devolve os metadados, o
     modo de aceleração usado e `data.decode` da tentativa que publicou. `.tmp` fica limpo em
     sucesso, erro, exceção e timeout; o artefato vigente só é trocado pela publicação.
+
+    `read_paths` (id -> arquivo) troca só o `-i` dessas fontes; grafo, canvas, taxa de quadros e
+    validação continuam derivados dos metadados do original validado. Só a preview informa
+    proxies aqui; a full nunca passa este argumento, então sempre lê os originais (decisão 10).
     """
 
     plain = build_ffmpeg_graph(
@@ -603,6 +612,12 @@ def _render_artifact(
     first_source_id = str(document["segments"][0]["video"]["source_id"])
     source_records = list(validation["sources"])
     first_source = next(record for record in source_records if record["id"] == first_source_id)
+    if read_paths:
+        # Cópia rasa por fonte: o `validation` original (usado por aprovação e envelope) não muda.
+        source_records = [
+            {**record, "path": str(read_paths[record["id"]])} if record["id"] in read_paths else record
+            for record in source_records
+        ]
     frame_rate = first_source.get("video_frame_rate")
     staging: Path | None = None
     try:
@@ -632,11 +647,51 @@ def _render_artifact(
     return metadata, used_accel, _decode_summary(graph, source_records)
 
 
-def render_preview(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
-    """Valida o plano, renderiza a preview em `.tmp` e publica um único arquivo completo."""
+def _select_proxies(
+    root: Path,
+    document: Mapping[str, Any],
+    validation: Mapping[str, Any],
+    mode: str,
+) -> tuple[dict[str, Path], dict[str, Any]]:
+    """Escolhe, por fonte de vídeo usada na timeline, se a preview lê o proxy ou o original (F3).
 
+    Devolve `read_paths` (id -> proxy válido) para `_render_artifact` e o resumo `data.proxy`.
+    Com `off` nada é consultado e a preview é a mesma de antes dos proxies. Proxy obsoleto ou
+    inválido entra em `stale` e a fonte segue pelo original; a checagem é só por metadados.
+    """
+
+    # ponytail: proxy íntegro nos metadados mas corrompido no conteúdo falha a preview com
+    # RENDER_FAILED em vez de cair para o original; refazer com `proxy build` ou usar `--proxy off`,
+    # adicionar fallback ao original se isso aparecer em uso real.
+    read_paths: dict[str, Path] = {}
+    stale: list[str] = []
+    if mode == "auto":
+        used = set(_used_source_ids(document))
+        for record in validation["sources"]:
+            source_id = str(record["id"])
+            if record.get("kind") != "video" or source_id not in used:
+                continue
+            status = lookup_proxy(root, source_id, Path(str(record["path"])))
+            if status.state == "valid":
+                read_paths[source_id] = status.path
+            elif status.state == "stale":
+                stale.append(source_id)
+    return read_paths, {"mode": mode, "sources": list(read_paths), "stale": stale}
+
+
+def render_preview(workdir: str | Path, accel: str = "none", proxy: str = "auto") -> dict[str, Any]:
+    """Valida o plano, renderiza a preview em `.tmp` e publica um único arquivo completo.
+
+    `proxy` (`auto`|`off`) só muda o arquivo lido por fonte; plano, canvas e aprovação seguem
+    os originais validados.
+    """
+
+    # Allowlist na borda do núcleo, antes de qualquer leitura; a CLI já restringe por `choices`.
+    if proxy not in PROXY_CHOICES:
+        raise _error("ARGUMENT_INVALID", "Argumentos inválidos.", EXIT_CODES["ARGUMENT"])
     document, validation = load_validated_plan(workdir)
     layout = prepare_preview_layout(workdir)
+    read_paths, proxy_summary = _select_proxies(layout.root, document, validation, proxy)
     ensure_sources_do_not_alias_output(
         [Path(str(record["path"])) for record in validation["sources"]],
         layout.destination,
@@ -651,6 +706,7 @@ def render_preview(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
         canvas_height=canvas_height,
         accel=accel,
         publish=publish_preview_atomic,
+        read_paths=read_paths,
     )
 
     return {
@@ -677,4 +733,5 @@ def render_preview(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
             "codec": metadata.audio_codec,
         },
         "decode": decode,
+        "proxy": proxy_summary,
     }

@@ -21,7 +21,7 @@ from .contracts import (
 from .integrity.approval import approve_workdir
 from .plan.validation import validate_plan
 from .render.full import render_full
-from .render.preview import ACCEL_CHOICES, render_preview
+from .render.preview import ACCEL_CHOICES, PROXY_CHOICES, render_preview
 from .render.proxy import build_proxies
 from .workdir import derive_source_id, init_workdir, resolve_workdir
 
@@ -77,6 +77,17 @@ def _add_accel_argument(parser: argparse.ArgumentParser) -> None:
         choices=ACCEL_CHOICES,
         default="none",
         help="aceleração do render, padrão: none (CPU); gpu usa NVIDIA e cai para CPU se falhar",
+    )
+
+
+def _add_proxy_argument(parser: argparse.ArgumentParser) -> None:
+    """Registra `--proxy` só na preview (decisão 10); a full não recebe a opção e nunca lê proxy."""
+
+    parser.add_argument(
+        "--proxy",
+        choices=PROXY_CHOICES,
+        default="auto",
+        help="leitura de proxies, padrão: auto (usa proxy válido de cada fonte); off lê só os originais",
     )
 
 
@@ -170,6 +181,7 @@ def register_shortcut_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_workdir_argument(preview_shortcut)
     _add_accel_argument(preview_shortcut)
+    _add_proxy_argument(preview_shortcut)
     _add_json_argument(preview_shortcut)
     # Atalho `full` equivale a `render full`; o envelope usa o nome canônico.
     full_shortcut = subparsers.add_parser(
@@ -414,6 +426,7 @@ def build_parser() -> CliArgumentParser:
     )
     preview_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     _add_accel_argument(preview_parser)
+    _add_proxy_argument(preview_parser)
     preview_parser.add_argument(
         "--json",
         action="store_true",
@@ -574,7 +587,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if (args.command == "render" and args.render_command == "preview") or args.command == "preview":
-            result = render_preview(resolve_workdir(args.workdir), accel=args.accel)
+            result = render_preview(resolve_workdir(args.workdir), accel=args.accel, proxy=args.proxy)
             write_json(success_envelope("render preview", result))
             return 0
 

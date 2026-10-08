@@ -85,7 +85,10 @@ Esta entrega reduz o tempo de render do editor sem alterar o resultado: o grafo 
 
 ### T4: Usar proxies na preview com `--proxy auto|off`
 
-- [ ] T4 concluída
+- [x] T4 concluída
+- **Prova:** suíte da Verificação -> 51 testes OK (71 s). Jornada com proxy só em `a`: a preview lê `proxy/a.mp4` e `sources/b.mp4` (spy em `process.run_tool`), dimensão 704x396 e taxa iguais às da preview sem proxy; `plan_sha256` e hashes das fontes iguais em `approval.json`, `preview_sha256` igual ao hash real; a full não abre `-i` em `proxy/` e tem `framemd5` de vídeo e áudio igual ao trabalho sem proxy. `--proxy off` com proxies presentes tem o mesmo `framemd5` da preview sem proxies; fonte alterada aparece em `stale` e é lida pelo original; `on` e `AUTO` dão `ARGUMENT_INVALID`.
+- **Arquivos:** `src/editor/render/preview.py`, `src/editor/cli.py`, `tests/test_preview_proxy.py`
+- **Decisões:** `_select_proxies` consulta `lookup_proxy` só em `auto`, só para fontes de vídeo usadas pela timeline, na ordem do plano; `_render_artifact` recebe `read_paths` opcional que troca só o `-i` numa cópia dos registros, mantendo grafo, canvas, `frame_rate` e validação derivados do original. `full.py` não muda e nunca passa `read_paths`; `--proxy` em `render full` dá `ARGUMENT_INVALID`. Limitação `ponytail`: proxy com metadados válidos mas conteúdo corrompido falha a preview com `RENDER_FAILED` em vez de cair para o original; contorno é refazer o build ou usar `--proxy off`.
 - **Spec:** A6, A7, C2
 - **O quê:** `render preview` (e o atalho `preview`) aceita `--proxy auto|off` (padrão `auto`); com `auto`, cada fonte elegível com proxy válido é lida pelo proxy, as demais pelo original, e as janelas da T2 se aplicam ao proxy; o envelope informa `data.proxy` (`mode`, `sources`, `stale`); `render full` não muda.
 - **Aceite:**
