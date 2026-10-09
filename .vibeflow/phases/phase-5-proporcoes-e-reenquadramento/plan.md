@@ -63,16 +63,21 @@ Esta entrega faz o editor renderizar planos em 9:16, 1:1 e 4:5, além de 16:9, e
 
 ### T3: Escalar o `size_px` da preview pela largura da full
 
-- [ ] T3 concluída
+- [x] T3 concluída
 - **Spec:** A6 (texto), decisão 11
 - **O quê:** a camada de texto usa `size_px` na full e `size_px × largura da preview / largura da full` (arredondado, mínimo 1) na preview, aplicando o mesmo fator à quebra de linha; a full não muda.
 - **Aceite:**
-  - [ ] Num plano 16:9 e num 9:16 com texto, a largura medida do texto ocupa a mesma fração da largura do quadro na preview e na full, com tolerância de 2% da largura.
-  - [ ] O `framemd5` da full do plano 16:9 vigente continua igual ao da referência da T1.
+  - [x] Num plano 16:9 e num 9:16 com texto, a largura medida do texto ocupa a mesma fração da largura do quadro na preview e na full, com tolerância de 2% da largura.
+  - [x] O `framemd5` da full do plano 16:9 vigente continua igual ao da referência da T1.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_preview_render tests.test_full_render tests.test_aspect_ratio -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_preview_render tests.test_full_render tests.test_aspect_ratio -v`
 - **Deps:** T1
 - **Arquivos:** `src/editor/render/ffmpeg_graph.py`, `src/editor/render/preview.py`, `tests/test_preview_render.py`
+- **Prova:** `tests.test_preview_render tests.test_full_render tests.test_aspect_ratio` -> 51 testes OK; suíte completa (`discover -s tests`, com E2E, T1 e T2) -> 230 testes OK. Largura do texto medida nos frames (pixels brancos sobre fundo escuro): 16:9, preview 704x396 e full 1280x720, 45,88% contra 45,86% da largura do quadro; 9:16 com `crop` sobre fonte horizontal, preview 404x720 e full 1080x1920, duas linhas, 79,70% contra 79,44% (diferença máxima 0,26%, tolerância 2%). O mesmo teste no código anterior falha (83,4% contra 45,9% em 16:9; 88,6% contra 79,4% em 9:16). Full inalterada medida antes e depois em 3 planos (fixture `workflow`, sintético 16:9 com texto, sintético 9:16 `crop` com texto): hash do `filter_complex` da full, `framemd5` de vídeo e de áudio iguais; o golden de `tests/test_aspect_ratio.py` não tem camada de texto e ficou intocado.
+- **Arquivos (efetivos):** `src/editor/render/ffmpeg_graph.py`, `tests/test_preview_render.py` (classe `TextScaleTests`, 4 testes novos). `render/preview.py` não precisou mudar.
+- **Decisões de implementação:** o grafo lê a largura da full em `validation["profile"]["full_width"]` (mesma fonte do canvas da full, T1), sem parâmetro novo em `build_ffmpeg_graph`; na preview o `fontsize` é `(2*size_px*canvas + ref)//(2*ref)` (meio para cima, mínimo 1; `_scaled_font_size`) e a quebra de linha usa o `size_px` e a largura de caixa da full (`_layer_span` na largura de referência), então a preview quebra nos mesmos pontos da full. Na full o fator é 1 e o filtro é idêntico ao anterior.
+- **Limitação registrada (`ponytail`):** corpo da fonte arredondado a pixel inteiro (mínimo 1); em fonte pequena a dica de glifos pode variar a largura da preview em poucos por cento (medido: no máximo 0,26% do quadro).
+- **Pendência para a T4:** marcar o Problema 1 como resolvido em `.erros-encontrados/2026-10-08-size-px-nao-escala-entre-preview-e-full.md` (mantendo o Problema 2 aberto), remover da skill a nota de que `size_px` não escala, e reescrever em `REGRAS.md` a menção a "teto de 32.767 caracteres do grafo" como teto da linha de comando (ver erro registrado na T2).
 
 ### T4: Provar a jornada vertical completa e publicar o contrato
 

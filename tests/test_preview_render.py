@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from array import array
 from contextlib import contextmanager
+import copy
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -17,9 +19,11 @@ from uuid import uuid4
 
 from editor import dependencies, process
 from editor.contracts import CliError
+from editor.integrity.approval import approve_workdir
 from editor.media import MediaMetadata, inspect_source
 from editor.plan.validation import load_validated_plan
-from editor.render.ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
+from editor.render.ffmpeg_graph import FfmpegGraph, _scaled_font_size, build_ffmpeg_graph
+from editor.render.full import render_full
 from editor.render.preview import render_preview
 
 
@@ -970,6 +974,235 @@ class PreviewRenderTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, "RENDER_FAILED")
                 self.assertEqual(previous_path.read_bytes(), previous)
                 self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+
+# --- Escala do texto entre preview e full (T3 da phase 5, A6 e decisão 11) ----------------------
+
+GOLDEN_WORKFLOW_FULL_TEXT_GRAPH_SHA256_1280 = (
+    "0d1f6b6027d5c0db388a1eef4f0ed2833b2ad4ff09164583ccfb996b9fc835f2"
+)
+GOLDEN_WORKFLOW_FULL_TEXT_GRAPH_SHA256_320 = (
+    "d548e98836318c9d67246408a34f94c62603f6cd6316f3b92e81cd60b95126a9"
+)
+"""`filter_complex` do plano do fixture `workflow` (texto "Paraty", `size_px` 32) em canvas 1280x720 e
+320x180, registrados com o código anterior à T3: a full de planos existentes não pode mudar (decisão 11)."""
+
+TEXT_SAMPLE_SECONDS = 0.7
+"""Instante com o texto visível (as camadas dos planos desta seção vão de 0,2 s a 1,3 s)."""
+
+TEXT_FRACTION_TOLERANCE = 0.02
+"""Tolerância da spec (A6): 2% da largura do quadro entre a fração medida na preview e na full."""
+
+
+def create_black_wide_source(path: Path) -> None:
+    """Gera uma fonte 1280x720 preta, sem áudio, para que só o texto branco apareça no quadro."""
+
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=25:d=1.5",
+            "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr.decode(errors="replace"))
+
+
+def with_full_width(validation: dict[str, object], full_width: int) -> dict[str, object]:
+    """Cópia da validação com `profile.full_width` trocado, para montar o grafo de um canvas conhecido.
+
+    O grafo lê dali a largura em que o `size_px` do texto é definido; a validação do fixture
+    traz 320 (largura da fonte) e as provas de grafo precisam de 1280 ou 1080.
+    """
+
+    adjusted = copy.deepcopy(validation)
+    adjusted["profile"]["full_width"] = full_width
+    return adjusted
+
+
+def text_scale_plan(aspect_ratio: str, fit: str, text: str, size_px: int) -> dict[str, object]:
+    """Plano de um segmento mudo com uma camada de texto branco alinhada à esquerda sobre fundo preto."""
+
+    return {
+        "schema_version": 2,
+        "profile": {"aspect_ratio": aspect_ratio},
+        "sources": [{"id": "wide", "kind": "video", "path": "sources/wide.mp4"}],
+        "segments": [{
+            "video": {"source_id": "wide", "in_s": 0, "out_s": 1.5, "fit": fit},
+            "audio": {"mode": "mute", "tracks": []},
+        }],
+        "cuts": [],
+        "layers": [{
+            "type": "text", "start_s": 0.2, "end_s": 1.3,
+            "x": 0.05, "y": 0.4, "width": 0.9, "height": 0.3,
+            "text": text, "font": "Arial", "size_px": size_px,
+            "color": "#FFFFFF", "align": "left", "wrap": True,
+        }],
+        "audio_processing": {
+            "normalize_loudness": False, "target_lufs": -16,
+            "limiter": {"enabled": False, "ceiling_dbfs": -1}, "ducking": False,
+        },
+    }
+
+
+def measure_text_extent(path: Path, width: int, height: int) -> tuple[float, float, int]:
+    """Mede o texto branco do quadro: fração da largura do início, da extensão e o número de linhas.
+
+    Decodifica um quadro em tons de cinza e marca como texto o pixel acima de 128 (o fundo é preto).
+    Uma linha de texto é uma faixa contínua de linhas de pixels com texto, separada das demais por
+    linhas vazias; por isso o texto de prova usa só maiúsculas, que não têm descendentes.
+    """
+
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(TEXT_SAMPLE_SECONDS),
+            "-i", str(path), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    frame = result.stdout
+    if len(frame) != width * height:
+        raise AssertionError(f"quadro de {path.name} com tamanho inesperado")
+    bright_only = bytes(1 if value > 128 else 0 for value in range(256))
+    first_x, last_x, lines, in_line = width, -1, 0, False
+    for row_index in range(height):
+        row = frame[row_index * width:(row_index + 1) * width].translate(bright_only)
+        first = row.find(b"\x01")
+        if first < 0:
+            in_line = False
+            continue
+        if not in_line:
+            lines += 1
+            in_line = True
+        first_x = min(first_x, first)
+        last_x = max(last_x, row.rfind(b"\x01"))
+    if last_x < 0:
+        raise AssertionError(f"nenhum texto encontrado em {path.name}")
+    return first_x / width, (last_x - first_x + 1) / width, lines
+
+
+class TextScaleTests(unittest.TestCase):
+    """O `size_px` do texto é definido na full: a preview o escala e a full permanece intacta."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Exige FFmpeg e FFprobe locais e o fixture do workflow, usado nas provas de grafo."""
+
+        if dependencies.resolve_executable("ffmpeg") is None or dependencies.resolve_executable("ffprobe") is None:
+            raise unittest.SkipTest("ffmpeg e ffprobe não estão disponíveis localmente")
+        if not WORKFLOW_PLAN.is_file() or not WORKFLOW_SOURCES.is_dir():
+            raise unittest.SkipTest("fixture do workflow não está disponível")
+
+    def render_pair(self, workdir: Path, plan: dict[str, object]) -> tuple[dict, dict]:
+        """Renderiza preview, aprova e renderiza a full do plano, devolvendo os dois `data`."""
+
+        (workdir / "sources").mkdir(parents=True)
+        create_black_wide_source(workdir / "sources" / "wide.mp4")
+        (workdir / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+        preview = render_preview(workdir)
+        approve_workdir(workdir)
+        return preview, render_full(workdir)
+
+    def test_text_occupies_the_same_fraction_of_the_frame_in_preview_and_full(self) -> None:
+        """A6: texto medido nos frames da preview e da full ocupa a mesma fração da largura, em 16:9 e 9:16."""
+
+        cases = {
+            # 16:9: preview 704x396 contra full 1280x720, uma linha.
+            "16:9": ("preserve", "MERCADO HAN", 80, (704, 396), (1_280, 720), 1),
+            # 9:16 com fonte horizontal em `crop`: preview 404x720 contra full 1080x1920, duas linhas.
+            "9:16": ("crop", "MERCADO HAN DANANG BEACH PARK", 72, (404, 720), (1_080, 1_920), 2),
+        }
+        for aspect_ratio, (fit, text, size_px, preview_size, full_size, lines) in cases.items():
+            with self.subTest(aspect_ratio=aspect_ratio), workspace_tempdir() as root:
+                preview, full = self.render_pair(
+                    root / "work", text_scale_plan(aspect_ratio, fit, text, size_px)
+                )
+                self.assertEqual((preview["video"]["width"], preview["video"]["height"]), preview_size)
+                self.assertEqual((full["video"]["width"], full["video"]["height"]), full_size)
+
+                preview_left, preview_width, preview_lines = measure_text_extent(
+                    root / "work" / "preview.mp4", *preview_size
+                )
+                full_left, full_width, full_lines = measure_text_extent(
+                    root / "work" / "full.mp4", *full_size
+                )
+                self.assertGreater(full_width, 0.2, "o texto de prova deve ocupar boa parte do quadro")
+                self.assertAlmostEqual(preview_width, full_width, delta=TEXT_FRACTION_TOLERANCE)
+                self.assertAlmostEqual(preview_left, full_left, delta=TEXT_FRACTION_TOLERANCE)
+                self.assertEqual((preview_lines, full_lines), (lines, lines))
+
+    def test_full_graph_with_text_is_unchanged_and_preview_scales_the_font(self) -> None:
+        """A full mantém o `size_px` e o grafo de antes; a preview usa o corpo escalado pela largura da full."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            document, native_validation = load_validated_plan(workdir)
+            # Full do fixture na resolução da própria fonte (320x180, `full_width` 320) e numa
+            # full de 1280 de largura: canvas igual a `full_width`, então o fator é 1.
+            for full_width, canvas_height, golden in (
+                (320, 180, GOLDEN_WORKFLOW_FULL_TEXT_GRAPH_SHA256_320),
+                (1_280, 720, GOLDEN_WORKFLOW_FULL_TEXT_GRAPH_SHA256_1280),
+            ):
+                with self.subTest(full_width=full_width):
+                    full_graph = build_ffmpeg_graph(
+                        document,
+                        with_full_width(native_validation, full_width),
+                        canvas_width=full_width,
+                        canvas_height=canvas_height,
+                    )
+                    self.assertEqual(
+                        hashlib.sha256(full_graph.filter_complex.encode("utf-8")).hexdigest(), golden
+                    )
+                    self.assertIn("fontsize=32:", full_graph.filter_complex)
+
+            preview_graph = build_ffmpeg_graph(
+                document,
+                with_full_width(native_validation, 1_280),
+                canvas_width=704,
+                canvas_height=396,
+            )
+            self.assertIn("fontsize=18:", preview_graph.filter_complex)  # 32 x 704 / 1280 = 17,6
+            self.assertNotIn("fontsize=32:", preview_graph.filter_complex)
+
+    def test_wrap_breaks_at_the_same_points_in_preview_and_full(self) -> None:
+        """A quebra de linha usa o `size_px` e a caixa da full, então a preview quebra onde a full quebra."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            document, validation = load_validated_plan(workdir)
+            document = copy.deepcopy(document)
+            document["layers"][0].update({
+                "text": "ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE", "size_px": 24,
+                "x": 0.1, "width": 0.25, "wrap": True,
+            })
+
+            def drawn_text(canvas: tuple[int, int], full_width: int) -> str:
+                graph = build_ffmpeg_graph(
+                    document, with_full_width(validation, full_width),
+                    canvas_width=canvas[0], canvas_height=canvas[1],
+                )
+                match = re.search(r"text='(.*?)':expansion=none", graph.filter_complex, re.DOTALL)
+                self.assertIsNotNone(match)
+                return match.group(1)
+
+            full_text = drawn_text((1_280, 720), 1_280)
+            self.assertGreaterEqual(full_text.count("\n"), 2, "a full deve quebrar o texto de prova")
+            self.assertEqual(drawn_text((704, 396), 1_280), full_text)
+            self.assertEqual(drawn_text((404, 720), 1_080), drawn_text((1_080, 1_920), 1_080))
+
+    def test_scaled_font_size_rounds_half_up_keeps_full_exact_and_has_minimum_one(self) -> None:
+        """Regra da decisão 11: `size_px × canvas / full` arredondado, mínimo 1 e fator 1 sem alteração."""
+
+        self.assertEqual(_scaled_font_size(100, 404, 1_080), 37)  # 37,4
+        self.assertEqual(_scaled_font_size(32, 704, 1_280), 18)  # 17,6
+        self.assertEqual(_scaled_font_size(5, 1, 2), 3)  # 2,5 arredonda para cima
+        self.assertEqual(_scaled_font_size(1, 404, 1_080), 1)  # 0,37 sobe ao mínimo
+        for size_px in range(1, 513):
+            self.assertEqual(_scaled_font_size(size_px, 1_080, 1_080), size_px)
+            self.assertEqual(_scaled_font_size(size_px, 1_280, 1_280), size_px)
 
 
 if __name__ == "__main__":

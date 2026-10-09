@@ -110,7 +110,7 @@ O operador (agente ou humano) monta, a partir de gravações 16:9, vídeos 9:16,
 - [x] A3: `data.profile.upscale` lista os segmentos ampliados com o fator correto e fica vazio quando nenhum é ampliado.
 - [x] A4: preview e full de um plano 9:16 sobre fonte 16:9 saem em 404x720 e 1080x1920; as de 1:1 e 4:5 saem nas dimensões da decisão 3 e 2.
 - [x] A5: com keyframes, o recorte segue as posições declaradas nos instantes dos keyframes, desliza entre eles conforme `ease` ou `linear`, encosta na borda sem preto e mantém o estado fora do intervalo dos keyframes.
-- [ ] A6: um plano 16:9 existente, sem `reframe`, gera full idêntica à de antes da phase, e a preview mostra o texto na mesma proporção da full.
+- [x] A6: um plano 16:9 existente, sem `reframe`, gera full idêntica à de antes da phase, e a preview mostra o texto na mesma proporção da full.
 - [ ] A7: aprovação, bloqueio da full por mutação, janelas de decode, fallback e preview com proxy funcionam num plano 9:16 com `reframe`.
 - [ ] A8: `capabilities` expõe proporções, dimensões e limites do `reframe`, e a skill documenta o fluxo vertical, os keyframes e as zonas seguras.
 

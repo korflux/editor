@@ -96,7 +96,11 @@ def _escape_filter_value(value: str) -> str:
 
 
 def _layer_text(value: str, *, wrap: bool, size_px: int, box_width: int) -> str:
-    """Quebra linhas pela largura da caixa, preservando quebras explícitas."""
+    """Quebra linhas pela largura da caixa, preservando quebras explícitas.
+
+    `size_px` e `box_width` são sempre os da full (referência do plano, decisão 11 da phase 5):
+    a preview escala só o corpo da fonte (`_scaled_font_size`) e quebra nos mesmos pontos da full.
+    """
 
     normalized = value.replace("\r\n", "\n").replace("\r", "\n")
     if not wrap:
@@ -587,6 +591,32 @@ def _audio_processing_filters(
     return filters, current
 
 
+def _layer_span(start: object, size: object, extent: int) -> tuple[int, int]:
+    """Converte posição e tamanho normalizados (0 a 1) da camada em pixels `(início, fim)` de um eixo.
+
+    Mesma regra de arredondamento do canvas inteiro: início truncado e dentro do quadro, fim
+    arredondado para cima e limitado ao quadro. Serve a qualquer largura de referência, o que
+    permite calcular a caixa da full mesmo quando o grafo é o da preview.
+    """
+
+    first = min(extent - 1, int(float(start) * extent))
+    last = min(extent, math.ceil((float(start) + float(size)) * extent))
+    return first, last
+
+
+def _scaled_font_size(size_px: int, canvas_width: int, reference_width: int) -> int:
+    """Corpo da fonte no canvas renderizado: `size_px` vale na largura da full (decisão 11 da phase 5).
+
+    Na full (`canvas_width == reference_width`) devolve `size_px` sem alteração; na preview devolve
+    `size_px × canvas_width / reference_width` arredondado (meio para cima, em inteiros, sem erro
+    de ponto flutuante) e com mínimo de 1.
+    """
+
+    # ponytail: corpo arredondado a pixel inteiro (mínimo 1) e dica de glifos em fonte pequena variam
+    # a largura da preview em poucos por cento da full, usar `fontsize` fracionário se isso incomodar.
+    return max(1, (2 * size_px * canvas_width + reference_width) // (2 * reference_width))
+
+
 def _text_layer_filter(
     input_label: str,
     layer: Mapping[str, Any],
@@ -594,25 +624,29 @@ def _text_layer_filter(
     canvas_width: int,
     canvas_height: int,
     font_file: str,
+    reference_width: int,
 ) -> tuple[str, str]:
-    """Desenha texto com o arquivo de fonte validado e o sobrepõe no intervalo declarado."""
+    """Desenha texto com o arquivo de fonte validado e o sobrepõe no intervalo declarado.
 
-    left = min(canvas_width - 1, int(float(layer["x"]) * canvas_width))
-    top = min(canvas_height - 1, int(float(layer["y"]) * canvas_height))
-    right = min(
-        canvas_width, math.ceil((float(layer["x"]) + float(layer["width"])) * canvas_width)
-    )
-    bottom = min(
-        canvas_height, math.ceil((float(layer["y"]) + float(layer["height"])) * canvas_height)
-    )
+    A caixa e o `drawtext` usam o canvas renderizado, mas `size_px` é definido na largura da full
+    (`reference_width`): o corpo da fonte é escalado por `_scaled_font_size` e a quebra de linha
+    (`wrap`) é calculada com o `size_px` e a largura de caixa da full. Assim preview e full quebram
+    nos mesmos pontos e o texto ocupa a mesma fração do quadro; com `reference_width` igual ao
+    canvas (full) o filtro é idêntico ao anterior a esta escala.
+    """
+
+    left, right = _layer_span(layer["x"], layer["width"], canvas_width)
+    top, bottom = _layer_span(layer["y"], layer["height"], canvas_height)
     box_width = max(1, right - left)
     box_height = max(1, bottom - top)
+    reference_left, reference_right = _layer_span(layer["x"], layer["width"], reference_width)
     text = _layer_text(
         str(layer["text"]),
         wrap=bool(layer["wrap"]),
         size_px=int(layer["size_px"]),
-        box_width=box_width,
+        box_width=max(1, reference_right - reference_left),
     )
+    font_size = _scaled_font_size(int(layer["size_px"]), canvas_width, reference_width)
     escaped_font_file = _escape_filter_value(font_file)
     escaped_text = _escape_filter_value(text)
     start = _number(layer["start_s"])
@@ -624,7 +658,7 @@ def _text_layer_filter(
     output_label = f"vtext{layer_index}"
     surface = (
         f"color=c=black@0:s={box_width}x{box_height}:r=25:d={end},format=rgba,"
-        f"drawtext=fontfile='{escaped_font_file}':fontsize={int(layer['size_px'])}:"
+        f"drawtext=fontfile='{escaped_font_file}':fontsize={font_size}:"
         f"fontcolor={layer['color']}:text='{escaped_text}':expansion=none:"
         f"text_align={layer['align']}:x={align_x}:y=0[{layer_label}]"
     )
@@ -724,8 +758,14 @@ def build_ffmpeg_graph(
     Com `windows=True`, cada fonte de vídeo que ganha com a decodificação seletiva passa
     a ter uma entrada por janela (`render/windows.py`); sem ganho o grafo é o mesmo de
     `windows=False`. Os tempos do plano nunca mudam, só os recortes do grafo.
+
+    O `size_px` do texto é definido na largura da full (decisão 11 da phase 5), lida de
+    `validation["profile"]["full_width"]`, a mesma fonte do canvas que `render/full.py` usa. A
+    full tem `canvas_width` igual a ela e renderiza o valor declarado; a preview, de canvas
+    menor, escala o corpo da fonte pela razão das larguras.
     """
 
+    text_reference_width = int(validation["profile"]["full_width"])
     source_order = _used_source_ids(document)
     source_records = {str(record["id"]): record for record in validation["sources"]}
     inputs = _GraphInputs(
@@ -794,6 +834,7 @@ def build_ffmpeg_graph(
                 canvas_width,
                 canvas_height,
                 font_file,
+                text_reference_width,
             )
             parts.append(filter_part)
         elif layer["type"] in {"image", "video"}:
