@@ -59,18 +59,22 @@ Esta entrega permite legendar trechos de fala com o texto escrito pelo agente, p
 
 ### T3: Desenhar as legendas na preview e na full
 
-- [ ] T3 concluída
+- [x] T3 concluída
 - **Spec:** A4, A5 (F3, decisões 9 e 10)
 - **O quê:** o grafo desenha cada ocorrência acima de todas as camadas, na ordem dos itens, de `start_s` a `end_s`, na caixa normalizada, com o texto quebrado na largura da caixa e ancorado na base dela, reaproveitando o desenho de texto vigente (`drawtext` com `fontfile`, escape com `expansion=none`, escala da preview, sombra e contorno da phase 5). Sem `captions` o `filter_complex` não muda.
 - **Aceite:**
-  - [ ] Em render real de preview e full, 16:9 e 9:16, pixels da cor da legenda aparecem dentro de cada ocorrência e não aparecem fora delas (inclusive no trecho cortado e no b-roll com `replace`); a base do texto de uma legenda de uma linha e a de outra de duas linhas coincidem com a base da caixa; a razão largura do texto sobre largura do quadro é igual na preview e na full dentro de 2%; caixa padrão e caixa declarada são respeitadas.
-  - [ ] Os hashes dos goldens de `filter_complex` de `tests/test_preview_render.py` e `tests/test_aspect_ratio.py` ficam inalterados.
-  - [ ] Depois de `approve`, alterar o texto de um item faz `render full` falhar com `APPROVAL_STALE` e a full vigente mantém o SHA-256.
+  - [x] Em render real de preview e full, 16:9 e 9:16, pixels da cor da legenda aparecem dentro de cada ocorrência e não aparecem fora delas (inclusive no trecho cortado e no b-roll com `replace`); a base do texto de uma legenda de uma linha e a de outra de duas linhas coincidem com a base da caixa; a razão largura do texto sobre largura do quadro é igual na preview e na full dentro de 2%; caixa padrão e caixa declarada são respeitadas.
+  - [x] Os hashes dos goldens de `filter_complex` de `tests/test_preview_render.py` e `tests/test_aspect_ratio.py` ficam inalterados.
+  - [x] Depois de `approve`, alterar o texto de um item faz `render full` falhar com `APPROVAL_STALE` e a full vigente mantém o SHA-256.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_captions_render tests.test_preview_render tests.test_full_render tests.test_aspect_ratio tests.test_text_style -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_captions_render tests.test_preview_render tests.test_full_render tests.test_aspect_ratio tests.test_text_style -v`
 - **Deps:** T2
 - **Arquivos:** `src/editor/render/ffmpeg_graph.py`, `tests/test_captions_render.py` (novo)
 - **Risco:** o texto da legenda é entrada não confiável que chega ao FFmpeg; reaproveitar só o caminho de escape vigente e provar com texto hostil (`'`, `:`, `,`, `;`, `[`, `\`, `%{`).
+
+- **Prova:** matriz prevista executada (86 testes, 183,507 s); falhas restritas ao detector de pixels de captions, corrigido. Reexecução final de `tests.test_captions_render`: 3 testes, 38,110 s, OK; demais provas inalteradas reaproveitadas. Goldens intactos; parser FFmpeg confirma texto hostil literal e expansion=none.
+- **Visual:** necessária e realizada: pixels medidos nas duas proporções, preview/full e caixas padrão/declaradas; coordenador inspecionou `tmp-captions-evidence/natural-{16-9,9-16}-{preview,full}.png`, com frase legível, caracteres especiais e posição/escala preservadas.
+- **Correção relacionada:** escape de apóstrofo corrigido na fonte compartilhada para atravessar os dois parsers FFmpeg; afeta também textos de layers que antes falhavam. Nenhum golden alterado.
 
 ### T4: Publicar o contrato das legendas e fechar a versão 1.3.0
 

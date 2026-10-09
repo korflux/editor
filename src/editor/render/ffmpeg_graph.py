@@ -97,7 +97,9 @@ def _escape_filter_value(value: str) -> str:
         if character == "\n":
             escaped.append("\n")
         elif character == "'":
-            escaped.append("'\\''")
+            # Há dois parsers: o grafo deve entregar \\' ao parser de opções do filtro.
+            # Uma única barra faria a aspa engolir `expansion=none` como parte do texto.
+            escaped.append("'\\\\\\''")
         elif character in {"\\", ":", ",", ";", "[", "]"}:
             escaped.append(f"\\{character}")
         else:
@@ -703,6 +705,8 @@ def _text_layer_filter(
     font_file: str,
     reference_width: int,
     style: Mapping[str, Any] | None = None,
+    *,
+    anchor_bottom: bool = False,
 ) -> tuple[str, str]:
     """Desenha texto com o arquivo de fonte validado e o sobrepõe no intervalo declarado.
 
@@ -719,6 +723,9 @@ def _text_layer_filter(
     superfície (`textlayerN`) é o mesmo com ou sem estilo, então o resto do grafo não muda; sem
     `style` o filtro é idêntico ao anterior ao estilo. Os valores em pixels do estilo são os da
     largura da full e a preview os escala como o `size_px` (`_scaled_style_pixels`).
+
+    `anchor_bottom` serve às legendas: o bloco inteiro termina na base da caixa, mesmo
+    quando a quantidade de linhas muda. Camadas mantêm a posição original no topo.
 
     ponytail: sombra e contorno são recortados pela caixa da camada (a superfície tem o tamanho da
     caixa e o texto parte do canto superior esquerdo), então o contorno da primeira linha encosta
@@ -743,6 +750,7 @@ def _text_layer_filter(
     end = _number(layer["end_s"])
     align = str(layer["align"])
     align_x = {"left": "0", "center": "(w-text_w)/2", "right": "w-text_w"}[align]
+    align_y = "h-text_h" if anchor_bottom else "0"
     layer_label = f"textlayer{layer_index}"
     output_label = f"vtext{layer_index}"
     style = style or {}
@@ -758,7 +766,7 @@ def _text_layer_filter(
     # Superfície do texto nítido: `color` transparente do tamanho da caixa e o `drawtext` do topo.
     face = (
         f"color=c=black@0:s={box_width}x{box_height}:r=25:d={end},format=rgba,"
-        + _drawtext_filter(font_file, font_size, str(layer["color"]), text, align, align_x, "0", outline)
+        + _drawtext_filter(font_file, font_size, str(layer["color"]), text, align, align_x, align_y, outline)
     )
     if "shadow" in style:
         shadow = style["shadow"]
@@ -772,7 +780,7 @@ def _text_layer_filter(
             + _drawtext_filter(
                 font_file, font_size, shadow_color, text, align,
                 _signed_offset(align_x, scaled(int(shadow["offset_x_px"]))),
-                _signed_offset("0", scaled(int(shadow["offset_y_px"]))),
+                _signed_offset(align_y, scaled(int(shadow["offset_y_px"]))),
                 shadow_outline,
             )
         )
@@ -979,6 +987,23 @@ def build_ffmpeg_graph(
                 inputs,
                 canvas_width, canvas_height,
                 float(validation["timeline"]["duration_seconds"]),
+            )
+            parts.append(filter_part)
+
+    # Legendas não leem mídia: reaproveitam a superfície de texto, depois de todas as camadas.
+    # Índices posteriores aos das camadas evitam colisão dos labels; a ordem dos itens é editorial.
+    captions = validation.get("_captions")
+    if captions is not None:
+        style = captions["style"]
+        font_file = resolved_font_files.get(str(style["font"]))
+        if not isinstance(font_file, str):
+            raise ValueError("arquivo de fonte não resolvido")
+        ordered = sorted(captions["occurrences"], key=lambda occurrence: occurrence["item"])
+        for caption_index, occurrence in enumerate(ordered, start=len(document["layers"])):
+            layer = {**style, **occurrence, "text": captions["items"][occurrence["item"] - 1]["text"]}
+            filter_part, video_label = _text_layer_filter(
+                video_label, layer, caption_index, canvas_width, canvas_height,
+                font_file, text_reference_width, style, anchor_bottom=True,
             )
             parts.append(filter_part)
 
