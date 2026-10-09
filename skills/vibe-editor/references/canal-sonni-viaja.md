@@ -122,7 +122,7 @@ Cotação: a do dia de cada gravação (Wise, taxa de mercado do dia, ou a fonte
 
 - Três tipos de plano se alternam: apresentador para a câmera (contexto, opinião, balanço final), ponto de vista do visitante (paisagem, rua, restaurantes, sinalização) e detalhe demonstrativo (mapa, placa, prato, item do quarto).
 - Câmera na mão, sem correção: tremidas, movimentos de procura e variações de exposição ficam como gravados.
-- Sem ajuste de imagem nos clipes de câmera: nada de escala, recorte, zoom, velocidade ou cor. Só o QR code e a tela final recebem escala. No editor, `fit: preserve` nos clipes e sem `video.motion`.
+- Sem ajuste de imagem nos clipes de câmera: nada de escala, recorte, zoom, velocidade ou cor. Só o QR code e a tela final recebem escala. No editor, `fit: preserve` nos clipes, sem `video.motion` e sem `video.reframe` (os dois aplicam zoom e recorte).
 - A acompanhante e a equipe aparecem nas reações e falas; o plano não as esconde.
 
 ## 9. Fecho

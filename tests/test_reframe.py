@@ -5,8 +5,9 @@ Cobre, nesta ordem:
 1. Validação (A2): normalização com padrões, hash canônico, cada violação recusada com
    `PLAN_INVALID` ANTES de inspecionar mídia (o inspetor de mídia é substituído por um espião e
    nenhuma fonte existe em disco), e os limites aceitos (32 keyframes, `t_s` na borda).
-2. Ampliação (A3): `data.profile.upscale` com o fator de cada segmento, por metadados simulados e
-   por FFprobe real (fontes 1080p e 4K), sem precisar de render.
+2. Ampliação (A3, A11): `data.profile.upscale` com o fator de cada segmento, incluindo o zoom do
+   `motion` (decisão 15), por metadados simulados e por FFprobe real (fontes 1080p e 4K), sem
+   precisar de render.
 3. Grafo: as expressões geradas contra as curvas da spec (keyframes aleatórios, sem render),
    tamanho com 32 keyframes em vários segmentos, números só pelo formatador do grafo e ausência
    de `eval=frame`/tempo nos casos estáticos.
@@ -474,6 +475,97 @@ class UpscaleTests(GridCase):
 
         wide = plan_document("9:16", [{"source": "1920x1080", "fit": "contain"}])
         self.assertEqual(self.upscale_for(wide), [])
+
+    # Decisão 15 do adendo (R1): o `motion` entra no fator, multiplicando o do enquadramento atual.
+
+    @staticmethod
+    def motion(zoom_from: float, zoom_to: float) -> dict[str, dict[str, float]]:
+        """`motion` centralizado que só varia o zoom entre `from` e `to`."""
+
+        return {
+            "from": {"x": 0.5, "y": 0.5, "zoom": zoom_from},
+            "to": {"x": 0.5, "y": 0.5, "zoom": zoom_to},
+        }
+
+    def test_motion_zoom_multiplies_the_crop_factor(self) -> None:
+        """`crop` + `motion` usa o MAIOR zoom entre `from` e `to`, em 16:9 e em 9:16.
+
+        16:9 de 1920x1080 sem ampliação de canvas vale 1.0, então o punch-in do `motion` (1.0 a 2.0)
+        passa a aparecer como 2.0, o mesmo que o `reframe` equivalente. Em 9:16, 1080p já vale 1.78
+        e o zoom 1.5 leva a 2.67; a ordem `from`/`to` não importa.
+        """
+
+        punch_in = plan_document(
+            "16:9", [{"source": "1920x1080", "motion": self.motion(1.0, 2.0)}]
+        )
+        self.assertEqual(self.upscale_for(punch_in), [{"segment": 1, "factor": 2.0}])
+
+        reversed_order = plan_document(
+            "16:9", [{"source": "1920x1080", "motion": self.motion(2.0, 1.0)}]
+        )
+        self.assertEqual(self.upscale_for(reversed_order), [{"segment": 1, "factor": 2.0}])
+
+        equivalent_reframe = plan_document("16:9", [{"source": "1920x1080", "reframe": {"keyframes": [
+            keyframe(0, 0.5, 0.5), keyframe(1, 0.5, 0.5, zoom=2.0),
+        ]}}])
+        self.assertEqual(self.upscale_for(equivalent_reframe), self.upscale_for(punch_in))
+
+        portrait = plan_document(
+            "9:16", [{"source": "1920x1080", "motion": self.motion(1.0, 1.5)}]
+        )
+        self.assertEqual(self.upscale_for(portrait), [{"segment": 1, "factor": 2.67}])
+
+    def test_motion_zoom_multiplies_the_contain_factor(self) -> None:
+        """`contain` + `motion` multiplica a escala da imagem inteira, inclusive onde ela era 1.0 ou menos.
+
+        640x360 em 9:16 vale 1.6875 e com zoom 1.5 chega a 2.53. 1920x1080 em 9:16 encolhe a 0.5625
+        (lista vazia sem `motion`), mas com zoom 2.4 fica em 1.35 e passa a ser listado.
+        """
+
+        small = plan_document(
+            "9:16", [{"source": "640x360", "fit": "contain", "motion": self.motion(1.0, 1.5)}]
+        )
+        self.assertEqual(self.upscale_for(small), [{"segment": 1, "factor": 2.53}])
+
+        shrunk = plan_document(
+            "9:16", [{"source": "1920x1080", "fit": "contain", "motion": self.motion(1.0, 2.4)}]
+        )
+        self.assertEqual(self.upscale_for(shrunk), [{"segment": 1, "factor": 1.35}])
+
+    def test_motion_with_zoom_below_one_reduces_the_factor(self) -> None:
+        """Zoom máximo abaixo de 1.0 reduz o fator e pode tirar o segmento da lista.
+
+        O segundo segmento (1280x720 num canvas de 1920) vale 1.5: com `motion` de 0.5 a 0.8 passa a
+        1.2 e continua listado; com 0.5 a 0.6 passa a 0.9 e some, deixando a lista vazia.
+        """
+
+        reduced = plan_document("16:9", [
+            {"source": "1920x1080"},
+            {"source": "1280x720", "motion": self.motion(0.5, 0.8)},
+        ])
+        self.assertEqual(self.upscale_for(reduced), [{"segment": 2, "factor": 1.2}])
+
+        removed = plan_document("16:9", [
+            {"source": "1920x1080"},
+            {"source": "1280x720", "motion": self.motion(0.5, 0.6)},
+        ])
+        self.assertEqual(self.upscale_for(removed), [])
+
+    def test_factor_without_motion_zoom_is_unchanged(self) -> None:
+        """Sem `motion`, ou com `motion` de zoom 1.0, o fator é o do enquadramento (1.5 aqui)."""
+
+        for label, extra in (("sem motion", {}), ("motion 1.0", {"motion": self.motion(1.0, 1.0)})):
+            with self.subTest(label):
+                plan = plan_document("16:9", [{"source": "1920x1080"}, {"source": "1280x720", **extra}])
+                self.assertEqual(self.upscale_for(plan), [{"segment": 2, "factor": 1.5}])
+
+    def test_reframe_factor_is_not_changed_by_the_motion_rule(self) -> None:
+        """`reframe` nunca convive com `motion`: o fator continua o do maior zoom dos keyframes (3.56)."""
+
+        plan = plan_document("9:16", [{"source": "1920x1080", "reframe": {"keyframes": [
+            keyframe(0, 0.5, 0.5), keyframe(2, 0.5, 0.5, zoom=2.0),
+        ]}}])
+        self.assertEqual(self.upscale_for(plan), [{"segment": 1, "factor": 3.56}])
 
     def test_real_ffprobe_metadata_gives_the_same_factors_through_the_cli(self) -> None:
         """Fontes reais 1080p e 4K pela CLI: `upscale` ~1.78 no 1080p e vazio no 4K, `reframe` normalizado."""

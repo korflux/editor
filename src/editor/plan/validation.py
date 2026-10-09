@@ -391,21 +391,32 @@ def _upscale_factor(
 ) -> float:
     """Fator linear com que a fonte original é ampliada no canvas da full (acima de 1.0 amplia).
 
-    Com `crop`, o recorte usado é o maior da proporção do canvas que cabe na fonte dividido pelo
-    maior `zoom` dos keyframes (1.0 sem `reframe`, o recorte central), e o fator é a largura do
-    canvas sobre a largura desse recorte (decisão 9 da spec). Com `contain` e `preserve` a imagem
-    inteira cabe no canvas e o fator é o encolhimento ou a ampliação dessa escala. Usa as dimensões
-    da fonte original, que é o que a full lê; a preview e o proxy só reduzem.
+    Parte do enquadramento atual. Com `crop`, o recorte usado é o maior da proporção do canvas que
+    cabe na fonte dividido pelo maior `zoom` dos keyframes (1.0 sem `reframe`, o recorte central),
+    e o fator é a largura do canvas sobre a largura desse recorte (decisão 9 da spec). Com
+    `contain` e `preserve` a imagem inteira cabe no canvas e o fator é o encolhimento ou a
+    ampliação dessa escala. Em seguida multiplica pelo maior `zoom` entre `motion.from` e
+    `motion.to` (decisão 15, R1): o `motion` é aplicado depois do enquadramento em qualquer `fit`
+    e nunca convive com `reframe`, então só um dos dois fatores sai de 1.0. Sem `motion` o fator
+    não muda; um `motion` só com zoom abaixo de 1.0 reduz o fator. Usa as dimensões da fonte
+    original, que é o que a full lê; a preview e o proxy só reduzem.
     """
 
     source_width = float(source["video_width"])
     source_height = float(source["video_height"])
     if segment["fit"] != "crop":
-        return min(canvas_width / source_width, canvas_height / source_height)
-    reframe = segment.get("reframe")
-    zoom = max(item["zoom"] for item in reframe["keyframes"]) if reframe else DEFAULT_REFRAME_ZOOM
-    base_width = min(source_width, source_height * canvas_width / canvas_height)
-    return canvas_width * zoom / base_width
+        factor = min(canvas_width / source_width, canvas_height / source_height)
+    else:
+        reframe = segment.get("reframe")
+        zoom = (
+            max(item["zoom"] for item in reframe["keyframes"]) if reframe else DEFAULT_REFRAME_ZOOM
+        )
+        base_width = min(source_width, source_height * canvas_width / canvas_height)
+        factor = canvas_width * zoom / base_width
+    motion = segment.get("motion")
+    if motion:
+        factor *= max(motion["from"]["zoom"], motion["to"]["zoom"])
+    return factor
 
 
 def _calculated_profile(

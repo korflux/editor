@@ -106,6 +106,16 @@ Esta entrega faz o editor renderizar planos em 9:16, 1:1 e 4:5, além de 16:9, e
 
 Pedido do humano depois da review final: resolver R1 a R4 (rodada de correção, passo C, commit `task(R1-R4)`) e os registros abertos de `.erros-encontrados/` (T5 a T9, um commit por tarefa). Decisões 15 a 20 e aceites A9 a A15 no adendo da [spec](spec.md). Execução sequencial (Modo A). Prontidão: `libx265` e `hevc_cuvid` existem no FFmpeg local, então as fontes HEVC 10 bits dos testes são geradas por `ffmpeg -f lavfi` sem fixture grande; GPU é opcional nos testes (pula com mensagem quando ausente).
 
+### Rodada de correção R1 a R4 (concluída)
+
+- **Origem:** achados Nit e Optional da review final, aplicados a pedido do humano (corretor, passo C, commit `task(R1-R4)`).
+- **R1 (decisão 15):** `_upscale_factor` (`plan/validation.py`) multiplica o fator do enquadramento pelo maior `zoom` entre `motion.from` e `motion.to`, em qualquer `fit`; 5 testes novos em `UpscaleTests` (`tests/test_reframe.py`): `crop` e `contain` com `motion` ampliando, `motion` com zoom menor que 1, sem `motion` inalterado e `reframe` inalterado. Nenhuma expectativa existente mudou.
+- **R2:** a frase de `upscale` foi alinhada em `youtube-editing.md`, `SKILL.md`, comentário de `capabilities.py` e `REGRAS.md` (recorte do maior zoom no `crop`, escala da imagem inteira em `contain` e `preserve`, multiplicada pelo zoom do `motion`; lista vazia significa que ninguém é ampliado).
+- **R3:** o registro do teto de 32.767 em `.erros-encontrados/` está marcado como resolvido (`05dd8eb` e `21aeea2`).
+- **R4:** `canal-sonni-viaja.md` passou a dizer "sem `video.motion` e sem `video.reframe`".
+- **Prova:** `tests.test_reframe tests.test_aspect_ratio tests.test_plan_validation tests.test_capabilities tests.test_vibe_editor_skill` -> 106 testes OK; suíte completa (`discover -s tests`) -> 241 testes OK em 214 s; `git diff --check` limpo.
+- **Arquivos:** `src/editor/plan/validation.py`, `src/editor/capabilities.py` (só comentário), `tests/test_reframe.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `skills/vibe-editor/references/canal-sonni-viaja.md`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-08-teto-32767-e-da-linha-de-comando-e-nao-do-grafo.md`.
+
 ### T5: Alinhar a largura da full 16:9 a 32
 
 - [ ] T5 concluída

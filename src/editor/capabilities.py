@@ -356,9 +356,12 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
                 "max_full_width_max": MAX_MAX_FULL_WIDTH,
                 "max_full_width_step": MAX_FULL_WIDTH_STEP,
                 # Campos de `data.profile` em `plan validate` e nos renders; os da segunda lista só
-                # existem no 16:9. `upscale` avisa, não bloqueia: lista os segmentos cuja fonte é
-                # ampliada no canvas da full, `segment` com base 1 (o `index` da timeline) e `factor`
-                # com 2 casas, só acima de 1.0; lista vazia significa que nenhum segmento é ampliado.
+                # existem no 16:9. `upscale` avisa, não bloqueia: lista os segmentos cuja fonte original
+                # é ampliada no canvas da full, `segment` com base 1 (o `index` da timeline) e `factor`
+                # com 2 casas, só acima de 1.0. O fator é, no `crop`, a largura do canvas sobre a do
+                # recorte do maior `zoom` do `reframe` (ou o central) e, no `contain`/`preserve`, a
+                # escala da imagem inteira; em qualquer `fit` o `motion` o multiplica pelo maior `zoom`
+                # entre `from` e `to`. Lista vazia significa que nenhum segmento é ampliado.
                 "envelope_fields": ["aspect_ratio", "full_width", "full_height", "upscale"],
                 "envelope_fields_landscape_only": ["max_full_width", "effective_full_width"],
                 "upscale": {

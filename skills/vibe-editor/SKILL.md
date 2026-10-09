@@ -230,11 +230,15 @@ o sujeito use `video.reframe` (só com `fit: crop`):
   O mesmo segmento não aceita os dois. `motion` continua válido nos planos que o usam.
 
 `plan validate` informa `data.profile.full_width`, `full_height` e `upscale`: a lista
-de segmentos (`segment`, a posição de 1 em diante na timeline) em que a fonte é
-ampliada no canvas da full, com o `factor` arredondado em 2 casas (uma fonte 1080p em
-9:16 amplia cerca de 1.78 vezes; uma 4K em 9:16 não amplia). Lista vazia significa que
-nenhum segmento é ampliado. Ampliar não bloqueia o render: informe o usuário que a
-imagem perde nitidez nesses trechos (mais com `zoom` alto) e siga se ele aceitar.
+de segmentos (`segment`, a posição de 1 em diante na timeline) em que a fonte original é
+ampliada no canvas da full, com o `factor` arredondado em 2 casas. No `crop` o fator é a
+largura do canvas sobre a do recorte usado (o do maior `zoom` do `reframe`, ou o recorte
+central sem `reframe`); no `contain` e no `preserve` é a escala da imagem inteira no
+canvas; em qualquer `fit`, um `motion` multiplica o fator pelo maior `zoom` entre `from`
+e `to`. Uma fonte 1080p em 9:16 com `crop` amplia cerca de 1.78 vezes; uma 4K em 9:16 não
+amplia. Lista vazia significa que nenhum segmento é ampliado. Ampliar não bloqueia o
+render: informe o usuário que a imagem perde nitidez nesses trechos (mais com `zoom`
+alto) e siga se ele aceitar.
 
 Zonas seguras do Shorts, Reels e TikTok são orientação editorial; o editor não as valida.
 Essas plataformas cobrem a faixa inferior (título, legenda e botões) e o lado direito
