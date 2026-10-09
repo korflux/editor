@@ -23,7 +23,7 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
 
 ### T1: Provar e entregar o stream ao vivo da montagem a partir de qualquer instante
 
-- [ ] T1 concluída
+- [x] T1 concluída
 - **Spec:** A3, C3 (suposições 1 a 6; F3 passos 1 e 3; F4 passo 2)
 - **O quê:** um núcleo de render ao vivo, sem HTTP, com duas funções:
   1. Gerar os argumentos do FFmpeg para transmitir a montagem do instante T até o fim, em MP4 fragmentado H.264/AAC no stdout, na resolução escolhida (`full`, `1/2`, `1/3`, `1/4`, dimensões pares).
@@ -31,16 +31,18 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
 
   Ambas usam o `build_ffmpeg_graph` vigente. As entradas são os originais em `full` e o proxy válido nas frações. Para começar em T sem processar o trecho anterior, o grafo recebe uma janela de tempo da timeline: as janelas de decode passam a cobrir só o que alimenta `[T, fim]`, e a saída é recortada em T com o mesmo desconto de seek que as janelas já aplicam. O encoder de transmissão (preset rápido, GOP curto para seek) fica numa constante própria e não toca nos presets da full. A taxa de quadros do grafo é exposta para o timecode. O cenário `live` do `bench_render.py` mede o tempo até o primeiro quadro no início, no meio e no fim de uma timeline de 60 s, e a reprodução de 30 s em 1/2 com proxy.
 - **Aceite:**
-  - [ ] Em `full`, o vídeo cru e o PCM que o grafo do stream produz a partir de T (mesmo comando com a saída trocada por `framemd5`, antes do encoder de transmissão) são idênticos, quadro a quadro e amostra a amostra, aos do grafo da full nos mesmos tempos. Em T igual a 0 e em T no meio de um segmento, num corte J/L, num `reframe` e numa camada de texto. O stream codificado sai H.264/AAC em MP4 fragmentado com as dimensões do canvas.
-  - [ ] Em 1/2, 1/3 e 1/4 as dimensões são as do canvas da full divididas e arredondadas para baixo a par; com proxy válido, as frações leem o proxy, e `full` nunca lê.
-  - [ ] O quadro de scrub em T é igual ao quadro cru do grafo do stream em T (comparação antes de qualquer encoder com perda).
-  - [ ] C3: no cenário `live`, o primeiro quadro sai em até 3 s depois do pedido no início, no meio e no fim, sem crescer com a posição, e 30 s em 1/2 são produzidos mais rápido que o tempo real.
+  - [x] Em `full`, o vídeo cru e o PCM que o grafo do stream produz a partir de T (mesmo comando com a saída trocada por `framemd5`, antes do encoder de transmissão) são idênticos, quadro a quadro e amostra a amostra, aos do grafo da full nos mesmos tempos. Em T igual a 0 e em T no meio de um segmento, num corte J/L, num `reframe` e numa camada de texto. O stream codificado sai H.264/AAC em MP4 fragmentado com as dimensões do canvas.
+  - [x] Em 1/2, 1/3 e 1/4 as dimensões são as do canvas da full divididas e arredondadas para baixo a par; com proxy válido, as frações leem o proxy, e `full` nunca lê.
+  - [x] O quadro de scrub em T é igual ao quadro cru do grafo do stream em T (comparação antes de qualquer encoder com perda).
+  - [x] C3: no cenário `live`, o primeiro quadro sai em até 3 s depois do pedido no início, no meio e no fim, sem crescer com a posição, e 30 s em 1/2 são produzidos mais rápido que o tempo real.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_live_stream tests.test_decode_windows tests.test_preview_render tests.test_aspect_ratio -v`
-  - [ ] `.venv\Scripts\python.exe -B scripts\bench_render.py --scenario live --reps 3`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_live_stream tests.test_decode_windows tests.test_preview_render tests.test_aspect_ratio -v`
+  - [x] `.venv\Scripts\python.exe -B scripts\bench_render.py --scenario live --reps 3`
 - **Deps:** nenhuma
+- **Prova:** `unittest tests.test_live_stream tests.test_decode_windows tests.test_preview_render tests.test_aspect_ratio` -> 89 testes OK (goldens intactos; suíte completa 371 OK). `bench_render.py --scenario live --reps 3` (4K H.264 60 s, 12 trechos de 5 s, mediana): 1/2 com proxy, primeiro quadro 0,11 s (T=0), 0,13 s (T=30), 0,10 s (T=57,5); 30 s do meio em 1,15 s (26x o tempo real); full com originais 4K, primeiro quadro 0,66 a 0,73 s.
 - **Decisões:** UI-01 (cria)
 - **Arquivos:** `src/editor/render/live.py` (novo), `src/editor/render/ffmpeg_graph.py` e `src/editor/render/windows.py` (só a janela de tempo, sem mudar o grafo sem ela), `scripts/bench_render.py`, `tests/test_live_stream.py` (novo)
+- **Notas:** `TimeWindow`/`remaining_reads` em `windows.py` alimentam janelas de decode e `build_ffmpeg_graph(time_window=)`; sem janela, grafo e comando byte a byte iguais. Limitações registradas como `ponytail:` em `live.py` (taxas misturadas, 29,97 fora da grade de 48 kHz, `limiter`/`loudnorm` frios em T, fonte só de áudio sem janela, áudio 44,1 kHz). Reuso de `preview._build_ffmpeg_arguments` por fatia do comando; extrair `_input_arguments` quando `preview.py` puder ser tocado. Fora do escopo: `.erros-encontrados/2026-10-09-camada-de-imagem-decodifica-a-timeline-inteira.md`.
 - **Risco:**
   - Se C3 não for atingido, parar e levar ao humano antes de mudar o mecanismo B ou o critério (Ask first da spec).
   - Sem a janela de tempo, o `filter_complex` precisa sair byte a byte igual ao de hoje, e os goldens de `tests/test_preview_render.py` e `tests/test_aspect_ratio.py` ficam intactos.

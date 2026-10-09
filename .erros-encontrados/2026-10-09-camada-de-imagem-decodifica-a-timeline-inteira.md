@@ -1,0 +1,9 @@
+# Camada de imagem decodifica a imagem a cada quadro de toda a timeline, não só no intervalo da camada
+
+- **Data:** 09/10/2026
+- **Onde:** `src/editor/render/ffmpeg_graph.py`, `_media_layer_filter` (ramo de imagem: `trim=duration={timeline_duration},setpts=PTS-STARTPTS`) e `src/editor/render/preview.py`, `_build_ffmpeg_arguments` (`-loop 1 -framerate 25 -i <imagem>`).
+- **Descrição:** a entrada de imagem em loop entrega 25 quadros por segundo durante a timeline inteira, e cada quadro é decodificado de novo (o `image2` relê o arquivo a cada volta) e passa por `format=rgba` e `scale`, mesmo fora do intervalo `start_s` a `end_s` da camada, em que o `overlay` está desabilitado por `enable` e o quadro é descartado.
+- **Medição (2026-10-09, PNG 1920x1080 de 216 KB, i5-13600K):** 55 s de timeline custam 1,8 s só de decodificação e 4,1 s com `scale` e `format=rgba` para 960x540, cerca de 1,3 ms e 3 ms por quadro. Numa timeline de 10 minutos com uma marca d'água, são cerca de 20 s só de decodificação em cada preview e em cada full.
+- **Impacto conhecido ou provável:** custo de CPU linear na duração da timeline por camada de imagem, sem efeito no resultado. Pesa em planos longos com várias camadas de imagem.
+- **Sugestão de correção:** limitar a imagem ao intervalo da camada, com `-ss`/`-t` na entrada (o `-ss` em imagem em loop pula sem decodificar, medido) e o PTS global em `start_s`, ou `loop` do filtro sobre um único quadro decodificado. Muda o texto do `filter_complex` das camadas de imagem, então exige regravar os goldens e provar `framemd5` igual.
+- **Relação com a tarefa atual:** achado ao medir o custo de T tardio no render ao vivo (T1 da phase 7). O render ao vivo já evita o custo para o trecho anterior a T (`-ss` na entrada de imagem, `FfmpegGraph.image_seek_s`); a preview e a full seguem como estão, fora do escopo da T1.

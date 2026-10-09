@@ -1,4 +1,4 @@
-"""Construção determinística do grafo de filtros usado pelo render de preview."""
+"""Construção determinística do grafo de filtros usado pela preview, pela full e pelo render ao vivo."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import math
 import textwrap
 from typing import Any
 
-from .windows import DecodeWindow, plan_decode_windows
+from .windows import DecodeWindow, TimeWindow, plan_decode_windows, remaining_reads, track_in_s
 
 
 MIN_LIMITER_DBFS = 20 * math.log10(0.0625)
@@ -32,6 +32,12 @@ class FfmpegGraph:
     has_audio: bool
     input_windows: tuple[DecodeWindow | None, ...] = ()
     """Janela de cada entrada (paralela a `input_source_ids`); vazio ou `None` é leitura completa sem `-ss`."""
+    image_seek_s: float = 0.0
+    """`-ss` que o comando deve dar às entradas de imagem em loop (render ao vivo a partir de T); 0 é sem seek.
+
+    Uma camada de imagem lê a imagem em loop desde 0 (decodificação a cada quadro); o ao vivo pula o
+    trecho anterior com o seek de entrada, que o grafo desconta em `_media_layer_filter`.
+    """
 
 
 class _GraphInputs:
@@ -89,6 +95,21 @@ def _number(value: object) -> str:
     return f"{number:.6f}".rstrip("0").rstrip(".") or "0"
 
 
+def _precise_number(value: float) -> str:
+    """Formata um instante calculado (não do plano) com 12 casas, sem o arredondamento de 6 de `_number`.
+
+    O T de um render ao vivo cai na grade de quadros (`n / fps`, como 1,0333...), e arredondá-lo a
+    microssegundos deslocaria o relógio global e o corte das superfícies de texto o suficiente para
+    um quadro de borda de camada (`enable` em `t >= start`) trocar de lado; 12 casas deixam o erro
+    abaixo de 1e-12 s.
+    """
+
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("número de filtro não finito")
+    return f"{number:.12f}".rstrip("0").rstrip(".") or "0"
+
+
 def _escape_filter_value(value: str) -> str:
     """Escapa texto e nomes de fonte para que não alterem a sintaxe do filtro."""
 
@@ -135,6 +156,18 @@ def _layer_text(value: str, *, wrap: bool, size_px: int, box_width: int) -> str:
     return "\n".join(lines)
 
 
+def _clock_shift(offset_s: float) -> str:
+    """Expressão do `setpts` que soma `offset_s` segundos ao relógio do fluxo, em ticks inteiros.
+
+    `round` porque o `setpts` converte o resultado para inteiro sem arredondar: `3/TB` pode sair
+    74,99999999999999 e perder um tick. O render ao vivo usa isto para que o `t` de `motion` e `reframe` seja, quadro a
+    quadro, o mesmo número (`pts` inteiro vezes a base de tempo) que a full calcula, em vez de um
+    `t + avanço` que difere dele no último bit de ponto flutuante e move um pixel de borda.
+    """
+
+    return f"round({_precise_number(offset_s)}/TB)"
+
+
 def _linear_motion_expression(start: object, end: object, duration: float) -> str:
     """Gera uma expressão FFmpeg de interpolação linear pelo tempo local do segmento."""
 
@@ -153,6 +186,7 @@ def _scaled_overlay_graph(
     frame_rate: float | None,
     canvas_width: int,
     canvas_height: int,
+    clock_offset_s: float = 0.0,
 ) -> tuple[str, str]:
     """Escala o quadro e o posiciona num canvas preto do tamanho da saída (base de `motion` e `reframe`).
 
@@ -160,27 +194,35 @@ def _scaled_overlay_graph(
     a cada quadro com o tamanho do quadro escalado (`w`/`h`) e o tempo `t` do canvas, que nasce em
     zero no início do segmento, então a posição acompanha um `scale` de tamanho variável. Os rótulos
     `m{segmento}s|b|p` são exclusivos do segmento, que nunca tem `motion` e `reframe` juntos.
+
+    `clock_offset_s` é o avanço do render ao vivo dentro do segmento: o fluxo escalado já chega com o
+    relógio adiantado (`_video_segment_filter`) e o do canvas é adiantado aqui pelo mesmo valor, em
+    ticks inteiros, então o `t` das expressões é o do segmento inteiro e o overlay sai com o relógio
+    zerado de volta, como o de qualquer outro segmento. Sem avanço o grafo é o de sempre.
     """
 
     rate = _number(frame_rate if frame_rate and frame_rate > 0 else 25.0)
     scaled_label = f"m{segment_index}s"
     background_label = f"m{segment_index}b"
     output_label = f"m{segment_index}p"
-    graph = ";".join(
-        [
-            f"[{input_label}]scale={scale_options}[{scaled_label}]",
-            (
-                f"color=c=black:s={canvas_width}x{canvas_height}:r={rate}:"
-                f"d={_number(segment_duration)}[{background_label}]"
-            ),
-            (
-                f"[{background_label}][{scaled_label}]overlay="
-                f"x={overlay_x}:y={overlay_y}:eval=frame:shortest=1"
-                f"[{output_label}]"
-            ),
-        ]
-    )
-    return graph, output_label
+    shifted = clock_offset_s > 0
+    background_clock = f",setpts=PTS+{_clock_shift(clock_offset_s)}" if shifted else ""
+    overlay_label = f"m{segment_index}o" if shifted else output_label
+    parts = [
+        f"[{input_label}]scale={scale_options}[{scaled_label}]",
+        (
+            f"color=c=black:s={canvas_width}x{canvas_height}:r={rate}:"
+            f"d={_number(segment_duration)}{background_clock}[{background_label}]"
+        ),
+        (
+            f"[{background_label}][{scaled_label}]overlay="
+            f"x={overlay_x}:y={overlay_y}:eval=frame:shortest=1"
+            f"[{overlay_label}]"
+        ),
+    ]
+    if shifted:
+        parts.append(f"[{overlay_label}]setpts=PTS-STARTPTS[{output_label}]")
+    return ";".join(parts), output_label
 
 
 def _motion_filter_graph(
@@ -192,6 +234,7 @@ def _motion_filter_graph(
     frame_rate: float | None,
     canvas_width: int,
     canvas_height: int,
+    clock_offset_s: float = 0.0,
 ) -> tuple[str, str]:
     """Transforma o quadro normalizado e retorna o grafo com canvas preto do tamanho da saída."""
 
@@ -218,6 +261,7 @@ def _motion_filter_graph(
         frame_rate=frame_rate,
         canvas_width=canvas_width,
         canvas_height=canvas_height,
+        clock_offset_s=clock_offset_s,
     )
 
 
@@ -292,6 +336,7 @@ def _reframe_filter_graph(
     frame_rate: float | None,
     canvas_width: int,
     canvas_height: int,
+    clock_offset_s: float = 0.0,
 ) -> tuple[str, str]:
     """Recorta o quadro original na proporção do canvas conforme os keyframes de `reframe`.
 
@@ -306,7 +351,9 @@ def _reframe_filter_graph(
       largura. Fator de escala `cw*zoom/essa largura`; a altura vem de `h=-2` (par, mais próxima).
     - A largura escalada usa `ceil(x/2 - 0.001)*2`: nunca fica abaixo do canvas por arredondamento
       (o que abriria uma faixa preta) e ignora o ruído de ponto flutuante de um valor já par.
-    - `t` é o tempo desde o início do segmento (após `trim`/`setpts`), igual com e sem janela de decode.
+    - `t` é o tempo desde o início do segmento (após `trim`/`setpts`), igual com e sem janela de decode;
+      num render ao vivo que começa dentro do segmento, `clock_offset_s` adianta o relógio dos dois
+      fluxos do overlay (`_scaled_overlay_graph`), então `t` continua sendo o do segmento inteiro.
     - Se o zoom é o mesmo em todos os keyframes o `scale` é estático; só o zoom animado paga o
       `eval=frame`. Posição em `x`/`y` sempre avalia por quadro no overlay.
     - Cada expressão vai entre aspas simples (o texto só tem números do `_number` e funções do
@@ -349,6 +396,7 @@ def _reframe_filter_graph(
         frame_rate=frame_rate,
         canvas_width=canvas_width,
         canvas_height=canvas_height,
+        clock_offset_s=clock_offset_s,
     )
 
 
@@ -360,6 +408,7 @@ def _video_segment_filter(
     canvas_height: int,
     frame_rate: float | None,
     reframe: Mapping[str, Any] | None = None,
+    skip_s: float = 0.0,
 ) -> str:
     """Corta um vídeo e normaliza sua imagem para o canvas do perfil (qualquer proporção).
 
@@ -369,6 +418,10 @@ def _video_segment_filter(
     Com `reframe` (já normalizado pela validação, só existe com `crop`) o recorte central é
     trocado pelo recorte animado por keyframes sobre a fonte original (`_reframe_filter_graph`).
     O `trim` usa os tempos do plano menos o início da janela de decode da entrada.
+    `skip_s` é o avanço do render ao vivo dentro do segmento (`TimeWindow.skip`): o recorte começa em
+    `in_s + skip_s` e o segmento termina onde sempre terminou. Em `motion` e `reframe`, cujas
+    expressões dependem do tempo do segmento, o fluxo base já chega com o relógio adiantado por
+    `skip_s` (`_clock_shift`), de modo que `t` é exatamente o da full. Com 0 o filtro é o de sempre.
     Todo ramo entrega pixel quadrado (SAR 1:1) ao `concat`: `reframe` e `motion` por nascerem do
     `overlay` sobre `color`, e `crop`, `contain` e `preserve` pelo `setsar=1` que fecha o ramo.
 
@@ -382,13 +435,19 @@ def _video_segment_filter(
     """
 
     video = segment["video"]
-    input_index, offset = inputs.locate(str(video["source_id"]), video["in_s"])
-    start = _number(float(video["in_s"]) - offset)
+    in_s = float(video["in_s"]) + skip_s
+    input_index, offset = inputs.locate(str(video["source_id"]), in_s)
+    start = _number(in_s - offset)
     end = _number(float(video["out_s"]) - offset)
     fit = str(video["fit"])
+    # Só o que lê o tempo do segmento (`motion`, `reframe`) precisa do relógio adiantado; os demais
+    # ramos não dependem dele e seguem com o fluxo zerado em T.
+    time_driven = reframe is not None or "motion" in video
+    clock_offset_s = skip_s if time_driven else 0.0
+    rebase = f"setpts=PTS-STARTPTS+{_clock_shift(clock_offset_s)}" if clock_offset_s > 0 else "setpts=PTS-STARTPTS"
     filters = [
         f"trim=start={start}:end={end}",
-        "setpts=PTS-STARTPTS",
+        rebase,
         "setsar=1",
     ]
     if reframe is not None:
@@ -401,6 +460,7 @@ def _video_segment_filter(
             frame_rate=frame_rate,
             canvas_width=canvas_width,
             canvas_height=canvas_height,
+            clock_offset_s=clock_offset_s,
         )
         return (
             f"[{input_index}:v:0]{','.join(filters)}[{base_label}];"
@@ -436,6 +496,7 @@ def _video_segment_filter(
             frame_rate=frame_rate,
             canvas_width=canvas_width,
             canvas_height=canvas_height,
+            clock_offset_s=clock_offset_s,
         )
         return (
             f"[{input_index}:v:0]{','.join(filters)}[{base_label}];"
@@ -451,7 +512,8 @@ def _audio_track_filter(
     segment_index: int,
     track_index: int,
     required_duration: float,
-) -> str:
+    skip_s: float = 0.0,
+) -> str | None:
     """Corta, repete quando solicitado, aplica ganho e cobre a janela global do grupo.
 
     O `atrim` usa os tempos do plano menos o seek da janela de decode da entrada. O
@@ -460,12 +522,20 @@ def _audio_track_filter(
     sempre chega inteiro; se ele faltasse, a trilha sairia adiantada em vez de acusar a lacuna.
     `[i:a:0]` é o único áudio da fonte (invariante de `media._validate_probe_payload`: no máximo um
     stream de áudio, e trilhas de dados e miniatura anexada não contam como áudio).
+
+    `skip_s` é o avanço do render ao vivo dentro da janela de áudio do grupo (`TimeWindow.skip`): a
+    trilha sem `loop` começa em `in_s + skip_s` e dura o que sobra da janela; a com `loop` repete o
+    recorte inteiro e só depois descarta o começo (`atrim=start`), pois a repetição não tem `in_s`
+    para avançar. Devolve `None` quando a trilha já acabou antes de T (`windows.track_in_s`). Com 0
+    o filtro é o de sempre.
     """
 
-    input_index, offset = inputs.locate(str(track["source_id"]), track["in_s"])
-    start = _number(float(track["in_s"]) - offset)
+    in_s = track_in_s(track, skip_s)
+    if in_s is None:
+        return None
+    input_index, offset = inputs.locate(str(track["source_id"]), in_s)
+    start = _number(in_s - offset)
     end = _number(float(track["out_s"]) - offset)
-    duration = _number(required_duration)
     gain = _number(track["gain_db"])
     filters = [
         f"atrim=start={start}:end={end}",
@@ -475,12 +545,14 @@ def _audio_track_filter(
         filters.extend(
             [
                 "aloop=loop=-1:size=2147483647",
-                f"atrim=duration={duration}",
+                f"atrim=duration={_number(required_duration)}",
                 "asetpts=PTS-STARTPTS",
             ]
         )
+        if skip_s > 0:
+            filters.extend([f"atrim=start={_number(skip_s)}", "asetpts=PTS-STARTPTS"])
     else:
-        filters.append(f"atrim=duration={duration}")
+        filters.append(f"atrim=duration={_number(required_duration - skip_s)}")
     filters.extend(
         [
             f"volume={gain}dB",
@@ -497,14 +569,19 @@ def _audio_segment_filter(
     inputs: _GraphInputs,
     segment_index: int,
     required_duration: float,
-) -> str:
-    """Monta o grupo de áudio sem incluir implicitamente o áudio do vídeo exibido."""
+    skip_s: float = 0.0,
+) -> str | None:
+    """Monta o grupo de áudio sem incluir implicitamente o áudio do vídeo exibido.
+
+    `skip_s` é o avanço do render ao vivo dentro da janela de áudio do grupo. O grupo cujas trilhas
+    já acabaram antes de T devolve `None` e sai do mix (nada dele é audível depois de T).
+    """
 
     audio = segment["audio"]
     tracks = list(audio["tracks"])
     output_label = f"aseg{segment_index}"
     if not tracks:
-        duration = _number(required_duration)
+        duration = _number(required_duration - skip_s)
         return (
             f"anullsrc=r=48000:cl=stereo,atrim=duration={duration},"
             f"asetpts=PTS-STARTPTS[{output_label}]"
@@ -513,16 +590,20 @@ def _audio_segment_filter(
     track_labels: list[str] = []
     parts: list[str] = []
     for track_index, track in enumerate(tracks):
-        parts.append(
-            _audio_track_filter(
-                track,
-                inputs,
-                segment_index,
-                track_index,
-                required_duration,
-            )
+        part = _audio_track_filter(
+            track,
+            inputs,
+            segment_index,
+            track_index,
+            required_duration,
+            skip_s,
         )
+        if part is None:
+            continue
+        parts.append(part)
         track_labels.append(f"a{segment_index}t{track_index}")
+    if not track_labels:
+        return None
 
     if len(track_labels) == 1:
         parts.append(f"[{track_labels[0]}]anull[{output_label}]")
@@ -707,6 +788,7 @@ def _text_layer_filter(
     style: Mapping[str, Any] | None = None,
     *,
     anchor_bottom: bool = False,
+    window_start_s: float = 0.0,
 ) -> tuple[str, str]:
     """Desenha texto com o arquivo de fonte validado e o sobrepõe no intervalo declarado.
 
@@ -726,6 +808,11 @@ def _text_layer_filter(
 
     `anchor_bottom` serve às legendas: o bloco inteiro termina na base da caixa, mesmo
     quando a quantidade de linhas muda. Camadas mantêm a posição original no topo.
+
+    `window_start_s` é o T de um render ao vivo (`TimeWindow`): as superfícies nascem em t = 0 e o
+    overlay principal só começa em T, então o `trim` logo depois da fonte `color` descarta os quadros
+    anteriores antes do `drawtext` (o texto é estático: o descarte não muda nenhum pixel e evita
+    desenhar T x 25 quadros que ninguém verá). Com 0 as superfícies são as de sempre.
 
     ponytail: sombra e contorno são recortados pela caixa da camada (a superfície tem o tamanho da
     caixa e o texto parte do canto superior esquerdo), então o contorno da primeira linha encosta
@@ -764,8 +851,9 @@ def _text_layer_filter(
     if "outline" in style:
         outline = (scaled(int(style["outline"]["width_px"])), str(style["outline"]["color"]))
     # Superfície do texto nítido: `color` transparente do tamanho da caixa e o `drawtext` do topo.
+    window_trim = f",trim=start={_precise_number(window_start_s)}" if window_start_s > 0 else ""
     face = (
-        f"color=c=black@0:s={box_width}x{box_height}:r=25:d={end},format=rgba,"
+        f"color=c=black@0:s={box_width}x{box_height}:r=25:d={end}{window_trim},format=rgba,"
         + _drawtext_filter(font_file, font_size, str(layer["color"]), text, align, align_x, align_y, outline)
     )
     if "shadow" in style:
@@ -776,7 +864,7 @@ def _text_layer_filter(
         # bordas, e o texto é desenhado opaco: a opacidade entra uma única vez, no alfa, depois do
         # desfoque (com alfa no `drawtext` o miolo da letra e o contorno se somariam).
         shadow_surface = (
-            f"color=c={shadow_color}@0:s={box_width}x{box_height}:r=25:d={end},format=rgba,"
+            f"color=c={shadow_color}@0:s={box_width}x{box_height}:r=25:d={end}{window_trim},format=rgba,"
             + _drawtext_filter(
                 font_file, font_size, shadow_color, text, align,
                 _signed_offset(align_x, scaled(int(shadow["offset_x_px"]))),
@@ -808,26 +896,23 @@ def _text_layer_filter(
     return surface + ";" + composite, output_label
 
 
-def _used_source_ids(document: Mapping[str, Any]) -> tuple[str, ...]:
-    """Lista fontes usadas por segmentos e camadas na ordem estável de primeira referência."""
+def _used_source_ids(
+    document: Mapping[str, Any],
+    timeline_segments: Sequence[Mapping[str, Any]] | None = None,
+    window: TimeWindow | None = None,
+) -> tuple[str, ...]:
+    """Lista fontes usadas por segmentos e camadas na ordem estável de primeira referência.
 
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for segment in document["segments"]:
-        candidates = [segment["video"]["source_id"]]
-        candidates.extend(track["source_id"] for track in segment["audio"]["tracks"])
-        for source_id in candidates:
-            normalized = str(source_id)
-            if normalized not in seen:
-                seen.add(normalized)
-                ordered.append(normalized)
-    for layer in document["layers"]:
-        if layer["type"] in {"image", "video"}:
-            source_id = str(layer["source_id"])
-            if source_id not in seen:
-                seen.add(source_id)
-                ordered.append(source_id)
-    return tuple(ordered)
+    Com `window` ativa (render ao vivo) só entram as fontes que ainda alimentam `[T, fim]`
+    (`windows.remaining_reads`): abrir um arquivo grande só para não ler nada dele custaria o
+    tempo de abertura de cada fonte a cada início de stream.
+    """
+
+    return tuple(
+        dict.fromkeys(
+            source_id for source_id, _, _ in remaining_reads(document, timeline_segments, window)
+        )
+    )
 
 
 def _media_layer_filter(
@@ -838,11 +923,18 @@ def _media_layer_filter(
     canvas_width: int,
     canvas_height: int,
     timeline_duration: float,
+    skip_s: float = 0.0,
+    window_start_s: float = 0.0,
 ) -> tuple[str, str]:
     """Dimensiona imagem ou trecho de vídeo e o sobrepõe sem mapear áudio da camada.
 
     O recorte da camada de vídeo é deslocado pelo início da janela de decode; imagem
     nunca tem janela.
+
+    No render ao vivo a partir de T (`window_start_s`), `skip_s` é o avanço da camada de vídeo que já
+    começou antes de T: o recorte parte de `in_s + skip_s` e o PTS global o põe em T (`start_s +
+    skip_s`). A imagem lê com `-ss T` (`FfmpegGraph.image_seek_s`), então seu fluxo já nasce em T e
+    só recebe o relógio global de volta. Com 0 e 0 a camada é a de sempre.
     """
 
     left = min(canvas_width - 1, int(float(layer["x"]) * canvas_width))
@@ -856,18 +948,30 @@ def _media_layer_filter(
     output = f"vmedia{layer_index}"
     scale_mode = "decrease" if fit == "contain" else "increase"
     if layer["type"] == "video":
-        input_index, offset = inputs.locate(str(layer["source_id"]), layer["in_s"])
+        in_s = float(layer["in_s"]) + skip_s
+        input_index, offset = inputs.locate(str(layer["source_id"]), in_s)
         # `[i:v:0]` abaixo é o vídeo real da fonte, pela mesma invariante de `_video_segment_filter`
         # (a fonte HEVC de 10 bits vira RGBA de 8 bits em `format=rgba`).
-        # O PTS global posiciona o primeiro frame do recorte na abertura da camada.
+        # O PTS global posiciona o primeiro frame do recorte na abertura da camada (em T, se ela já abriu).
+        placement = (
+            f"{_number(layer['start_s'])}/TB"
+            if skip_s == 0
+            else _clock_shift(float(layer["start_s"]) + skip_s)
+        )
         source = (
-            f"trim=start={_number(float(layer['in_s']) - offset)}:"
+            f"trim=start={_number(in_s - offset)}:"
             f"end={_number(float(layer['out_s']) - offset)},"
-            f"setpts=PTS-STARTPTS+{_number(layer['start_s'])}/TB"
+            f"setpts=PTS-STARTPTS+{placement}"
         )
     else:
         input_index, _ = inputs.locate(str(layer["source_id"]), 0.0)
-        source = f"trim=duration={_number(timeline_duration)},setpts=PTS-STARTPTS"
+        if window_start_s > 0:
+            source = (
+                f"trim=duration={_number(timeline_duration - window_start_s)},"
+                f"setpts=PTS-STARTPTS+{_clock_shift(window_start_s)}"
+            )
+        else:
+            source = f"trim=duration={_number(timeline_duration)},setpts=PTS-STARTPTS"
     filters = [
         f"[{input_index}:v:0]{source},format=rgba,"
         f"scale=w={width}:h={height}:force_original_aspect_ratio={scale_mode}"
@@ -893,6 +997,7 @@ def build_ffmpeg_graph(
     canvas_width: int,
     canvas_height: int,
     windows: bool = False,
+    time_window: TimeWindow | None = None,
 ) -> FfmpegGraph:
     """Cria o grafo completo de vídeo, áudio, concatenação e processamento final.
 
@@ -905,17 +1010,31 @@ def build_ffmpeg_graph(
     full tem `canvas_width` igual a ela e renderiza o valor declarado; a preview, de canvas
     menor, escala o corpo da fonte pela razão das larguras. O mesmo vale para os pixels de
     `shadow` e `outline` das camadas de texto, lidos já normalizados de `validation["_text_styles"]`.
+
+    `time_window` (T1 da phase 7, render ao vivo) faz o grafo produzir só `[T, fim]` da timeline, com o
+    primeiro quadro e a primeira amostra em T, sem tocar nos tempos do plano nem processar o trecho
+    anterior. Cada item da timeline pergunta a `TimeWindow.skip` quanto do seu começo já passou: o que
+    acabou antes de T sai do grafo (e suas fontes das entradas); o que contém T começa em `in_s + skip`
+    (segmento, trilha sem `loop`, camada de vídeo) com `motion` e `reframe` na posição do instante
+    real; o que começa depois fica como está. O relógio dos quadros volta à timeline global entre a
+    concatenação e as camadas (o `enable` delas é em tempo global) e é zerado só no fim, e o áudio dos
+    grupos é posto em `início - T`. Sem janela ativa (ou com T igual a 0) o grafo é o mesmo de sempre,
+    byte a byte. A comparação quadro a quadro e amostra a amostra com a full é a prova da T1.
     """
 
+    window = time_window or TimeWindow(0.0)
+    live_start = window.start_s if window.active else 0.0
     text_reference_width = int(validation["profile"]["full_width"])
-    source_order = _used_source_ids(document)
+    timeline_segments = list(validation["timeline"]["segments"])
+    source_order = _used_source_ids(document, timeline_segments, window)
     source_records = {str(record["id"]): record for record in validation["sources"]}
     inputs = _GraphInputs(
         source_order,
-        plan_decode_windows(document, source_records, source_order) if windows else {},
+        plan_decode_windows(document, source_records, source_order, timeline_segments, window)
+        if windows
+        else {},
     )
     segments = list(document["segments"])
-    timeline_segments = list(validation["timeline"]["segments"])
     has_audio = any(segment["audio"]["mode"] != "mute" for segment in segments)
     parts: list[str] = []
     video_labels: list[str] = []
@@ -924,37 +1043,50 @@ def build_ffmpeg_graph(
     for segment_index, (segment, timeline_segment) in enumerate(
         zip(segments, timeline_segments, strict=True)
     ):
-        source_record = source_records[str(segment["video"]["source_id"])]
-        source_frame_rate = source_record["video_frame_rate"]
-        parts.append(
-            _video_segment_filter(
-                segment,
-                inputs,
-                segment_index,
-                canvas_width,
-                canvas_height,
-                float(source_frame_rate) if source_frame_rate is not None else None,
-                timeline_segment.get("reframe"),
-            )
-        )
-        video_labels.append(f"v{segment_index}")
-        if has_audio and segment["audio"]["mode"] != "mute":
+        video_skip = window.skip(float(timeline_segment["start_s"]), float(timeline_segment["end_s"]))
+        if video_skip is not None:
+            source_record = source_records[str(segment["video"]["source_id"])]
+            source_frame_rate = source_record["video_frame_rate"]
             parts.append(
-                _audio_segment_filter(
+                _video_segment_filter(
+                    segment,
+                    inputs,
+                    segment_index,
+                    canvas_width,
+                    canvas_height,
+                    float(source_frame_rate) if source_frame_rate is not None else None,
+                    timeline_segment.get("reframe"),
+                    video_skip,
+                )
+            )
+            video_labels.append(f"v{segment_index}")
+        if has_audio and segment["audio"]["mode"] != "mute":
+            audio_start = float(timeline_segment["audio_start_s"])
+            audio_skip = window.skip(audio_start, float(timeline_segment["audio_end_s"]))
+            group = (
+                None
+                if audio_skip is None
+                else _audio_segment_filter(
                     segment,
                     inputs,
                     segment_index,
                     float(timeline_segment["audio_duration_s"]),
+                    audio_skip,
                 )
             )
-            parts.append(
-                _position_audio_group(
-                    f"aseg{segment_index}",
-                    float(timeline_segment["audio_start_s"]),
-                    segment_index,
+            if group is not None:
+                parts.append(group)
+                parts.append(
+                    _position_audio_group(
+                        f"aseg{segment_index}",
+                        max(0.0, audio_start - live_start) if live_start else audio_start,
+                        segment_index,
+                    )
                 )
-            )
-            audio_group_labels.append(f"apos{segment_index}")
+                audio_group_labels.append(f"apos{segment_index}")
+    if live_start and not audio_group_labels:
+        # Nenhum grupo de áudio alimenta `[T, fim]`: o stream ao vivo sai sem áudio.
+        has_audio = False
 
     concat_inputs = "".join(f"[{video_label}]" for video_label in video_labels)
     concat_video_label = "vconcat"
@@ -963,9 +1095,17 @@ def build_ffmpeg_graph(
     )
 
     video_label = concat_video_label
+    if live_start:
+        # A concatenação nasce em zero, que aqui é T; as camadas e o `enable` delas contam o tempo da
+        # timeline, então o relógio global volta antes delas e é zerado só depois da última.
+        parts.append(f"[{video_label}]setpts=PTS+{_clock_shift(live_start)}[vglobal]")
+        video_label = "vglobal"
     resolved_font_files = validation.get("_resolved_font_files", {})
     text_styles = validation.get("_text_styles", {})
     for layer_index, layer in enumerate(document["layers"]):
+        layer_skip = window.skip(float(layer["start_s"]), float(layer["end_s"]))
+        if layer_skip is None:
+            continue
         if layer["type"] == "text":
             font_file = resolved_font_files.get(str(layer["font"]))
             if not isinstance(font_file, str):
@@ -979,6 +1119,7 @@ def build_ffmpeg_graph(
                 font_file,
                 text_reference_width,
                 text_styles.get(layer_index),
+                window_start_s=live_start,
             )
             parts.append(filter_part)
         elif layer["type"] in {"image", "video"}:
@@ -987,6 +1128,8 @@ def build_ffmpeg_graph(
                 inputs,
                 canvas_width, canvas_height,
                 float(validation["timeline"]["duration_seconds"]),
+                layer_skip,
+                live_start,
             )
             parts.append(filter_part)
 
@@ -1000,18 +1143,24 @@ def build_ffmpeg_graph(
             raise ValueError("arquivo de fonte não resolvido")
         ordered = sorted(captions["occurrences"], key=lambda occurrence: occurrence["item"])
         for caption_index, occurrence in enumerate(ordered, start=len(document["layers"])):
+            if window.skip(float(occurrence["start_s"]), float(occurrence["end_s"])) is None:
+                continue
             layer = {**style, **occurrence, "text": captions["items"][occurrence["item"] - 1]["text"]}
             filter_part, video_label = _text_layer_filter(
                 video_label, layer, caption_index, canvas_width, canvas_height,
                 font_file, text_reference_width, style, anchor_bottom=True,
+                window_start_s=live_start,
             )
             parts.append(filter_part)
+    if live_start:
+        parts.append(f"[{video_label}]setpts=PTS-STARTPTS[vlive]")
+        video_label = "vlive"
 
     audio_label: str | None = None
     if has_audio:
         global_audio_filters, audio_label = _global_audio_filter(
             audio_group_labels,
-            float(validation["timeline"]["duration_seconds"]),
+            float(validation["timeline"]["duration_seconds"]) - live_start,
         )
         parts.extend(global_audio_filters)
         processing_filters, audio_label = _audio_processing_filters(
@@ -1027,4 +1176,5 @@ def build_ffmpeg_graph(
         input_source_ids=tuple(inputs.source_ids),
         input_windows=tuple(inputs.windows),
         has_audio=has_audio,
+        image_seek_s=live_start,
     )

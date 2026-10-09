@@ -1,6 +1,6 @@
 """Benchmark local do render: relógio e CPU consumida por variante, com repetições intercaladas.
 
-Uso: `.venv\\Scripts\\python.exe -B scripts\\bench_render.py --scenario windows|proxy --reps 3`.
+Uso: `.venv\\Scripts\\python.exe -B scripts\\bench_render.py --scenario windows|proxy|live --reps 3`.
 
 Cada cenário gera suas fontes num diretório temporário do sistema (apagado ao terminar),
 grava um `plan.json` e roda `render preview` uma vez por variante a cada repetição, em
@@ -15,7 +15,11 @@ o `REGRAS.md`. Não usa dependência fora da biblioteca padrão.
 
 Cenários: `windows` compara a preview sem e com janelas de decode; `proxy` constrói o proxy
 uma vez (medido à parte como `setup`, fora da comparação) e compara a preview sem e com
-proxy, ambas com janelas.
+proxy, ambas com janelas; `live` (T1 da phase 7, critério C3) mede o stream ao vivo da montagem
+(`render/live.py`): o tempo até o primeiro fragmento (o primeiro quadro que o `<video>` pode
+mostrar) no início, no meio e no fim de uma timeline de 60 s, em 1/2 com proxy e em `full`, e a
+reprodução de 30 s em 1/2 com proxy contra o tempo real. Não é comparação com uma base: cada
+variante é uma métrica própria e o veredito do C3 sai no fim da tabela.
 
 Ponto de extensão: novos cenários entram em `SCENARIOS` com sua preparação, etapas de
 `setup` e variantes; cada variante é uma ação de `VARIANTS` executada no processo filho.
@@ -115,12 +119,113 @@ def _proxy_build(workdir: Path) -> dict[str, Any]:
     return result
 
 
+LIVE_POSITIONS_S = {"inicio": 0.0, "meio": 30.0, "fim": 57.5}
+"""Instantes medidos da timeline de 60 s: o começo, o meio (na fronteira de um trecho) e o fim (dentro do último)."""
+
+LIVE_FIRST_FRAME_LIMIT_S = 3.0
+"""C3: o primeiro quadro aparece em até 3 s depois do pedido, em qualquer posição."""
+
+
+def _read_fragmented_mp4(stream: Any, started: float) -> dict[str, float]:
+    """Lê o MP4 fragmentado do stdout e mede o primeiro fragmento completo e o fim.
+
+    O primeiro `mdat` completo é o ponto em que o `<video>` já tem um quadro para mostrar: o `moov`
+    vazio sai antes e cada fragmento só fecha quando todas as amostras dele existem. Devolve os
+    segundos desde `started` até esse ponto (`first_frame_s`) e até o fim do stream (`total_s`),
+    mais o número de fragmentos e de bytes.
+    """
+
+    import struct
+
+    def read_exact(size: int) -> bytes:
+        data = b""
+        while len(data) < size:
+            chunk = stream.read(size - len(data))
+            if not chunk:
+                break
+            data += chunk
+        return data
+
+    first_frame_s = 0.0
+    fragments = 0
+    total_bytes = 0
+    while True:
+        header = read_exact(8)
+        if len(header) < 8:
+            break
+        size, kind = struct.unpack(">I4s", header)
+        payload = size - 8
+        if size == 1:  # tamanho de 64 bits logo depois do tipo
+            size = struct.unpack(">Q", read_exact(8))[0]
+            payload = size - 16
+        read_exact(payload)
+        total_bytes += size
+        if kind == b"mdat":
+            fragments += 1
+            if fragments == 1:
+                first_frame_s = time.perf_counter() - started
+    return {
+        "first_frame_s": first_frame_s,
+        "total_s": time.perf_counter() - started,
+        "fragments": float(fragments),
+        "bytes": float(total_bytes),
+    }
+
+
+def _live_stream(workdir: Path, start_s: float, resolution: str) -> dict[str, Any]:
+    """Pede o stream ao vivo como o servidor da T3 o fará e lê até o fim, medindo o primeiro quadro.
+
+    O plano já validado fica fora do relógio (o servidor o mantém em cache); contam o grafo, o
+    arquivo de filtro, o processo do FFmpeg e a chegada do primeiro fragmento.
+    """
+
+    from editor import dependencies
+    from editor.plan.validation import load_validated_plan
+    from editor.render import live
+
+    document, validation = load_validated_plan(workdir)
+    started = time.perf_counter()
+    state = live.prepare_live(workdir, document, validation, start_s, resolution)
+    with live.filter_script(workdir, state) as script:
+        process = subprocess.Popen(
+            [str(dependencies.resolve_executable("ffmpeg")), *live.stream_arguments(state, script)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            metrics = _read_fragmented_mp4(process.stdout, started)
+            error = process.stderr.read().decode(errors="replace")
+        finally:
+            process.kill()
+            process.wait()
+    if process.returncode != 0 and not metrics["fragments"]:
+        raise SystemExit(f"o stream ao vivo falhou:\n{error[-2000:]}")
+    return {
+        **{key: round(value, 3) for key, value in metrics.items()},
+        "start_s": state.start_s,
+        "media_s": state.duration_s,
+        "resolution": resolution,
+        "proxy_sources": list(state.proxy_sources),
+    }
+
+
+def _live_variant(position: str, resolution: str) -> Callable[[Path], dict[str, Any]]:
+    """Variante do cenário `live`: o stream de uma posição da timeline numa resolução."""
+
+    return lambda workdir: _live_stream(workdir, LIVE_POSITIONS_S[position], resolution)
+
+
 VARIANTS: dict[str, Callable[[Path], dict[str, Any]]] = {
     "sem_janelas": _preview_without_windows,
     "com_janelas": _preview_default,
     "sem_proxy": _preview_proxy_off,
     "com_proxy": _preview_proxy_on,
     "proxy_build": _proxy_build,
+    "live_inicio": _live_variant("inicio", "1/2"),
+    "live_meio": _live_variant("meio", "1/2"),
+    "live_fim": _live_variant("fim", "1/2"),
+    "live_full_inicio": _live_variant("inicio", "full"),
+    "live_full_meio": _live_variant("meio", "full"),
+    "live_full_fim": _live_variant("fim", "full"),
 }
 """Ações conhecidas pelo processo filho; o nome é o rótulo impresso na tabela."""
 
@@ -231,14 +336,13 @@ def _ffmpeg(arguments: list[str], timeout_s: float) -> None:
         raise SystemExit(f"FFmpeg falhou ao preparar o cenário:\n{result.stderr[-2000:]}")
 
 
-def _prepare_windows(root: Path) -> Path:
-    """Cenário C1: fonte 4K H.264 de GOP 1 s com 60 s (~700 MB) e plano com 6 trechos de 5 s.
+def _write_4k_source(workdir: Path) -> None:
+    """Gera a fonte 4K H.264 de GOP 1 s com 60 s (~700 MB) em `sources/main.mp4`.
 
     O ruído temporal mantém o bitrate perto de 90 Mbps, como uma filmagem real, em vez
     do vídeo sintético quase sem informação que o encoder comprimiria a poucos MB.
     """
 
-    workdir = root / "job"
     (workdir / "sources").mkdir(parents=True)
     _ffmpeg(
         [
@@ -252,12 +356,17 @@ def _prepare_windows(root: Path) -> Path:
         ],
         timeout_s=1800,
     )
+
+
+def _write_plan(workdir: Path, starts: tuple[int, ...]) -> None:
+    """Grava um plano de trechos de 5 s da fonte `main`, um por `start`, com o áudio da própria fonte."""
+
     segments = [
         {
             "video": {"source_id": "main", "in_s": start, "out_s": start + 5, "fit": "preserve"},
             "audio": {"mode": "keep", "tracks": [{"source_id": "main", "in_s": start, "out_s": start + 5, "gain_db": 0}]},
         }
-        for start in (2, 12, 22, 32, 42, 52)
+        for start in starts
     ]
     document = {
         "schema_version": 2,
@@ -274,6 +383,23 @@ def _prepare_windows(root: Path) -> Path:
         },
     }
     (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def _prepare_windows(root: Path) -> Path:
+    """Cenário C1: fonte 4K H.264 de GOP 1 s com 60 s (~700 MB) e plano com 6 trechos de 5 s."""
+
+    workdir = root / "job"
+    _write_4k_source(workdir)
+    _write_plan(workdir, (2, 12, 22, 32, 42, 52))
+    return workdir
+
+
+def _prepare_live(root: Path) -> Path:
+    """Cenário do stream ao vivo: a mesma fonte 4K e uma timeline de 60 s, 12 trechos contíguos de 5 s."""
+
+    workdir = root / "job"
+    _write_4k_source(workdir)
+    _write_plan(workdir, tuple(range(0, 60, 5)))
     return workdir
 
 
@@ -289,6 +415,7 @@ class Scenario:
     variants: tuple[str, ...]
     description: str
     setup: tuple[str, ...] = ()
+    live: bool = False
 
 
 SCENARIOS: dict[str, Scenario] = {
@@ -302,6 +429,16 @@ SCENARIOS: dict[str, Scenario] = {
         variants=("sem_proxy", "com_proxy"),
         description="C1: 4K H.264 GOP 1 s, 60 s, 6 trechos de 5 s, preview CPU com janelas, sem e com proxy",
         setup=("proxy_build",),
+    ),
+    "live": Scenario(
+        prepare=_prepare_live,
+        variants=(
+            "live_inicio", "live_meio", "live_fim",
+            "live_full_inicio", "live_full_meio", "live_full_fim",
+        ),
+        description="stream ao vivo (C3): 4K H.264 GOP 1 s, timeline de 60 s, 1/2 com proxy e full com originais",
+        setup=("proxy_build",),
+        live=True,
     ),
 }
 
@@ -358,7 +495,61 @@ def run_scenario(name: str, reps: int) -> dict[str, Any]:
         # Razão frente à base; a meta do proxy é relógio da preview com proxy <= 0,5 da sem proxy.
         data["wall_ratio"] = round(data["wall_median_s"] / base_wall, 3)
         data["cpu_ratio"] = round(data["cpu_median_s"] / base_cpu, 3)
+    return live_report(report, runs) if scenario.live else report
+
+
+def live_report(report: dict[str, Any], runs: dict[str, list[Measurement]]) -> dict[str, Any]:
+    """Acrescenta ao relatório as execuções e medianas do stream ao vivo e o veredito do C3.
+
+    As métricas de cada execução vêm do `summary` que o filho imprimiu (`_live_stream`). O C3 vale
+    para 1/2 com proxy: primeiro quadro em até 3 s no início, no meio e no fim, e os 30 s do meio
+    (do instante 30 s ao fim) produzidos em menos de 30 s de relógio.
+    """
+
+    medians = {
+        variant: {
+            "first_frames": [item.summary["first_frame_s"] for item in measurements],
+            "totals": [item.summary["total_s"] for item in measurements],
+            "first_frame_median_s": round(statistics.median(item.summary["first_frame_s"] for item in measurements), 3),
+            "total_median_s": round(statistics.median(item.summary["total_s"] for item in measurements), 3),
+            "media_s": measurements[-1].summary["media_s"],
+            "proxy_sources": measurements[-1].summary["proxy_sources"],
+        }
+        for variant, measurements in runs.items()
+    }
+    half = {name: medians[f"live_{name}"] for name in LIVE_POSITIONS_S}
+    report["live"] = {
+        "medians": medians,
+        "c3_first_frame_ok": all(
+            item["first_frame_median_s"] <= LIVE_FIRST_FRAME_LIMIT_S and item["proxy_sources"] for item in half.values()
+        ),
+        "c3_realtime_ok": half["meio"]["total_median_s"] < half["meio"]["media_s"],
+        "c3_realtime_speed": round(half["meio"]["media_s"] / half["meio"]["total_median_s"], 1),
+    }
     return report
+
+
+def print_live_table(report: dict[str, Any]) -> None:
+    """Imprime o tempo até o primeiro quadro e o tempo de produção por posição, e o veredito do C3."""
+
+    print(f"cenario {report['scenario']}: {report['description']} ({report['reps']} execucoes)")
+    for action, data in report["setup"].items():
+        print(f"setup {action} (uma vez): relogio {data['wall_s']:.2f} s, cpu {data['cpu_s']:.2f} s")
+    print(f"{'variante':<18}{'primeiro quadro (s)':<26}{'mediana':>9}   {'stream inteiro (s)':<26}{'mediana':>9}   midia (s)  proxy")
+    for variant, stats in report["live"]["medians"].items():
+        first = ", ".join(f"{value:.2f}" for value in stats["first_frames"])
+        total = ", ".join(f"{value:.2f}" for value in stats["totals"])
+        print(
+            f"{variant:<18}{first:<26}{stats['first_frame_median_s']:>9.2f}   {total:<26}{stats['total_median_s']:>9.2f}"
+            f"   {stats['media_s']:>8.1f}  {'sim' if stats['proxy_sources'] else 'nao'}"
+        )
+    live = report["live"]
+    print(
+        f"C3 (1/2 com proxy): primeiro quadro em ate {LIVE_FIRST_FRAME_LIMIT_S:g} s no inicio, meio e fim: "
+        f"{'ok' if live['c3_first_frame_ok'] else 'FALHOU'}; "
+        f"30 s do meio produzidos mais rapido que o tempo real: {'ok' if live['c3_realtime_ok'] else 'FALHOU'} "
+        f"({live['c3_realtime_speed']}x)"
+    )
 
 
 def print_table(report: dict[str, Any]) -> None:
@@ -397,7 +588,7 @@ def main() -> int:
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        print_table(report)
+        (print_live_table if SCENARIOS[args.scenario].live else print_table)(report)
         print(json.dumps(report))
     return 0
 

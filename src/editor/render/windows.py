@@ -25,11 +25,18 @@ seek dessa mesma propriedade.
 ponytail: AAC codificado com PNS (substituição perceptual de ruído) sai diferente após
 qualquer seek, pois o ruído depende do estado acumulado do decoder; aceitar ou ler o
 áudio dessas fontes sem janela se uma fonte real exigir igualdade bit a bit.
+
+Janela de tempo (T1 da phase 7): o render ao vivo começa a montagem num instante T e não pode
+processar o trecho anterior. `TimeWindow` diz, para cada item da timeline (segmento, janela de
+áudio, camada de vídeo), quanto do começo dele já passou de T (`skip`); o planejador cobre só o
+que alimenta `[T, fim]` e o grafo (`ffmpeg_graph.py`) avança o `in_s` do item pelo mesmo `skip`,
+então os dois sempre concordam sobre o que cada janela precisa conter. Sem janela de tempo (ou
+com T igual a 0) nada muda: mesmas janelas, mesmo grafo, mesmo comando.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -95,26 +102,124 @@ class DecodeWindow:
         return self.end_s - self.seek_s
 
 
-def source_intervals(document: Mapping[str, Any]) -> dict[str, list[tuple[float, float]]]:
+SKIP_TOLERANCE_S = 0.000001
+"""Tolerância dos tempos da timeline (arredondados a 6 casas) ao decidir se um item já acabou ou já começou."""
+
+
+@dataclass(frozen=True)
+class TimeWindow:
+    """Janela de tempo `[start_s, fim da timeline]` de um render ao vivo que começa em `start_s`.
+
+    Fonte única do que sobra de cada item da timeline depois de T: o planejador de janelas de decode
+    e o construtor do grafo perguntam aqui, nunca recalculam. `TimeWindow(0)` é a identidade: nenhum
+    item é omitido ou avançado.
+    """
+
+    start_s: float
+
+    @property
+    def active(self) -> bool:
+        """Verdadeiro quando há trecho anterior a pular; com T igual a 0 o render é o da full."""
+
+        return self.start_s > SKIP_TOLERANCE_S
+
+    def skip(self, item_start_s: float, item_end_s: float) -> float | None:
+        """Quanto do começo do item `[item_start_s, item_end_s)` já passou de T, ou `None` se ele já acabou.
+
+        Item que começa em T ou depois devolve 0; item que contém T devolve `T - início` (o avanço
+        do `in_s`). Um fim a menos de 1 µs de T conta como acabado, e um início a menos de 1 µs de T
+        como começando em T, para o ruído de arredondamento não criar avanço fantasma.
+        """
+
+        if not self.active:
+            return 0.0
+        if item_end_s <= self.start_s + SKIP_TOLERANCE_S:
+            return None
+        delta = self.start_s - item_start_s
+        return delta if delta > SKIP_TOLERANCE_S else 0.0
+
+
+def track_in_s(track: Mapping[str, Any], skip_s: float) -> float | None:
+    """`in_s` de uma trilha de áudio depois de avançar `skip_s` do início da janela de áudio do grupo.
+
+    Trilha com `loop` não avança: a repetição nasce do recorte inteiro e o grafo corta o começo
+    do resultado (`ffmpeg_graph._audio_track_filter`). `None` quando a trilha já acabou antes
+    de T (o `in_s` avançado alcança o `out_s`), caso em que ela não contribui com nada.
+    """
+
+    in_s = float(track["in_s"])
+    if bool(track.get("loop", False)):
+        return in_s
+    in_s += skip_s
+    return in_s if in_s < float(track["out_s"]) - SKIP_TOLERANCE_S else None
+
+
+def remaining_reads(
+    document: Mapping[str, Any],
+    timeline_segments: Sequence[Mapping[str, Any]] | None = None,
+    window: TimeWindow | None = None,
+) -> Iterator[tuple[str, float | None, float | None]]:
+    """Lê cada leitura de fonte que a timeline faz, na ordem de primeira referência.
+
+    Cada item é `(source_id, in_s, out_s)`: segmento de vídeo, trilha de áudio e camada de vídeo
+    trazem o recorte; camada de imagem traz `None` nos dois (a imagem inteira, sem recorte). Sem
+    `window` ativa são todas as leituras do plano. Com ela (render ao vivo), só as que alimentam
+    `[window.start_s, fim]`: itens que já acabaram saem e os que contêm T entram a partir do `in_s`
+    avançado (`TimeWindow.skip`), exatamente como o grafo os recorta. A janela exige
+    `timeline_segments` (janelas de vídeo e de áudio de cada segmento, de `validate_plan`).
+    """
+
+    if window is None or not window.active:
+        for segment in document["segments"]:
+            for item in (segment["video"], *segment["audio"]["tracks"]):
+                yield str(item["source_id"]), float(item["in_s"]), float(item["out_s"])
+        for layer in document["layers"]:
+            if layer["type"] == "video":
+                yield str(layer["source_id"]), float(layer["in_s"]), float(layer["out_s"])
+            elif layer["type"] == "image":
+                yield str(layer["source_id"]), None, None
+        return
+
+    if timeline_segments is None:
+        raise ValueError("a janela de tempo exige a timeline validada")
+    for segment, timeline in zip(document["segments"], timeline_segments, strict=True):
+        video = segment["video"]
+        video_skip = window.skip(float(timeline["start_s"]), float(timeline["end_s"]))
+        if video_skip is not None:
+            yield str(video["source_id"]), float(video["in_s"]) + video_skip, float(video["out_s"])
+        audio_skip = window.skip(float(timeline["audio_start_s"]), float(timeline["audio_end_s"]))
+        if audio_skip is not None:
+            for track in segment["audio"]["tracks"]:
+                in_s = track_in_s(track, audio_skip)
+                if in_s is not None:
+                    yield str(track["source_id"]), in_s, float(track["out_s"])
+    for layer in document["layers"]:
+        if layer["type"] not in {"video", "image"}:
+            continue
+        layer_skip = window.skip(float(layer["start_s"]), float(layer["end_s"]))
+        if layer_skip is None:
+            continue
+        if layer["type"] == "image":
+            yield str(layer["source_id"]), None, None
+        else:
+            yield str(layer["source_id"]), float(layer["in_s"]) + layer_skip, float(layer["out_s"])
+
+
+def source_intervals(
+    document: Mapping[str, Any],
+    timeline_segments: Sequence[Mapping[str, Any]] | None = None,
+    window: TimeWindow | None = None,
+) -> dict[str, list[tuple[float, float]]]:
     """Coleta os intervalos `in_s`/`out_s` de cada fonte em segmentos, trilhas e camadas de vídeo.
 
     Trilha com `loop` entra pelo seu recorte; a repetição acontece no filtro, não na leitura.
+    Com `window` ativa só entra o que alimenta `[window.start_s, fim]` (ver `remaining_reads`).
     """
 
     intervals: dict[str, list[tuple[float, float]]] = {}
-
-    def add(item: Mapping[str, Any]) -> None:
-        intervals.setdefault(str(item["source_id"]), []).append(
-            (float(item["in_s"]), float(item["out_s"]))
-        )
-
-    for segment in document["segments"]:
-        add(segment["video"])
-        for track in segment["audio"]["tracks"]:
-            add(track)
-    for layer in document["layers"]:
-        if layer["type"] == "video":
-            add(layer)
+    for source_id, in_s, out_s in remaining_reads(document, timeline_segments, window):
+        if in_s is not None and out_s is not None:
+            intervals.setdefault(source_id, []).append((in_s, out_s))
     return intervals
 
 
@@ -154,9 +259,9 @@ def _merge_smallest_gap(groups: Mapping[str, list[list[float]]], order: list[str
 
 
 def _windows_with_gain(
-    spans: list[list[float]], duration_s: float
+    spans: list[list[float]], duration_s: float, min_reduction: float = MIN_READ_REDUCTION
 ) -> tuple[DecodeWindow, ...] | None:
-    """Aplica a folga final e devolve as janelas só se a leitura cair pelo menos 20%.
+    """Aplica a folga final e devolve as janelas só se a leitura cair pelo menos `min_reduction`.
 
     A leitura atual é estimada do início da fonte ao último `out_s`, que é o que o
     FFmpeg decodifica hoje com uma única entrada sem `-ss`.
@@ -168,7 +273,7 @@ def _windows_with_gain(
     )
     current_read = max(end for _, end in spans)
     windowed_read = sum(window.duration_s for window in windows)
-    if current_read <= 0 or windowed_read > current_read * (1 - MIN_READ_REDUCTION):
+    if current_read <= 0 or windowed_read > current_read * (1 - min_reduction):
         return None
     return windows
 
@@ -177,12 +282,19 @@ def plan_decode_windows(
     document: Mapping[str, Any],
     source_records: Mapping[str, Mapping[str, Any]],
     source_order: tuple[str, ...],
+    timeline_segments: Sequence[Mapping[str, Any]] | None = None,
+    window: TimeWindow | None = None,
 ) -> dict[str, tuple[DecodeWindow, ...]]:
     """Calcula as janelas por fonte de vídeo; fontes ausentes do retorno mantêm a entrada atual.
 
     `source_records` são os registros validados por id (com `kind` e `duration_seconds`)
     e `source_order` é a ordem estável das entradas do grafo. Retorna vazio quando nenhuma
     fonte ganha ou quando as fontes de vídeo, sozinhas, já excedem o teto global.
+
+    Com `window` ativa (render ao vivo a partir de T) os intervalos são os de `[T, fim]` e qualquer
+    redução de leitura justifica janelar (`min_reduction` 0): num render que começa no meio, o ganho
+    mínimo de 20% deixaria uma fonte longa ser decodificada desde o início só para descartar o
+    começo, e o ao vivo não pode crescer com a posição.
     """
 
     video_ids = [
@@ -195,7 +307,8 @@ def plan_decode_windows(
         # Nem uma entrada por fonte cabe no teto: mantém o comando atual sem janelas.
         return {}
 
-    intervals = source_intervals(document)
+    min_reduction = 0.0 if window is not None and window.active else MIN_READ_REDUCTION
+    intervals = source_intervals(document, timeline_segments, window)
     groups: dict[str, list[list[float]]] = {}
     windows: dict[str, tuple[DecodeWindow, ...]] = {}
 
@@ -203,7 +316,7 @@ def plan_decode_windows(
         """Recalcula as janelas de uma fonte e a retira do conjunto quando o ganho some."""
 
         planned = _windows_with_gain(
-            groups[source_id], float(source_records[source_id]["duration_seconds"])
+            groups[source_id], float(source_records[source_id]["duration_seconds"]), min_reduction
         )
         if planned is None:
             windows.pop(source_id, None)
@@ -212,7 +325,10 @@ def plan_decode_windows(
             windows[source_id] = planned
 
     for source_id in video_ids:
-        # Toda fonte em `source_order` é referenciada por algum recorte, logo há intervalos.
+        # Sem janela de tempo toda fonte em `source_order` é referenciada por algum recorte; com ela,
+        # uma fonte usada só antes de T não tem intervalo e segue com a entrada atual, sem janelas.
+        if source_id not in intervals:
+            continue
         groups[source_id] = _merge_close(intervals[source_id])
         while len(groups[source_id]) > MAX_WINDOWS_PER_SOURCE:
             _merge_smallest_gap(groups, [source_id])

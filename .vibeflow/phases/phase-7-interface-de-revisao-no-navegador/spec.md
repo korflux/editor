@@ -221,7 +221,7 @@ O operador revisa a montagem que a IA cria e altera por CLI numa interface no na
 
 - [ ] A1: `ui start` devolve na hora o envelope com `url` e `pid` e abre o navegador (ou não, com `--no-open`); um segundo `start` reaproveita a instância (`running`); `ui stop` encerra o servidor e os FFmpeg filhos (`stopped`, ou `not_running` sem instância); o servidor encerra sozinho após 2 h sem requisições.
 - [ ] A2: sem cookie ou com token inválido, toda rota responde `UI_TOKEN_INVALID` sem dados do trabalho; `Host` diferente de `127.0.0.1:<porta>` recebe `UI_HOST_INVALID`; POST sem `Origin` próprio recebe `UI_ORIGIN_INVALID`; a terceira sessão recebe `UI_SESSION_LIMIT`; o token sai da URL depois do primeiro acesso; as respostas trazem CSP restritiva, `nosniff`, `Referrer-Policy: no-referrer` e `frame-ancestors 'none'`.
-- [ ] A3: em Full, os quadros que o grafo do player produz a partir de T (vídeo cru, antes do encoder de transmissão) são idênticos aos do grafo da full nos mesmos tempos (mesmo grafo e mesmo canvas), e o PCM também; o stream codificado tem as dimensões do canvas, e em 1/2 o quadro tem metade das dimensões, arredondada a par. A compressão do encoder de transmissão é a única diferença aceita entre o que o player mostra e a full.
+- [x] A3: em Full, os quadros que o grafo do player produz a partir de T (vídeo cru, antes do encoder de transmissão) são idênticos aos do grafo da full nos mesmos tempos (mesmo grafo e mesmo canvas), e o PCM também; o stream codificado tem as dimensões do canvas, e em 1/2 o quadro tem metade das dimensões, arredondada a par. A compressão do encoder de transmissão é a única diferença aceita entre o que o player mostra e a full.
 - [ ] A4: play em qualquer tempo da timeline mostra o primeiro quadro naquele tempo, com timecode da montagem correto; pausa, quadro a quadro, salto de corte e troca de resolução se comportam como em F3; com proxy em uso o indicador aparece.
 - [ ] A5: a timeline mostra as faixas de F4 com J/L passando do limite do segmento; scrub mostra o quadro composto do tempo; a seleção por arraste, I/O e Alt+clique preenche o painel com intervalos da montagem e da fonte corretos.
 - [ ] A6: alterar o `plan.json` com a interface aberta recarrega sozinho em até 2 s, mantém o cursor e mostra o toast; um plano inválido mostra o erro, mantém a última versão válida como desatualizada e desabilita a aprovação.
@@ -235,7 +235,7 @@ O operador revisa a montagem que a IA cria e altera por CLI numa interface no na
 
 - [ ] C1: suíte completa verde, com as provas de A3 (quadros e áudio do player iguais aos da full) e A10 (aprovação v2).
 - [ ] C2: gitleaks e pip-audit sem achados; nenhuma dependência nova no `requirements.lock`.
-- [ ] C3: na máquina de referência (i5-13600K), com a fonte sintética 4K do `bench_render.py` e proxy, em 1/2: o primeiro quadro aparece em até 3 s depois do play, sem crescer com a posição na timeline (início, meio e fim de uma timeline de 60 s), e 30 s tocam sem pausa de buffer.
+- [x] C3: na máquina de referência (i5-13600K), com a fonte sintética 4K do `bench_render.py` e proxy, em 1/2: o primeiro quadro aparece em até 3 s depois do play, sem crescer com a posição na timeline (início, meio e fim de uma timeline de 60 s), e 30 s tocam sem pausa de buffer.
 - [ ] C4: versão 2.0.0, com a quebra (aprovação v2 e `preview_sha256` removido dos envelopes) descrita em `AGENTS.md`.
 - [ ] C5: jornada real no navegador do início ao fim: `ui start`, play, seleção, cópia, alteração do plano por fora, recarga, aprovação e `render full` aceitando a aprovação.
 
