@@ -6,7 +6,6 @@ from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import unittest
@@ -19,6 +18,7 @@ from editor.analysis.audio import MAX_AUDIO_WINDOWS, analyze_audio
 from editor.contracts import CliError
 from editor import dependencies
 from editor.media import MAX_SOURCE_SIZE_BYTES
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +47,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 class AudioAnalysisTests(unittest.TestCase):

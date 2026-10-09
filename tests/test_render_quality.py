@@ -17,7 +17,6 @@ import re
 import shutil
 import subprocess
 import sys
-import time
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -34,6 +33,7 @@ from editor.render.preview import (
     _quality_preset,
     _video_encoder_arguments,
 )
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -61,16 +61,6 @@ def run_module(*arguments: str, cwd: Path = PROJECT_ROOT) -> subprocess.Complete
         encoding="utf-8",
         check=False,
     )
-
-
-def remove_tree(path: Path) -> None:
-    """Remove a pasta descartável com algumas tentativas: no Windows o handle do último render demora a soltar."""
-
-    for _ in range(10):
-        shutil.rmtree(path, ignore_errors=True)
-        if not path.exists():
-            return
-        time.sleep(0.2)
 
 
 @contextmanager

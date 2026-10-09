@@ -21,6 +21,7 @@ from editor.render.preview import (
     _build_ffmpeg_arguments,
     render_preview,
 )
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +39,7 @@ def workspace_tempdir() -> Iterator[Path]:
         shutil.copytree(WORKFLOW_DIR / "sources", path / "sources")
         yield path
     finally:
-        shutil.rmtree(path, ignore_errors=True)
+        remove_tree(path)
 
 
 def synthetic_arguments(kinds: list[str], accel: str) -> list[str]:

@@ -53,6 +53,7 @@ from editor.plan.validation import load_validated_plan, validate_plan
 from editor.render.ffmpeg_graph import _reframe_axis, _reframe_position_statements, build_ffmpeg_graph
 from editor.render.full import render_full
 from editor.render.preview import render_preview
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -278,7 +279,7 @@ class GridCase(unittest.TestCase):
 
         cls.root = PROJECT_ROOT / f"tmp-reframe-{uuid4().hex}"
         cls.root.mkdir()
-        cls.addClassCleanup(shutil.rmtree, cls.root, ignore_errors=True)
+        cls.addClassCleanup(remove_tree, cls.root)
 
     def new_workdir(self, plan: dict[str, Any], sources: dict[str, Path] | None = None) -> Path:
         """Cria `work-*` com o plano; cada fonte (`<L>x<A>`) de `sources` é copiada para `sources/`."""

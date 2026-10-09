@@ -65,6 +65,7 @@ from editor.render.preview import (
     _validate_rendered_preview,
     render_preview,
 )
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -219,7 +220,7 @@ class AspectRatioCase(unittest.TestCase):
         cls.root = PROJECT_ROOT / f"tmp-aspect-ratio-{uuid4().hex}"
         cls.sources_dir = cls.root / "shared-sources"
         cls.sources_dir.mkdir(parents=True)
-        cls.addClassCleanup(shutil.rmtree, cls.root, ignore_errors=True)
+        cls.addClassCleanup(remove_tree, cls.root)
         for name, (width, height) in SOURCE_SIZES.items():
             make_source(cls.sources_dir / f"{name}.mp4", width, height)
 

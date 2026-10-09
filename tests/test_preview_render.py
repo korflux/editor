@@ -25,6 +25,7 @@ from editor.plan.validation import load_validated_plan
 from editor.render.ffmpeg_graph import FfmpegGraph, _scaled_font_size, build_ffmpeg_graph
 from editor.render.full import render_full
 from editor.render.preview import render_preview
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +57,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 def copy_workflow(workdir: Path) -> None:

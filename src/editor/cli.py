@@ -119,7 +119,7 @@ def register_shortcut_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_workdir_argument(audio_shortcut)
     _add_source_id_argument(audio_shortcut)
-    audio_shortcut.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
+    audio_shortcut.add_argument("--input", required=True, help="arquivo local MP4, MOV, MP3 ou WAV")
     audio_shortcut.add_argument(
         "--window-s",
         type=float,
@@ -135,7 +135,7 @@ def register_shortcut_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_workdir_argument(transcribe_shortcut)
     _add_source_id_argument(transcribe_shortcut)
-    transcribe_shortcut.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
+    transcribe_shortcut.add_argument("--input", required=True, help="arquivo local MP4, MOV, MP3 ou WAV")
     transcribe_shortcut.add_argument(
         "--language",
         default="auto",
@@ -160,7 +160,7 @@ def register_shortcut_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_workdir_argument(frames_shortcut)
     _add_source_id_argument(frames_shortcut)
-    frames_shortcut.add_argument("--input", required=True, help="arquivo local MP4 com vídeo H.264")
+    frames_shortcut.add_argument("--input", required=True, help="arquivo local MP4 ou MOV com vídeo H.264 ou HEVC")
     frames_selection = frames_shortcut.add_mutually_exclusive_group(required=True)
     frames_selection.add_argument(
         "--timestamps",
@@ -281,7 +281,7 @@ def build_parser() -> CliArgumentParser:
     )
     audio_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     audio_parser.add_argument("--source-id", required=False, default=None, help="identificador seguro da fonte (padrão: basename do --input)")
-    audio_parser.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
+    audio_parser.add_argument("--input", required=True, help="arquivo local MP4, MOV, MP3 ou WAV")
     audio_parser.add_argument(
         "--window-s",
         type=float,
@@ -302,7 +302,7 @@ def build_parser() -> CliArgumentParser:
     )
     transcribe_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     transcribe_parser.add_argument("--source-id", required=False, default=None, help="identificador seguro da fonte (padrão: basename do --input)")
-    transcribe_parser.add_argument("--input", required=True, help="arquivo local MP4, MP3 ou WAV")
+    transcribe_parser.add_argument("--input", required=True, help="arquivo local MP4, MOV, MP3 ou WAV")
     transcribe_parser.add_argument(
         "--language",
         default="auto",
@@ -349,7 +349,7 @@ def build_parser() -> CliArgumentParser:
     )
     frames_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     frames_parser.add_argument("--source-id", required=False, default=None, help="identificador seguro da fonte (padrão: basename do --input)")
-    frames_parser.add_argument("--input", required=True, help="arquivo local MP4 com vídeo H.264")
+    frames_parser.add_argument("--input", required=True, help="arquivo local MP4 ou MOV com vídeo H.264 ou HEVC")
     selection = frames_parser.add_mutually_exclusive_group(required=True)
     selection.add_argument(
         "--timestamps",

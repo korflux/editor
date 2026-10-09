@@ -19,6 +19,7 @@ from editor import dependencies
 from editor.analysis.transcription import analyze_transcription
 from editor.contracts import CliError
 from editor.whisper_backend import WhisperConfig, _load_whisper_model, resolve_config
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -51,7 +52,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 def create_model_root(workdir: Path) -> Path:

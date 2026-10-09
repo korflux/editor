@@ -85,13 +85,15 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `tests/test_transcription.py`: contrato canônico, seleção CPU/CUDA, timestamps obrigatórios e erros seguros da transcrição.
 - `tests/fixtures/media/main.mp4`: fixture curta H.264/AAC com trechos silenciosos para o contrato de áudio.
 - `tests/fixtures/workflow/`: plan.json v2, fontes locais, preview, aprovação e full do cenário de validação do MVP.
-- `tests/test_cli_contract.py`: smoke test dos dois pontos de entrada e dos envelopes JSON.
+- `tests/test_cli_contract.py`: smoke test dos dois pontos de entrada e dos envelopes JSON, e a ajuda de `--input` (`analyze audio`, `analyze transcribe` e `extract frames`, com os atalhos) conferida contra as constantes de `media.py`.
 - `tests/test_installation.py`: testes do lockfile, do modo somente leitura, dos gates e da cópia de modelos locais.
 - `tests/test_capabilities.py`: teste de processo do inventário v2, limites, operação init, proporções, canvas e `reframe` lidos das constantes, documentação e recomendação determinística.
 - `tests/test_hevc_sources.py`: fontes HEVC e MOV nativas (contrato de `media.py` com payloads simulados, recusas com arquivos reais, jornada de CLI com `.mov` e `.mp4`, 8 e 10 bits, 2688x1512 e 1920x1080, com `tmcd` e miniatura, cor conferida em pixels, PNG de 8 bits, proxy, aprovação por hash do original, janelas de decode com `framemd5` igual ao sem janelas e `--accel gpu`).
 - `tests/test_aspect_ratio.py`: as quatro proporções no perfil, canvas de full e preview por FFprobe, `crop` sem barras, `contain` com barras e golden do `filter_complex` 16:9.
 - `tests/test_reframe.py`: `reframe` (validação antes da mídia, hash canônico, `upscale`, expressões contra as curvas e render real com posição medida em quadros da preview e da full).
 - `tests/test_text_style.py`: `shadow` e `outline` do texto (normalização, hash, violações antes da mídia, grafo sem estilo idêntico ao anterior, escala da preview e render real com faixas de contorno e sombra medidas em pixels na preview e na full, 16:9 e 9:16).
+- `tests/support.py`: infraestrutura compartilhada pelos testes, a limpeza `remove_tree` das pastas descartáveis `tmp-*` (repete a remoção por até 5 s, porque no Windows o `rmdir` falha por instantes enquanto um processo externo segura a pasta e `rmtree(ignore_errors=True)` deixava pastas vazias na raiz; se ainda sobrar, emite `ResourceWarning` e uma linha em `stderr` com o nome da pasta, sem reprovar o teste).
+- `tests/test_support.py`: prova da limpeza (caminho normal sem espera, pasta já removida, handle de diretório real do Windows reproduzindo o defeito antigo e a pasta que nunca sai virando aviso).
 - `tests/e2e/test_mvp_flow.py`: jornada E2E dos comandos locais, artefatos publicados, saída JSON e bloqueio por aprovação obsoleta.
 - `tests/e2e/test_phase_5_flow.py`: jornada 9:16 com `reframe`, proxy, aprovação por hash dos originais, mutação do `reframe` bloqueando a full e full em janelas de decode, com fonte 1080p sintética.
 - `tests/fixtures/e2e/`: plano curto de vlog, b-roll, música e lettering usado pela prova ponta a ponta.
@@ -110,7 +112,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
   - `references/installation.md`: provisionamento do ambiente local.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
-<!-- evidência: MVP implementado até a jornada E2E em 2026-09-12; Phase 1 T1 a T8 implementadas e T9 de capacidades/documentação verificada em 2026-09-13; Phase 2 T1 a T6 implementadas e T7 de jornada detalhada verificada em 2026-09-19; Phase 4 T1 a T4 implementadas e T5 de capacidades, documentação e benchmark verificada em 2026-10-08; Phase 5 T1 a T3 implementadas e T4 de jornada 9:16, capacidades e documentação verificada em 2026-10-08. -->
+<!-- evidência: MVP implementado até a jornada E2E em 2026-09-12; Phase 1 T1 a T8 implementadas e T9 de capacidades/documentação verificada em 2026-09-13; Phase 2 T1 a T6 implementadas e T7 de jornada detalhada verificada em 2026-09-19; Phase 4 T1 a T4 implementadas e T5 de capacidades, documentação e benchmark verificada em 2026-10-08; Phase 5 T1 a T4 (jornada 9:16, capacidades e documentação) implementadas e verificadas em 2026-10-08, e a rodada R1 a R4 mais T5 a T10 (full 16:9 alinhada, áudio das janelas de decode, sombra e contorno do texto, fontes HEVC e MOV, preset de qualidade da full e resíduos de ajuda da CLI e de pastas temporárias) implementadas e verificadas entre 2026-10-08 e 2026-10-09. -->
 
 ## Regras deste repo
 - O nome do produto permanece em aberto. Usar `editor` apenas como identificador técnico do diretório até que o nome seja decidido.

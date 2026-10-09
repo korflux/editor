@@ -31,7 +31,6 @@ import hashlib
 import json
 import math
 from pathlib import Path
-import shutil
 import subprocess
 import unittest
 from typing import Any
@@ -55,6 +54,7 @@ from tests.test_preview_render import (
     with_full_width,
     workspace_tempdir,
 )
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -678,7 +678,7 @@ class TextStyleRenderTests(unittest.TestCase):
             raise unittest.SkipTest("ffmpeg e ffprobe não estão disponíveis localmente")
         cls.root = PROJECT_ROOT / f"tmp-text-style-{uuid4().hex}"
         cls.root.mkdir()
-        cls.addClassCleanup(shutil.rmtree, cls.root, ignore_errors=True)
+        cls.addClassCleanup(remove_tree, cls.root)
         cls.frames: dict[str, dict[str, Frame]] = {}
         for aspect_ratio, (fit, preview_size, full_size) in ASPECT_CASES.items():
             workdir = cls.root / aspect_ratio.replace(":", "x")

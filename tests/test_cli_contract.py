@@ -13,7 +13,14 @@ from typing import Iterator
 from uuid import uuid4
 
 from editor.contracts import CliError
+from editor.media import (
+    PLAN_AUDIO_SOURCE_EXTENSIONS,
+    SOURCE_VIDEO_CODECS,
+    SUPPORTED_SOURCE_EXTENSIONS,
+    VIDEO_SOURCE_EXTENSIONS,
+)
 from editor.workdir import derive_source_id, resolve_workdir
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,11 +30,14 @@ MEDIA_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "media" / "main.mp4"
 def run_module(*arguments: str) -> subprocess.CompletedProcess[str]:
     """Executa `python -m editor` no diretório do projeto para testar o entry point real."""
 
+    # A CLI fixa stdout e stderr em UTF-8 (`configure_output_encoding`); decodificar pela página de
+    # código local corromperia a ajuda em PT-BR (acentos) no Windows.
     return subprocess.run(
         [sys.executable, "-m", "editor", *arguments],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -41,7 +51,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 def run_module_in_workdir(workdir: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -430,6 +440,62 @@ class CliContractTests(unittest.TestCase):
             )
             self.assertNotIn("Traceback", short_preview.stdout)
             self.assertNotIn("Traceback", short_full.stdout)
+
+
+# Nome com que a ajuda da CLI cita cada codec de `SOURCE_VIDEO_CODECS`. Um codec novo no contrato de
+# mídia sem entrada aqui falha o teste com `KeyError`, o que obriga a revisar o texto da ajuda.
+CODEC_HELP_NAMES = {"h264": "H.264", "hevc": "HEVC"}
+
+
+def _joined_with_ou(items: list[str]) -> str:
+    """Junta rótulos como a ajuda em PT-BR escreve: `A ou B` para dois e `A, B ou C` para três ou mais."""
+
+    return f"{', '.join(items[:-1])} ou {items[-1]}"
+
+
+def _container_labels(suffixes: tuple[str, ...]) -> list[str]:
+    """Converte extensões do contrato de mídia (`.mp4`) nos rótulos da ajuda (`MP4`), na mesma ordem."""
+
+    return [suffix.removeprefix(".").upper() for suffix in suffixes]
+
+
+class InputHelpContractTests(unittest.TestCase):
+    """A ajuda de `--input` descreve o contrato real de `media.py`, nos atalhos e nos subcomandos longos."""
+
+    # `audio`/`transcribe` aceitam toda a allowlist de fontes; `frames` só as fontes com vídeo.
+    AUDIO_INPUT_COMMANDS = (("audio",), ("analyze", "audio"), ("transcribe",), ("analyze", "transcribe"))
+    FRAMES_INPUT_COMMANDS = (("frames",), ("extract", "frames"))
+
+    def help_text(self, command: tuple[str, ...]) -> str:
+        """Executa `<comando> --help` no processo real e devolve a saída sem as quebras de linha do argparse."""
+
+        result = run_module(*command, "--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        return " ".join(result.stdout.split())
+
+    def test_audio_and_transcribe_help_list_every_accepted_container(self) -> None:
+        """MP4, MOV, MP3 e WAV nos quatro comandos, lidos das constantes da allowlist de fontes."""
+
+        # A análise de áudio usa a allowlist inteira; a ordem da ajuda é vídeo primeiro, depois áudio.
+        self.assertEqual({*VIDEO_SOURCE_EXTENSIONS, *PLAN_AUDIO_SOURCE_EXTENSIONS}, SUPPORTED_SOURCE_EXTENSIONS)
+        suffixes = (*VIDEO_SOURCE_EXTENSIONS, *sorted(PLAN_AUDIO_SOURCE_EXTENSIONS))
+        expected = f"arquivo local {_joined_with_ou(_container_labels(suffixes))}"
+
+        for command in self.AUDIO_INPUT_COMMANDS:
+            with self.subTest(command=" ".join(command)):
+                self.assertIn(expected, self.help_text(command))
+
+    def test_frames_help_lists_containers_and_video_codecs(self) -> None:
+        """MP4 ou MOV com vídeo H.264 ou HEVC nos dois comandos de frames, lidos das constantes de vídeo."""
+
+        containers = _joined_with_ou(_container_labels(VIDEO_SOURCE_EXTENSIONS))
+        codecs = _joined_with_ou([CODEC_HELP_NAMES[codec] for codec in SOURCE_VIDEO_CODECS])
+        expected = f"arquivo local {containers} com vídeo {codecs}"
+
+        for command in self.FRAMES_INPUT_COMMANDS:
+            with self.subTest(command=" ".join(command)):
+                self.assertIn(expected, self.help_text(command))
 
 
 if __name__ == "__main__":

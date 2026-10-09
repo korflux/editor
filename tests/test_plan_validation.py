@@ -20,6 +20,7 @@ from editor.media import MediaMetadata
 from editor.plan import validation as plan_validation
 from editor.plan.canonical import canonical_sha256
 from editor.plan.validation import validate_plan
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -51,7 +52,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 def load_workflow_plan() -> dict[str, object]:

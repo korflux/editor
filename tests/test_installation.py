@@ -12,6 +12,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
 
+from tests.support import remove_tree
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install.ps1"
@@ -143,20 +145,9 @@ class InstallationContractTests(unittest.TestCase):
         try:
             yield temporary_path
         finally:
-            subprocess.run(
-                [
-                    self.pwsh,
-                    "-NoProfile",
-                    "-Command",
-                    f"if (Test-Path -LiteralPath {quoted_path}) {{ Remove-Item -LiteralPath {quoted_path} -Recurse -Force }}",
-                ],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
+            # A criação fica no PowerShell por causa da ACL; a remoção usa a limpeza única dos testes, que
+            # repete a remoção e avisa se a pasta sobrar (o `Remove-Item` antigo tinha o resultado ignorado).
+            remove_tree(temporary_path)
 
     def test_lockfile_is_hash_pinned_and_contains_runtime_contract(self) -> None:
         """Garante que o lockfile pinou o backend, o auditor e as ferramentas de build."""

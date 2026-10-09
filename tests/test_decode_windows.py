@@ -35,6 +35,7 @@ from editor.render.windows import (
     DecodeWindow,
     plan_decode_windows,
 )
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -123,7 +124,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield path
     finally:
-        shutil.rmtree(path, ignore_errors=True)
+        remove_tree(path)
 
 
 def create_gop_source(
@@ -345,7 +346,7 @@ class DecodeWindowGraphTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        shutil.rmtree(cls._cache, ignore_errors=True)
+        remove_tree(cls._cache)
 
     def assert_unchanged(self, workdir: Path, document: dict[str, Any]) -> None:
         """Confirma grafo e comando idênticos aos de `windows=False`, sem nenhum `-ss`."""
@@ -516,7 +517,7 @@ class WindowedAudioPcmTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        shutil.rmtree(cls._cache, ignore_errors=True)
+        remove_tree(cls._cache)
 
     def render_preview_outputs(self, workdir: Path, *, windowed: bool) -> dict[str, Any]:
         """Renderiza a preview real, com ou sem janelas, e devolve envelope `decode`, PCM e `framemd5`."""
@@ -606,7 +607,7 @@ class WindowedRenderTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        shutil.rmtree(cls._cache, ignore_errors=True)
+        remove_tree(cls._cache)
 
     @contextmanager
     def job(self, document: dict[str, Any] = WINDOWED_PLAN) -> Iterator[Path]:

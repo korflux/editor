@@ -24,6 +24,7 @@ from editor.integrity.hashes import sha256_file
 from editor.render.full import render_full
 from editor.render.preview import render_preview
 from tests.test_proxy_build import make_source, run_module, touch_source, write_plan
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -77,7 +78,7 @@ class PreviewProxyTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         """Remove as fontes geradas para a classe."""
 
-        shutil.rmtree(cls.media, ignore_errors=True)
+        remove_tree(cls.media)
 
     @contextmanager
     def workdir(self) -> Iterator[Path]:
@@ -91,7 +92,7 @@ class PreviewProxyTests(unittest.TestCase):
             write_plan(root, ["a", "b"])
             yield root
         finally:
-            shutil.rmtree(root, ignore_errors=True)
+            remove_tree(root)
 
     def build_proxy(self, workdir: Path, *source_ids: str) -> None:
         """Roda `proxy build` real só para as fontes pedidas e exige proxy criado."""

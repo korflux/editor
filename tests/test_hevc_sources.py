@@ -36,6 +36,7 @@ from editor.render.ffmpeg_graph import build_ffmpeg_graph
 from editor.render.full import render_full
 from editor.render.preview import render_preview
 from editor.plan.validation import load_validated_plan
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -260,7 +261,7 @@ def workspace_tempdir(prefix: str = "tmp-hevc-sources") -> Iterator[Path]:
     try:
         yield path
     finally:
-        shutil.rmtree(path, ignore_errors=True)
+        remove_tree(path)
 
 
 def segment(source_id: str, in_s: float, out_s: float) -> dict[str, Any]:
@@ -341,7 +342,7 @@ def tearDownModule() -> None:
     """Remove as fontes sintéticas compartilhadas ao fim do módulo."""
 
     if _fixture_dir is not None:
-        shutil.rmtree(_fixture_dir, ignore_errors=True)
+        remove_tree(_fixture_dir)
 
 
 class HevcFixtureCase(unittest.TestCase):
@@ -546,7 +547,7 @@ class RefusalRealFilesTests(unittest.TestCase):
                 raise unittest.SkipTest(f"{tool} local é necessário")
         cls.directory = PROJECT_ROOT / f"tmp-hevc-refusals-{uuid4().hex}"
         cls.directory.mkdir()
-        cls.addClassCleanup(shutil.rmtree, cls.directory, ignore_errors=True)
+        cls.addClassCleanup(remove_tree, cls.directory)
         video = ["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=1"]
         other_video = ["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=1:alpha=0"]
         audio = ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1"]

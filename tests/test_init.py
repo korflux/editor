@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from editor.contracts import CliError
 from editor.workdir import init_workdir
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +51,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 def assert_json_error(

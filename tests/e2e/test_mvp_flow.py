@@ -16,6 +16,7 @@ import unittest
 from uuid import uuid4
 
 from editor import dependencies
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -74,7 +75,7 @@ def workspace_tempdir(prefix: str = "mvp-e2e") -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 def copy_fixture(workdir: Path) -> None:

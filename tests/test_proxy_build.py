@@ -25,6 +25,7 @@ from editor import dependencies, process
 from editor.contracts import CliError
 from editor.render import proxy as proxy_module
 from editor.render.proxy import build_proxies, lookup_proxy
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -141,7 +142,7 @@ class ProxyBuildTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         """Remove as fontes geradas para a classe."""
 
-        shutil.rmtree(cls.media, ignore_errors=True)
+        remove_tree(cls.media)
 
     @contextmanager
     def workdir(self, sources: dict[str, str]) -> Iterator[Path]:
@@ -155,7 +156,7 @@ class ProxyBuildTests(unittest.TestCase):
             write_plan(root, list(sources))
             yield root
         finally:
-            shutil.rmtree(root, ignore_errors=True)
+            remove_tree(root)
 
     def build_cli(self, workdir: Path, *extra: str) -> dict:
         """Roda `proxy build` pela CLI real e devolve o envelope JSON."""

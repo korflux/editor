@@ -6,7 +6,6 @@ from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import unittest
@@ -18,6 +17,7 @@ from editor import dependencies, media
 from editor.analysis.frames import extract_frames
 from editor.contracts import CliError
 from editor.media import MediaMetadata
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +47,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 class FrameExtractionTests(unittest.TestCase):

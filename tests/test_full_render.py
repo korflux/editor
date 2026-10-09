@@ -19,6 +19,7 @@ from editor.contracts import CliError
 from editor.media import MAX_SOURCE_SIZE_BYTES, inspect_source
 from editor.render.full import render_full
 from editor.render.preview import _validate_rendered_preview
+from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +51,7 @@ def workspace_tempdir() -> Iterator[Path]:
     try:
         yield temporary_path
     finally:
-        shutil.rmtree(temporary_path, ignore_errors=True)
+        remove_tree(temporary_path)
 
 
 def copy_workflow(workdir: Path) -> None:
