@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterator
 from uuid import uuid4
 
+from editor.analysis import captions
 from editor.contracts import CliError
 from editor.media import (
     PLAN_AUDIO_SOURCE_EXTENSIONS,
@@ -254,9 +255,29 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         for shortcut in ("audio", "transcribe", "frames", "validate", "preview", "full"):
             self.assertIn(shortcut, result.stdout)
-        for long in ("analyze", "extract", "plan", "render", "init", "approve", "capabilities"):
+        for long in ("analyze", "extract", "plan", "render", "init", "approve", "capabilities", "captions"):
             self.assertIn(long, result.stdout)
         self.assertEqual(result.stderr, "")
+
+    def test_captions_suggest_help_lists_options_and_ranges_from_constants(self) -> None:
+        """Confirma que a ajuda de `captions suggest` cita as opções e os padrões e faixas lidos das constantes."""
+
+        result = run_module("captions", "suggest", "--help")
+        text = " ".join(result.stdout.split())
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, "")
+        for option in ("--workdir", "--source-id", "--start-s", "--end-s", "--max-chars", "--max-duration-s", "--json"):
+            self.assertIn(option, text)
+        self.assertIn(
+            f"padrão: {captions.SUGGEST_MAX_CHARS_DEFAULT}, de {captions.SUGGEST_MAX_CHARS_MIN} a {captions.SUGGEST_MAX_CHARS_MAX}",
+            text,
+        )
+        self.assertIn(
+            f"padrão: {captions.SUGGEST_MAX_DURATION_DEFAULT_S:g}, "
+            f"de {captions.SUGGEST_MAX_DURATION_MIN_S:g} a {captions.SUGGEST_MAX_DURATION_MAX_S:g}",
+            text,
+        )
 
     def test_audio_shortcut_matches_long_canonical_envelope(self) -> None:
         """Confirma que `audio` gera o mesmo artefato de `analyze audio` com envelope canônico."""

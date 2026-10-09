@@ -7,6 +7,15 @@ import sys
 from typing import Sequence
 
 from .analysis.audio import analyze_audio
+from .analysis.captions import (
+    SUGGEST_MAX_CHARS_DEFAULT,
+    SUGGEST_MAX_CHARS_MAX,
+    SUGGEST_MAX_CHARS_MIN,
+    SUGGEST_MAX_DURATION_DEFAULT_S,
+    SUGGEST_MAX_DURATION_MAX_S,
+    SUGGEST_MAX_DURATION_MIN_S,
+    suggest_captions,
+)
 from .analysis.frames import extract_frames
 from .analysis.transcription import analyze_transcription
 from .capabilities import collect_capabilities
@@ -488,6 +497,55 @@ def build_parser() -> CliArgumentParser:
         help="restringe a uma fonte do plano; repetível (padrão: todas)",
     )
     _add_json_argument(proxy_build_parser)
+    # Grupo `captions`: fala original em frases curtas para o agente traduzir (spec da phase 6, F1).
+    captions_parser = subparsers.add_parser(
+        "captions",
+        help="prepara legendas a partir da transcrição publicada, sem escrever no trabalho",
+        description="operações somente leitura de apoio às legendas das falas estrangeiras",
+    )
+    _add_json_argument(captions_parser)
+    captions_subparsers = captions_parser.add_subparsers(
+        dest="captions_command",
+        title="operações de legenda",
+        metavar="OPERATION",
+    )
+    captions_suggest_parser = captions_subparsers.add_parser(
+        "suggest",
+        help="quebra a fala original da fonte em frases curtas com tempos",
+        description=(
+            "lê a transcrição publicada da fonte e devolve a fala original em frases curtas, "
+            "com tempos da fonte e por palavra, para o agente traduzir; não escreve arquivo"
+        ),
+    )
+    _add_workdir_argument(captions_suggest_parser)
+    captions_suggest_parser.add_argument(
+        "--source-id",
+        required=True,
+        help="identificador da fonte já transcrita por analyze transcribe",
+    )
+    captions_suggest_parser.add_argument(
+        "--start-s",
+        help="início da janela em segundos, padrão: 0; entra a palavra que começa a partir daqui",
+    )
+    captions_suggest_parser.add_argument(
+        "--end-s",
+        help="fim exclusivo da janela em segundos, padrão: fim da transcrição",
+    )
+    captions_suggest_parser.add_argument(
+        "--max-chars",
+        help=(
+            f"máximo de caracteres por frase, padrão: {SUGGEST_MAX_CHARS_DEFAULT}, "
+            f"de {SUGGEST_MAX_CHARS_MIN} a {SUGGEST_MAX_CHARS_MAX}"
+        ),
+    )
+    captions_suggest_parser.add_argument(
+        "--max-duration-s",
+        help=(
+            f"máximo de segundos por frase, padrão: {SUGGEST_MAX_DURATION_DEFAULT_S:g}, "
+            f"de {SUGGEST_MAX_DURATION_MIN_S:g} a {SUGGEST_MAX_DURATION_MAX_S:g}"
+        ),
+    )
+    _add_json_argument(captions_suggest_parser)
     register_shortcut_parsers(subparsers)
     return parser
 
@@ -612,6 +670,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "proxy" and args.proxy_command == "build":
             result = build_proxies(resolve_workdir(args.workdir), args.source_ids)
             write_json(success_envelope("proxy build", result))
+            return 0
+
+        if args.command == "captions" and args.captions_command == "suggest":
+            result = suggest_captions(
+                resolve_workdir(args.workdir),
+                args.source_id,
+                start_s=args.start_s,
+                end_s=args.end_s,
+                max_chars=args.max_chars,
+                max_duration_s=args.max_duration_s,
+            )
+            write_json(success_envelope("captions suggest", result))
             return 0
 
         if args.command is None:
