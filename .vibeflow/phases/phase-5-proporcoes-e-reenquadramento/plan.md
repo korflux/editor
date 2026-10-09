@@ -102,6 +102,83 @@ Esta entrega faz o editor renderizar planos em 9:16, 1:1 e 4:5, além de 16:9, e
 - **Decisões de implementação:** `capabilities` expõe `plan.profile.aspect_ratios`, `max_full_width_applies_to`, `canvas` (full e preview de cada proporção), `envelope_fields`, `envelope_fields_landscape_only` e `upscale`, `plan.reframe` (campos, limites, padrões, `requires_fit: crop`, `excludes: [motion]`), `limits.reframe_*` e `render.text_size`, tudo das constantes de `plan/schema.py` e `MAX_PREVIEW_DIMENSION`; `plan.profile.aspect_ratio` permanece `"16:9"` por compatibilidade (nada removido nem renomeado). Duas asserções existentes mudaram com justificativa no A8: a igualdade exata de `plan.profile` em `tests/test_capabilities.py` virou igualdade sobre as cinco chaves legadas, e a de `size_px não é escalado` em `tests/test_vibe_editor_skill.py` virou `size_px vale na largura da full`. A tabela "Decisões vigentes" do `REGRAS.md` não foi alterada: é sincronizada na finalização aprovada, depois da review.
 - **Limitação registrada:** os literais `segment_base: 1`, `factor_decimals: 2` e `factor_greater_than: 1.0` de `upscale` em `capabilities.py` não vêm de constante compartilhada com `validation.py` e são provados pelo E2E, e não por constante; `installation.md` não cita proporções nem `reframe` (opcional).
 
+### Adendo (08/10/2026): resolução dos achados da review e dos registros de `.erros-encontrados/`
+
+Pedido do humano depois da review final: resolver R1 a R4 (rodada de correção, passo C, commit `task(R1-R4)`) e os registros abertos de `.erros-encontrados/` (T5 a T9, um commit por tarefa). Decisões 15 a 20 e aceites A9 a A15 no adendo da [spec](spec.md). Execução sequencial (Modo A). Prontidão: `libx265` e `hevc_cuvid` existem no FFmpeg local, então as fontes HEVC 10 bits dos testes são geradas por `ffmpeg -f lavfi` sem fixture grande; GPU é opcional nos testes (pula com mensagem quando ausente).
+
+### T5: Alinhar a largura da full 16:9 a 32
+
+- [ ] T5 concluída
+- **Spec:** A9, decisão 16
+- **O quê:** `FULL_WIDTH_ALIGNMENT` passa de 16 para 32 em `plan/schema.py` (causa raiz: altura `largura * 9 // 16` ímpar reduzida em 1 deixa a razão fora da tolerância da checagem do MP4); `capabilities` já lê a constante; atualizar o texto de `REGRAS.md` que cita o alinhamento legado de 16 e marcar o registro `2026-10-08-full-16x9-falha-com-largura-multipla-impar-de-16.md` como resolvido.
+- **Aceite:**
+  - [ ] Fonte H.264 16:9 de 1200x674 (`fit: crop`, perfil padrão): `plan validate` informa `full_width` 1184 e `full_height` 666, `render preview`, `approve` e `render full` funcionam e a full sai em 1184x666.
+  - [ ] Para toda largura de fonte de 2 a 3840 (e todo `max_full_width` válido), o canvas novo é idêntico ao anterior quando o anterior era renderizável (largura alinhada a 16 já múltipla de 32) e tem razão exata `largura * 9 == altura * 16`; o golden de `tests/test_aspect_ratio.py` e as fixtures vigentes não mudam.
+- **Verificação:**
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_aspect_ratio tests.test_capabilities -v`
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render tests.test_full_render tests.test_decode_windows -v`
+- **Deps:** nenhuma
+- **Arquivos:** `src/editor/plan/schema.py`, `tests/test_aspect_ratio.py`, `tests/test_capabilities.py`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-08-full-16x9-falha-com-largura-multipla-impar-de-16.md`
+
+### T6: Áudio idêntico com e sem janelas de decode
+
+- [ ] T6 concluída
+- **Spec:** A10, decisão 17
+- **O quê:** achar a causa raiz do deslocamento de até 1.024 amostras quando o `-ss` da janela cai num keyframe de vídeo (`atrim` seguido de `asetpts=PTS-STARTPTS` das entradas de áudio com janela, `render/ffmpeg_graph.py`, `render/windows.py`) e corrigi-la uma vez na origem; estender `tests/test_decode_windows.py` com a prova de PCM; manter a afirmação do `REGRAS.md` verdadeira e marcar o registro `2026-10-08-janelas-de-decode-deslocam-audio-em-keyframe-de-video.md` como resolvido.
+- **Aceite:**
+  - [ ] Fonte com GOP 25 e cortes em 1,0 s e 8,0 s (mais cortes alinhados e não alinhados a keyframe, várias janelas, corte J/L): o PCM decodificado da saída com janelas é idêntico, amostra a amostra, ao sem janelas; com GOP 12 continua idêntico.
+  - [ ] O `framemd5` de vídeo com e sem janelas continua igual; o golden do grafo 16:9 sem janelas não muda.
+- **Verificação:**
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_decode_windows -v`
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_preview_render tests.test_full_render tests.test_aspect_ratio tests.test_reframe -v`
+- **Deps:** nenhuma
+- **Arquivos:** `src/editor/render/ffmpeg_graph.py`, `src/editor/render/windows.py` (se a causa estiver no planejador), `tests/test_decode_windows.py`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-08-janelas-de-decode-deslocam-audio-em-keyframe-de-video.md`
+- **Risco:** a correção não pode mudar os tempos do plano nem o hash canônico; o áudio sem janelas é a referência e não deve mudar.
+
+### T7: Sombra e contorno na camada de texto
+
+- [ ] T7 concluída
+- **Spec:** A12, decisão 18
+- **O quê:** `layers[].shadow` e `layers[].outline` opcionais na camada `text` (allowlist estrita, faixas e padrões da decisão 18, normalização e hash canônico), renderizados pelo mesmo grafo da preview e da full: contorno por `drawtext` (`borderw`/`bordercolor`) e sombra suave (deslocamento, desfoque e opacidade) composta atrás do texto na superfície da camada; valores em pixels definidos na largura da full e escalados na preview como o `size_px`; sem `shadow` e sem `outline` o filtro do texto é byte a byte o atual. Atualizar `capabilities`, a skill (remover "o texto não tem sombra, contorno nem fundo" mantendo "sem caixa de fundo" como limitação), `REGRAS.md` e marcar o Problema 2 do registro `2026-10-08-size-px-nao-escala-entre-preview-e-full.md` como resolvido.
+- **Aceite:**
+  - [ ] Cada violação (campo desconhecido, tipo errado, booleano como número, faixa, cor inválida, `shadow` ou `outline` em camada que não é `text`) é recusada com `PLAN_INVALID` antes de inspecionar mídia; plano válido muda o hash canônico; padrões aplicados na normalização.
+  - [ ] Em preview e full reais, o contorno tem a cor e a espessura esperadas ao redor das letras, a sombra aparece deslocada para baixo e à direita com a cor e a opacidade declaradas e some com `opacity` 0, e a razão sombra/largura do quadro é a mesma na preview e na full (tolerância de 2% da largura); sem `shadow` e `outline`, o grafo de texto e o hash do `filter_complex` da full de `TextScaleTests` não mudam.
+- **Verificação:**
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_text_style -v`
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_plan_validation tests.test_preview_render tests.test_full_render tests.test_aspect_ratio tests.test_capabilities tests.test_vibe_editor_skill -v`
+- **Deps:** nenhuma
+- **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/capabilities.py`, `tests/test_text_style.py`, `tests/test_capabilities.py`, `tests/test_vibe_editor_skill.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `skills/vibe-editor/references/canal-sonni-viaja.md`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-08-size-px-nao-escala-entre-preview-e-full.md`
+- **Risco:** `drawtext` não faz desfoque; o desfoque exige compor uma cópia do texto desfocada atrás da nítida, sujeita ao recorte da caixa da camada (`ponytail`).
+
+### T8: Fontes HEVC e MOV nativas
+
+- [ ] T8 concluída
+- **Spec:** A13, decisão 19
+- **O quê:** aceitar `hevc` (Main e Main 10, `yuv420p` e `yuv420p10le`) e a extensão `.mov` nas fontes audiovisuais, ignorar streams de dados e miniatura anexada que não são o stream selecionado, e garantir que todo consumidor da fonte (análise de áudio, extração de frames, `plan validate`, `proxy build`, preview, full, janelas de decode, `--accel gpu`) mapeie explicitamente o stream de vídeo e o de áudio escolhidos e converta 10 bits para `yuv420p` de 8 bits; atualizar `capabilities` (`formats`), `source-preparation.md`, a skill e `REGRAS.md`; marcar o registro `2026-10-05-fontes-dji-hevc-rejeitadas.md` como resolvido (a preparação continua documentada para MKV e fontes com mais de um áudio).
+- **Aceite:**
+  - [ ] Fontes sintéticas geradas no teste (`libx265` 10 bits em `.mov` e em `.mp4`, com stream `data` e miniatura MJPEG anexada, vídeo 2688x1512 curto e uma de 1080p) percorrem `analyze audio`, `extract frames`, `plan validate`, `proxy build` (proxy H.264 8 bits), preview com e sem proxy, aprovação e full (com janelas de decode), com FFprobe das saídas H.264 `yuv420p`; os frames convertidos têm a cor correta (comparação com a fonte dentro de tolerância); `--accel gpu` renderiza ou cai para CPU sem falhar.
+  - [ ] Continuam recusadas com o código estável: `.mkv`, dois streams de áudio, dois streams de vídeo reais, miniatura anexada como primeiro stream de vídeo, codec fora da allowlist (por exemplo `vp9`, `av1`), legenda; os tetos de tamanho e duração valem.
+- **Verificação:**
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_hevc_sources -v`
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_audio_analysis tests.test_frame_extraction tests.test_plan_validation tests.test_proxy_build tests.test_preview_proxy tests.test_decode_windows tests.test_gpu_accel tests.test_capabilities tests.test_vibe_editor_skill -v`
+- **Deps:** nenhuma
+- **Arquivos:** `src/editor/media.py`, `src/editor/render/preview.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/render/proxy.py`, `src/editor/analysis/audio.py`, `src/editor/analysis/frames.py`, `src/editor/capabilities.py`, `src/editor/dependencies.py` (só se o decode CUDA exigir), `tests/test_hevc_sources.py`, `tests/test_capabilities.py`, `tests/test_vibe_editor_skill.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/source-preparation.md`, `skills/vibe-editor/references/canal-sonni-viaja.md`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-05-fontes-dji-hevc-rejeitadas.md`
+- **Risco:** superfície de entrada não confiável maior (demux e decode de HEVC); a allowlist segue estrita, e o plano e a CLI continuam sem aceitar nada fora dela. O stream escolhido precisa ser mapeado pelo índice real do FFprobe, nunca por `v:0` quando há miniatura anexada.
+
+### T9: Preset de qualidade da full
+
+- [ ] T9 concluída
+- **Spec:** A14, decisão 20
+- **O quê:** `render full --quality standard|high|max` (e o atalho `full`), padrão `standard` com os argumentos atuais de encoder (x264 `crf 23`, NVENC `p3`/`cq 31`); `high` e `max` com `crf` e `cq` equivalentes medidos por SSIM no mesmo material (o comentário atual de `_video_encoder_arguments` registra a equivalência `cq 31` ~ `crf 23`); `data.video.quality` no envelope; a preview não recebe a opção; a qualidade não entra em aprovação nem em hash; `capabilities` expõe `render.quality` (presets e parâmetros); skill e `REGRAS.md` documentam; marcar a sugestão de preset do registro `2026-10-05-fontes-dji-hevc-rejeitadas.md` como atendida.
+- **Aceite:**
+  - [ ] `--quality standard` (e a omissão) gera exatamente a full de antes (`framemd5` de vídeo e áudio iguais) na CPU e o mesmo comando de encoder na GPU; `high` e `max` geram arquivos de qualidade crescente com SSIM e tamanho medidos e registrados; valor fora da allowlist é recusado com `ARGUMENT_INVALID`.
+  - [ ] `capabilities --json` informa os presets lidos das mesmas constantes que o render usa; a preview, a aprovação e o hash não mudam.
+- **Verificação:**
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_render_quality -v`
+  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_full_render tests.test_gpu_accel tests.test_cli_contract tests.test_capabilities tests.test_vibe_editor_skill -v`
+- **Deps:** T8
+- **Arquivos:** `src/editor/render/preview.py`, `src/editor/render/full.py`, `src/editor/cli.py`, `src/editor/capabilities.py`, `tests/test_render_quality.py`, `tests/test_capabilities.py`, `tests/test_vibe_editor_skill.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-05-fontes-dji-hevc-rejeitadas.md`
+
 ## Paralelização
 
 - Grupo: T2 e T3

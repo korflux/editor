@@ -160,6 +160,29 @@ O operador (agente ou humano) monta, a partir de gravações 16:9, vídeos 9:16,
 - Usar proxy na full ou incluí-lo em hash de aprovação.
 - Montar o grafo com texto vindo do plano fora dos campos já previstos para texto.
 
+## Adendo de escopo (08/10/2026): achados da review e registros de `.erros-encontrados/`
+
+Origem: depois da review final, o humano pediu em chat para resolver todos os achados (R1 a R4) e incluir a resolução dos registros abertos de `.erros-encontrados/`. As decisões abaixo foram tomadas pelo coordenador com a recomendação mais segura e reversível, sem alterar nenhum contrato já aprovado; ficam sujeitas à confirmação do humano na finalização. O trecho "Fora" desta spec que listava sombra e contorno de texto passa a ser parcialmente atendido (a caixa de fundo continua fora). O registro `2026-09-10-python-global-inquirer-editor.md` (colisão de nome com o Python global do host, decisão já registrada de não alterar o ambiente global nem renomear o pacote) e o `2026-09-19-test-installation-encoding.md` (já corrigido) não entram.
+
+### Decisões do adendo
+
+15. `data.profile.upscale` considera também o `motion`: o fator de um segmento é o do enquadramento (decisão 9) multiplicado pelo maior `zoom` entre `motion.from` e `motion.to` (1.0 sem `motion`), então "lista vazia" volta a significar que nenhum segmento é ampliado. Só o campo informativo muda; nenhum plano deixa de ser válido. (R1)
+16. A largura da full 16:9 passa a ser alinhada a 32, como a da preview (`FULL_WIDTH_ALIGNMENT` de 16 para 32), com altura exata `largura * 9 / 16`, sempre par. Planos cuja full já era gerada têm o mesmo canvas (a largura alinhada a 16 já era múltipla de 32); só mudam os que hoje falham com `RENDER_FAILED` (largura múltipla ímpar de 16, por exemplo fonte 1200x674, que passa a sair em 1184x666).
+17. Com janelas de decode, o áudio renderizado coincide amostra a amostra com o renderizado sem janelas, inclusive quando o corte cai num keyframe de vídeo; a afirmação do `REGRAS.md` de que quadros e áudio são provados iguais por `framemd5` passa a valer para esse caso e tem prova.
+18. A camada de texto aceita `shadow` e `outline` opcionais. `shadow`: `offset_x_px`, `offset_y_px` (inteiros de -100 a 100), `blur_px` (0 a 50), `color` (`#RRGGBB`, padrão `#000000`) e `opacity` (0 a 1, padrão 0.5). `outline`: `width_px` (inteiro de 1 a 30) e `color` (`#RRGGBB`, padrão `#000000`). Todos os valores em pixels são definidos na largura da full e escalados na preview pelo mesmo fator do `size_px` (decisão 11), com mínimo 1 quando maior que zero. Sem `shadow` e sem `outline` o grafo do texto é idêntico ao atual. Sombra e contorno são recortados pela caixa da camada. Caixa de fundo não entra (`ponytail`).
+19. Fontes HEVC e MOV: `.mov` e `.mp4` são aceitos para fontes audiovisuais, com vídeo `h264` ou `hevc` (perfis Main e Main 10, `yuv420p` ou `yuv420p10le`) e áudio AAC; streams de dados (por exemplo `tmcd`) e miniatura anexada (`attached_pic`) são ignorados quando não são o stream de vídeo selecionado; continuam recusados MKV e outros contêineres, mais de um stream de áudio, mais de um stream de vídeo real, legendas, codecs fora da allowlist e todos os tetos vigentes. A saída é sempre `yuv420p` de 8 bits (a conversão de 10 bits acontece no grafo e no proxy), e a análise de áudio, a extração de frames, o proxy, a preview e a full tratam essas fontes como as H.264. O caminho `--accel gpu` decodifica HEVC por CUDA quando possível e cai para CPU como hoje.
+20. Preset de qualidade da full: `render full --quality standard|high|max` (padrão `standard`, que mantém exatamente os argumentos atuais de encoder: x264 `crf 23` e NVENC `p3`/`cq 31`). `high` e `max` reduzem `crf` e `cq` por equivalência de SSIM medida e documentada; a preview não recebe a opção e a qualidade não entra na aprovação nem no hash (não é conteúdo editorial). `capabilities` expõe os presets e `data.video.quality` informa o usado.
+
+### Aceite do adendo
+
+- [ ] A9: uma fonte 16:9 de 1200x674 gera preview, aprovação e full válidas (full 1184x666, razão exata 16:9), e o canvas de toda largura cuja full já era gerada permanece idêntico. (decisão 16)
+- [ ] A10: o PCM do áudio renderizado com janelas de decode é idêntico ao sem janelas em fonte com GOP 25 (cortes em 1,0 s e 8,0 s) e com GOP 12, e o `framemd5` de vídeo continua igual. (decisão 17)
+- [ ] A11: `upscale` inclui o zoom do `motion` e fica vazio só quando nenhum segmento é ampliado; os textos de `youtube-editing.md`, `capabilities` e `REGRAS.md` descrevem a mesma regra. (decisão 15, R1, R2)
+- [ ] A12: um plano com texto com `shadow` e `outline` é validado, renderizado e mostra sombra e contorno medidos em pixels na preview e na full, com o mesmo aspecto proporcional; sem eles o grafo e a full são idênticos; cada violação de faixa, tipo ou campo desconhecido é recusada com `PLAN_INVALID` antes de inspecionar mídia. (decisão 18)
+- [ ] A13: uma fonte HEVC 10 bits em `.mov` e em `.mp4` com stream de dados e miniatura anexada percorre `analyze audio`, `extract frames`, `plan validate`, `proxy build`, preview e full (com janelas de decode e, quando disponível, `--accel gpu`) e sai em H.264 8 bits; MKV, dois áudios, codec fora da allowlist e vídeo extra continuam recusados. (decisão 19)
+- [ ] A14: `render full --quality standard` gera exatamente a full de antes; `high` e `max` geram arquivos de qualidade crescente (SSIM e tamanho medidos) tanto na CPU quanto na GPU; `capabilities` expõe os presets. (decisão 20)
+- [ ] A15: R3 e R4 aplicados (registro do teto de 32.767 marcado como resolvido; o perfil do canal proíbe também `video.reframe`), e cada registro aberto de `.erros-encontrados/` tratado por este adendo está marcado como resolvido com o commit correspondente.
+
 ## Handoff
 
 vibe-plan (sem UI visível)
