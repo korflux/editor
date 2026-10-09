@@ -18,7 +18,15 @@ from editor import media
 from editor.analysis.frames import FRAME_PIXEL_FORMAT
 from editor.capabilities import choose_recommendation, collect_capabilities
 from editor.plan import schema as plan_schema
-from editor.render.preview import MAX_PREVIEW_DIMENSION
+from editor.render.preview import (
+    CPU_ENCODER_PRESET,
+    CPU_VIDEO_ENCODER,
+    DEFAULT_QUALITY,
+    GPU_ENCODER_PRESET,
+    MAX_PREVIEW_DIMENSION,
+    QUALITY_CHOICES,
+    QUALITY_PRESETS,
+)
 from editor.whisper_backend import resolve_config
 
 
@@ -334,6 +342,45 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertFalse({"shadow", "outline"} & plan_schema.IMAGE_LAYER_FIELDS)
         self.assertFalse({"shadow", "outline"} & plan_schema.VIDEO_LAYER_FIELDS)
 
+    def test_render_exposes_the_quality_presets_from_the_constants(self) -> None:
+        """Prova (A14) que `render.quality` é lido das mesmas constantes que o encoder da full usa."""
+
+        with workspace_tempdir() as root:
+            data = collect_capabilities(root)
+        quality = data["render"]["quality"]
+
+        self.assertEqual(quality["status"], "available")
+        self.assertEqual(quality["flag"], "--quality")
+        self.assertEqual(quality["presets"], list(QUALITY_CHOICES))
+        self.assertEqual(quality["default"], DEFAULT_QUALITY)
+        # Só a full recebe a opção; a preview usa sempre o padrão e a escolha fica fora da aprovação.
+        self.assertEqual(quality["applies_to"], ["render_full"])
+        self.assertEqual(quality["preview"], DEFAULT_QUALITY)
+        self.assertIs(quality["in_approval_hash"], False)
+        self.assertEqual(quality["fallback"], "gpu_to_cpu_keeps_preset")
+        self.assertEqual(quality["envelope"], "video.quality")
+        cpu, gpu = quality["parameters"]["cpu"], quality["parameters"]["gpu"]
+        self.assertEqual(
+            (cpu["encoder"], cpu["preset"], cpu["rate_control"]),
+            (CPU_VIDEO_ENCODER, CPU_ENCODER_PRESET, "crf"),
+        )
+        self.assertEqual(
+            (gpu["encoder"], gpu["preset"], gpu["rate_control"], gpu["quality_parameter"]),
+            (editor_dependencies.GPU_VIDEO_ENCODER, GPU_ENCODER_PRESET, "vbr", "cq"),
+        )
+        for name in QUALITY_CHOICES:
+            self.assertEqual(cpu["values"][name], QUALITY_PRESETS[name].crf)
+            self.assertEqual(gpu["values"][name], QUALITY_PRESETS[name].cq)
+            self.assertEqual(gpu["levels"][name], QUALITY_PRESETS[name].nvenc_level)
+        # Valores da decisão 20, escritos à parte para uma troca de constante não passar calada.
+        self.assertEqual(quality["presets"], ["standard", "high", "max"])
+        self.assertEqual(quality["default"], "standard")
+        self.assertEqual((cpu["encoder"], cpu["preset"]), ("libx264", "veryfast"))
+        self.assertEqual((gpu["encoder"], gpu["preset"]), ("h264_nvenc", "p3"))
+        self.assertEqual(cpu["values"], {"standard": 23, "high": 18, "max": 14})
+        self.assertEqual(gpu["values"], {"standard": 31, "high": 22, "max": 18})
+        self.assertEqual(gpu["levels"], {"standard": None, "high": "5.2", "max": "5.2"})
+
     def test_formats_expose_the_source_contract_from_the_media_constants(self) -> None:
         """Prova (A13) que contêineres, codecs, perfis e formato de pixel das fontes são os das constantes de `media.py`."""
 
@@ -408,6 +455,38 @@ class CapabilitiesTests(unittest.TestCase):
             "fontes HEVC ou MOV exigem a conversão",
             "comprovadamente faz o editor recusar a fonte",
             "formats.codecs.video: [\"h264\"]",
+        ):
+            self.assertNotIn(stale, combined)
+
+    def test_documentation_covers_the_quality_presets(self) -> None:
+        """Prova (A14) que a documentação ensina `--quality`, a tabela medida e não diz mais que o encoder não é configurável."""
+
+        contents = {path: " ".join(path.read_text(encoding="utf-8").split()) for path in DOCUMENTATION_PATHS}
+        combined = "\n".join(contents.values())
+
+        markers = [
+            "--quality",
+            "render.quality",
+            "video.quality",
+            "Qualidade da full, Phase 5",
+            "tests/test_render_quality.py",
+            "fora do hash",
+            "SSIM",
+        ]
+        for name in QUALITY_CHOICES:
+            markers.append(f"`{name}`")
+            markers.append(f"crf {QUALITY_PRESETS[name].crf}")
+            markers.append(f"cq {QUALITY_PRESETS[name].cq}")
+        for marker in markers:
+            self.assertIn(marker, combined)
+        # A skill e o guia de entrega ensinam a opção e citam o custo medido rotulado como orientação.
+        for path in (DOCUMENTATION_PATHS[0], DOCUMENTATION_PATHS[2]):
+            for marker in ("--quality", "orientação", "SSIM", "ffprobe"):
+                self.assertIn(marker, contents[path], f"{path.name}: {marker}")
+        # Frases anteriores à T9 que o contrato tornou falsas.
+        for stale in (
+            "Esses encoders não têm perfil de qualidade configurável",
+            "permitir seleção de encoder ou perfil de qualidade somente quando o MVP precisar operar em hosts sem libx264 ou expor presets",
         ):
             self.assertNotIn(stale, combined)
 

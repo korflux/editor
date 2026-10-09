@@ -235,6 +235,8 @@ A full só deve ser gerada depois de uma aprovação explícita do usuário:
 
 A aprovação registra o plano, a preview e as fontes que foram revisados. Se qualquer um deles mudar depois da aprovação, repetir a preview e pedir aprovação novamente.
 
+A qualidade do vídeo da full é escolhida na hora de gerá-la, com `--quality standard|high|max` (padrão `standard`; detalhes e custos na seção 4 e em `SKILL.md`). Ela não faz parte do que se aprova: a mesma aprovação vale para uma full re-renderizada com outra qualidade, e a preview usa sempre `standard`.
+
 ## 2. Padrão de qualidade
 
 ### 2.1 O padrão em uma página
@@ -386,7 +388,15 @@ Para um vídeo horizontal para o YouTube, o ponto de partida é MP4, vídeo H.26
 
 Para Shorts, Reels e TikTok o ponto de partida é o mesmo formato (MP4, H.264, AAC em 48 kHz) em 9:16, 1080x1920, e para feed em 1:1 (1080x1080) ou 4:5 (1080x1350); conferir as exigências e a duração máxima da plataforma na hora de publicar.
 
-No editor, o perfil escolhe a proporção (seção 1.4): no `16:9` a full segue `max_full_width`, e nas demais proporções ela sai no tamanho fixo de plataforma. A full usa H.264 com preset `veryfast`, ou NVENC `p3` com `cq 31` quando se passa `--accel gpu`, que usa decode CUDA e alivia a CPU mas não é mais rápido. **Esses encoders não têm perfil de qualidade configurável e podem entregar bitrate bem abaixo do ideal para filmagem de câmera em 2,7K ou 4K.** Depois da full, medir o bitrate com `ffprobe` e avisar o usuário se ficar muito abaixo do que a fonte tinha.
+No editor, o perfil escolhe a proporção (seção 1.4): no `16:9` a full segue `max_full_width`, e nas demais proporções ela sai no tamanho fixo de plataforma. A full usa H.264 com preset `veryfast`, ou NVENC `p3` quando se passa `--accel gpu`, que usa decode CUDA e alivia a CPU mas não é mais rápido. A qualidade do vídeo é escolhida por `--quality`:
+
+| Preset | CPU (`libx264`) | GPU (NVENC) | Quando usar |
+|---|---|---|---|
+| `standard` (padrão) | `crf 23` | `cq 31` | conferência da full e entrega leve |
+| `high` | `crf 18` | `cq 22` | entrega final padrão |
+| `max` | `crf 14` | `cq 18` | filmagem de câmera em 2,7K ou 4K, quando o bitrate do `standard` e do `high` fica abaixo do da fonte |
+
+`high` e `max` foram escolhidos por equivalência de SSIM medida (o `cq` acompanha o SSIM do `crf` do mesmo nome) e, na GPU, fixam o nível H.264 5.2 para o NVENC não limitar a full a cerca de 17 Mb/s. Custo medido, como **orientação** (fonte sintética exigente de 1080p30, i5-13600K e RTX 3060 Ti; o efeito real depende da fonte): 5,7 MB no `standard`, 12,2 MB no `high` e 19,1 MB no `max` na CPU (7,6, 16,3 e 25,5 Mb/s), 3,9, 12,5 e 18,9 MB na GPU (5,2, 16,6 e 25,2 Mb/s), e tempo de codificação da CPU de até 1,3x no `high` e 1,7x no `max` (quase igual na GPU). **O `standard` pode entregar bitrate bem abaixo do ideal para filmagem de câmera em 2,7K ou 4K.** Depois da full, medir o bitrate com `ffprobe`, subir o preset se ficar muito abaixo do que a fonte tinha e avisar o usuário do tamanho do arquivo final. A escolha fica fora do hash da aprovação, então regerar a full com outro preset não pede nova aprovação.
 
 A preview (até 720 px, na mesma proporção da full) é a referência de enquadramento, ritmo, cortes e proporção do texto (seção 1.4); nitidez e bitrate só valem na full. O arquivo final só é entregue depois da validação e da aprovação explícita.
 
@@ -402,7 +412,7 @@ A preview (até 720 px, na mesma proporção da full) é a referência de enquad
 | Preparar proxies leves para a preview | `editor proxy build ... --json` |
 | Gerar uma versão para revisão | `editor render preview ... --json` |
 | Registrar a aprovação humana | `editor approve ... --json` |
-| Gerar a versão final | `editor render full ... --json` |
+| Gerar a versão final (`--quality standard\|high\|max`) | `editor render full ... --json` |
 
 Os comandos completos devem ser executados com o Python do ambiente virtual, como nos exemplos desta referência. Os três pontos na tabela representam os argumentos obrigatórios, especialmente `--workdir`, `--source-id` e `--input` nas análises.
 

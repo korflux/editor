@@ -180,7 +180,7 @@ Origem: depois da review final, o humano pediu em chat para resolver todos os ac
 - [x] A11: `upscale` inclui o zoom do `motion` e fica vazio só quando nenhum segmento é ampliado; os textos de `youtube-editing.md`, `capabilities` e `REGRAS.md` descrevem a mesma regra. (decisão 15, R1, R2)
 - [x] A12: um plano com texto com `shadow` e `outline` é validado, renderizado e mostra sombra e contorno medidos em pixels na preview e na full, com o mesmo aspecto proporcional; sem eles o grafo e a full são idênticos; cada violação de faixa, tipo ou campo desconhecido é recusada com `PLAN_INVALID` antes de inspecionar mídia. (decisão 18)
 - [x] A13: uma fonte HEVC 10 bits em `.mov` e em `.mp4` com stream de dados e miniatura anexada percorre `analyze audio`, `extract frames`, `plan validate`, `proxy build`, preview e full (com janelas de decode e, quando disponível, `--accel gpu`) e sai em H.264 8 bits; MKV, dois áudios, codec fora da allowlist e vídeo extra continuam recusados. (decisão 19)
-- [ ] A14: `render full --quality standard` gera exatamente a full de antes; `high` e `max` geram arquivos de qualidade crescente (SSIM e tamanho medidos) tanto na CPU quanto na GPU; `capabilities` expõe os presets. (decisão 20)
+- [x] A14: `render full --quality standard` gera exatamente a full de antes; `high` e `max` geram arquivos de qualidade crescente (SSIM e tamanho medidos) tanto na CPU quanto na GPU; `capabilities` expõe os presets. (decisão 20)
 - [ ] A15: R3 e R4 aplicados (registro do teto de 32.767 marcado como resolvido; o perfil do canal proíbe também `video.reframe`), e cada registro aberto de `.erros-encontrados/` tratado por este adendo está marcado como resolvido com o commit correspondente.
 
 ## Handoff

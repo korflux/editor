@@ -74,7 +74,17 @@ from .plan.validation import (
     MAX_SEGMENTS,
     MAX_TIMELINE_DURATION_SECONDS,
 )
-from .render.preview import GPU_MAX_VIDEO_INPUTS, MAX_PREVIEW_DIMENSION, PROXY_CHOICES
+from .render.preview import (
+    CPU_ENCODER_PRESET,
+    CPU_VIDEO_ENCODER,
+    DEFAULT_QUALITY,
+    GPU_ENCODER_PRESET,
+    GPU_MAX_VIDEO_INPUTS,
+    MAX_PREVIEW_DIMENSION,
+    PROXY_CHOICES,
+    QUALITY_CHOICES,
+    QUALITY_PRESETS,
+)
 from .render.proxy import (
     PROXY_CRF,
     PROXY_GOP,
@@ -509,6 +519,37 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
                 "encoder": dependencies.GPU_VIDEO_ENCODER,
                 "decoder": dependencies.GPU_HWACCEL,
                 "fallback": "cpu",
+            },
+            # Preset de qualidade da full (phase 5, decisão 20): `--quality` só existe em `render full`; a
+            # preview usa sempre o padrão e a escolha fica fora do plano, da aprovação e de qualquer hash.
+            # Presets e parâmetros são as constantes de `render/preview.py` que o encoder também lê;
+            # `presets` guarda a ordem crescente de qualidade (o envelope serializa as chaves ordenadas).
+            "quality": {
+                "status": "available",
+                "flag": "--quality",
+                "presets": list(QUALITY_CHOICES),
+                "default": DEFAULT_QUALITY,
+                "applies_to": ["render_full"],
+                "preview": DEFAULT_QUALITY,
+                "in_approval_hash": False,
+                "fallback": "gpu_to_cpu_keeps_preset",
+                "parameters": {
+                    "cpu": {
+                        "encoder": CPU_VIDEO_ENCODER,
+                        "preset": CPU_ENCODER_PRESET,
+                        "rate_control": "crf",
+                        "values": {name: QUALITY_PRESETS[name].crf for name in QUALITY_CHOICES},
+                    },
+                    "gpu": {
+                        "encoder": dependencies.GPU_VIDEO_ENCODER,
+                        "preset": GPU_ENCODER_PRESET,
+                        "rate_control": "vbr",
+                        "quality_parameter": "cq",
+                        "values": {name: QUALITY_PRESETS[name].cq for name in QUALITY_CHOICES},
+                        "levels": {name: QUALITY_PRESETS[name].nvenc_level for name in QUALITY_CHOICES},
+                    },
+                },
+                "envelope": "video.quality",
             },
             # Decodificação seletiva (phase 4, F1): ligada por padrão e sem flag, pois a saída é
             # provada equivalente. Os tetos vêm do planejador `render/windows.py`; se o render

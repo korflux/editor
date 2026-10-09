@@ -428,6 +428,35 @@ confere se nada mudou e só então publica `full.mp4`. Se o editor informar que 
 aprovação ficou desatualizada, não force a execução: gere uma nova preview e peça
 aprovação novamente.
 
+#### Qualidade da full (`--quality`)
+
+`render full` (e o atalho `full`) aceita `--quality standard|high|max`, padrão `standard`. A opção
+escolhe só o preset de qualidade do vídeo e existe apenas na full: a preview usa sempre `standard`
+(`render preview --quality` é recusado), e a escolha não entra no plano, no hash nem em
+`approval.json`, então a mesma aprovação vale para uma full re-renderizada com outra qualidade. O
+envelope informa o preset usado em `video.quality` e `capabilities` lista os presets e os parâmetros
+em `render.quality`. Valor fora da lista é recusado com `ARGUMENT_INVALID`, sem renderizar.
+
+| Preset | CPU (`libx264`) | GPU (`--accel gpu`, NVENC) | Uso |
+|---|---|---|---|
+| `standard` | `crf 23` | `cq 31` | padrão: conferência e entrega leve |
+| `high` | `crf 18` | `cq 22` | entrega final |
+| `max` | `crf 14` | `cq 18` | entrega final de filmagem de câmera em 2,7K ou 4K, quando o bitrate da full ficou abaixo do da fonte |
+
+`high` e `max` reduzem `crf` e `cq` pela equivalência de SSIM medida (o `cq` de cada preset acompanha o
+SSIM do `crf` do mesmo nome) e, na GPU, fixam o nível H.264 5.2: sem ele o NVENC limita a full a cerca de
+17 Mb/s e `max` sairia igual a `high`. Se o fallback trocar a GPU pela CPU, vale o `crf` do preset
+pedido. Custo medido, como **orientação** (fonte sintética exigente de 1080p30, i5-13600K e RTX 3060 Ti; o
+efeito real depende da fonte): o arquivo cresce 2,1x no `high` e 3,3x no `max` em relação ao
+`standard` na CPU (3,2x e 4,9x na GPU, onde o `standard` é menor; 4,4x no `max` da CPU com ruído leve)
+e o tempo de codificação da CPU sobe até 1,3x no `high` e 1,7x no `max` (praticamente igual na GPU).
+Depois da full, meça o bitrate com `ffprobe` e, se ainda ficar abaixo da fonte, suba o preset e avise
+o usuário do tamanho final.
+
+```text
+.venv\Scripts\python.exe -B -m editor render full --workdir "<workdir>" --quality high --json
+```
+
 ### 9. Entregar o resultado
 
 Informe ao usuário o caminho da `full.mp4`, a duração e as principais escolhas

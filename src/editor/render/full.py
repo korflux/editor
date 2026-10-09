@@ -13,16 +13,23 @@ from ..workdir import (
     publish_full_atomic,
     relative_artifact_path,
 )
-from .preview import _render_artifact, _require_renderable_canvas
+from .preview import DEFAULT_QUALITY, _quality_preset, _render_artifact, _require_renderable_canvas
 
 
-def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
+def render_full(workdir: str | Path, accel: str = "none", quality: str = DEFAULT_QUALITY) -> dict[str, Any]:
     """Revalida a aprovação e renderiza exatamente a timeline aprovada em `full.mp4`.
 
     O render em si (janelas de decode, fallback, validação e publicação) é o mesmo corpo
     da preview, `_render_artifact`; aqui ficam só a aprovação e o perfil final.
+
+    `quality` (`standard`|`high`|`max`, decisão 20) escolhe só o preset do encoder: não é conteúdo
+    editorial, então fica fora do plano, do hash e de `approval.json`, e uma full renderizada com outra
+    qualidade continua válida contra a mesma aprovação. Valor fora da allowlist é recusado antes de
+    qualquer leitura.
     """
 
+    # Allowlist na borda do núcleo, antes de ler o trabalho; a CLI já restringe por `choices`.
+    _quality_preset(quality)
     document, validation = load_validated_plan(workdir)
     layout = prepare_full_layout(workdir)
     ensure_sources_do_not_alias_output(
@@ -51,6 +58,7 @@ def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
         publish=publish_full_atomic,
         max_dimension=None,
         artifact_name="full",
+        quality=quality,
     )
 
     return {
@@ -72,6 +80,7 @@ def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
         "video": {
             "codec": metadata.video_codec,
             "accel": used_accel,
+            "quality": quality,
             "width": metadata.video_width,
             "height": metadata.video_height,
             "frame_rate": metadata.video_frame_rate,

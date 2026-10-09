@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 import math
 import os
 import tempfile
 from pathlib import Path
+from types import MappingProxyType
 from uuid import uuid4
 from typing import Any
 
@@ -35,6 +37,72 @@ ACCEL_CHOICES = ("none", "gpu")
 
 PROXY_CHOICES = ("auto", "off")
 """Valores de `--proxy` da preview (decisão 10): `auto` lê proxies válidos, `off` só originais."""
+
+
+@dataclass(frozen=True)
+class QualityPreset:
+    """Parâmetros de qualidade de um preset da full, um por encoder.
+
+    `crf` é o fator de taxa constante do `libx264` (CPU) e `cq` o do NVENC (GPU); menor é melhor.
+    `nvenc_level` fixa o nível H.264 do NVENC, ou `None` para deixar o encoder escolher.
+    """
+
+    crf: int
+    cq: int
+    nvenc_level: str | None
+
+
+QUALITY_PRESETS: Mapping[str, QualityPreset] = MappingProxyType(
+    {
+        "standard": QualityPreset(crf=23, cq=31, nvenc_level=None),
+        "high": QualityPreset(crf=18, cq=22, nvenc_level="5.2"),
+        "max": QualityPreset(crf=14, cq=18, nvenc_level="5.2"),
+    }
+)
+"""Presets de `render full --quality` (decisão 20); fonte única do encoder, da CLI e de `capabilities`.
+
+`standard` é o encoder de sempre, sem nenhum argumento novo: a full por CPU e o comando de GPU de antes
+da T9 não mudam. Os valores de `high` e `max` saem de equivalência de SSIM medida, não de palpite.
+
+Medição (fonte sintética 1080p30 de 6 s, mandelbrot + testsrc2 sem perdas; SSIM `All` do filtro `ssim`
+do FFmpeg contra a fonte; argumentos exatos de `_video_encoder_arguments`, `libx264 veryfast` e
+`h264_nvenc p3 vbr -b:v 0`, i5-13600K e RTX 3060 Ti; tempo é a mediana de 3 codificações da fonte inteira):
+
+    preset    CPU crf  SSIM    tamanho  Mb/s  tempo    GPU cq  SSIM    tamanho  Mb/s  tempo
+    standard  23       0,9773   5,7 MB   7,6  0,65 s   31      0,9682   3,9 MB   5,2  0,51 s
+    high      18       0,9899  12,2 MB  16,3  0,85 s   22      0,9900  12,5 MB  16,6  0,53 s
+    max       14       0,9946  19,1 MB  25,5  0,82 s   18      0,9945  18,9 MB  25,2  0,55 s
+
+Mesma ordem com ruído leve (`noise=alls=2`): CPU 0,9675, 0,9802 e 0,9852 (5,6, 12,3 e 24,9 MB) e GPU
+0,9589, 0,9806 e 0,9852 (3,9, 12,5 e 19,2 MB); o tempo de CPU chega a 1,7x no `max` com ruído. O `cq`
+de `high` e `max` é o que acompanha o SSIM do `crf` do mesmo nome (cq 22 = crf 18 e cq 18 = crf 14,
+com o mesmo bitrate), e crf 18 e 14 são o "visualmente sem perda" e o "quase transparente" do x264.
+Os degraus somam +3,5 dB e depois +2,7 dB de SSIM (-10 log10 (1 - SSIM)). O `standard` da GPU (`cq 31`)
+fica perto do crf 26, abaixo do `standard` da CPU nesse material: contrato herdado que a T9 não muda.
+
+O NVENC escolhe sozinho o nível 4.0 para 1080p30 e, com `-b:v 0`, o limita a ~17 Mb/s: abaixo de
+`cq 21` o arquivo parou de crescer (13,2 MB e SSIM 0,990 de `cq 21` a `cq 12`). `high` e `max` fixam o
+nível 5.2 (4K60), que remove o teto; sem isso `max` renderizaria igual a `high` na GPU.
+"""
+# ponytail: o nível 5.2 do NVENC vale para qualquer resolução, e decodificadores muito antigos podem
+# recusar nível acima do deles, derivar o menor nível da resolução e da taxa de quadros se algum
+# player de entrega recusar a full `high` ou `max` por GPU.
+
+QUALITY_CHOICES = tuple(QUALITY_PRESETS)
+"""Valores de `--quality`, na ordem crescente de qualidade (a CLI e `capabilities` leem daqui)."""
+
+DEFAULT_QUALITY = "standard"
+"""Preset usado quando `--quality` é omitido e, sempre, pela preview (que não recebe a opção)."""
+
+CPU_VIDEO_ENCODER = "libx264"
+CPU_ENCODER_PRESET = "veryfast"
+GPU_ENCODER_PRESET = "p3"
+"""Encoder e preset de velocidade de cada modo: fixos, só a qualidade varia por `QUALITY_PRESETS`.
+
+O `p3` do NVENC segue como o equilíbrio medido entre velocidade e tamanho: `p4` e `p5` no mesmo `cq`
+deram arquivos 7% a 8% menores com SSIM 0,0003 a 0,0009 abaixo, praticamente sobre a mesma curva de SSIM
+por bit, então não há ganho que justifique trocar o preset.
+"""
 
 GPU_MAX_VIDEO_INPUTS = 4
 """Teto de fontes de vídeo com decode por GPU, pois cada decoder CUDA ocupa VRAM simultaneamente."""
@@ -244,17 +312,43 @@ def _create_filter_script(
                 pass
 
 
-def _video_encoder_arguments(accel: str) -> list[str]:
-    """Parâmetros de vídeo por modo, ambos com qualidade constante e yuv420p."""
+def _quality_preset(quality: str) -> QualityPreset:
+    """Resolve o nome de `--quality` no preset, recusando o que não está na allowlist.
 
+    A mensagem é fixa e não ecoa o valor recebido. O `quality` só chega ao FFmpeg como os inteiros
+    (e o nível) de `QUALITY_PRESETS`, nunca como texto do chamador.
+    """
+
+    preset = QUALITY_PRESETS.get(quality) if isinstance(quality, str) else None
+    if preset is None:
+        raise _error(
+            "ARGUMENT_INVALID",
+            "A qualidade informada não é suportada.",
+            EXIT_CODES["ARGUMENT"],
+        )
+    return preset
+
+
+def _video_encoder_arguments(accel: str, quality: str = DEFAULT_QUALITY) -> list[str]:
+    """Parâmetros de vídeo por modo e por preset de qualidade, ambos com qualidade constante e yuv420p.
+
+    Com `standard` (preview e full sem `--quality`) o vetor é exatamente o de antes dos presets, nos
+    dois modos; os demais presets só trocam `-crf`/`-cq` e, na GPU, acrescentam o nível H.264.
+    """
+
+    preset = _quality_preset(quality)
     if accel == "gpu":
-        # cq 31 equivale em SSIM ao crf 23 do x264 (medido, 1080p); cq 23 gerava arquivo ~2x maior.
-        # p3 foi o equilíbrio medido entre velocidade e tamanho.
+        # Equivalência de SSIM e tabela medida em `QUALITY_PRESETS`; o nível só entra quando o preset
+        # o pede (o teto de ~17 Mb/s do nível automático do NVENC impediria `high` e `max`).
+        level = ["-level", preset.nvenc_level] if preset.nvenc_level is not None else []
         return [
-            "-c:v", dependencies.GPU_VIDEO_ENCODER, "-preset", "p3",
-            "-rc", "vbr", "-cq", "31", "-b:v", "0", "-pix_fmt", "yuv420p",
+            "-c:v", dependencies.GPU_VIDEO_ENCODER, "-preset", GPU_ENCODER_PRESET,
+            "-rc", "vbr", "-cq", str(preset.cq), "-b:v", "0", *level, "-pix_fmt", "yuv420p",
         ]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]
+    return [
+        "-c:v", CPU_VIDEO_ENCODER, "-preset", CPU_ENCODER_PRESET,
+        "-crf", str(preset.crf), "-pix_fmt", "yuv420p",
+    ]
 
 
 def _accel_modes(accel: str) -> list[str]:
@@ -330,12 +424,14 @@ def _build_ffmpeg_arguments(
     duration_seconds: float,
     frame_rate: float | None,
     accel: str = "cpu",
+    quality: str = DEFAULT_QUALITY,
 ) -> list[str]:
     """Monta a lista estruturada de argumentos sem interpolar caminhos em shell.
 
     Entradas com janela de decode recebem `-ss`/`-t` antes do `-i` (seek preciso de
     entrada, recuado pelo pre-roll de áudio da janela); sem janela o comando é o mesmo de
-    antes da decodificação seletiva.
+    antes da decodificação seletiva. `quality` escolhe o preset do encoder de vídeo
+    (`QUALITY_PRESETS`); o padrão `standard` mantém o comando anterior aos presets.
     """
 
     records = {str(record["id"]): record for record in source_records}
@@ -377,7 +473,7 @@ def _build_ffmpeg_arguments(
             f"[{graph.video_label}]",
             "-map_metadata",
             "-1",
-            *_video_encoder_arguments(accel),
+            *_video_encoder_arguments(accel, quality),
         ]
     )
     if frame_rate is not None:
@@ -459,11 +555,14 @@ def _render_with_fallback(
     duration_seconds: float,
     frame_rate: float | None,
     artifact_name: str = "preview",
+    quality: str = DEFAULT_QUALITY,
 ) -> tuple[FfmpegGraph, str]:
     """Renderiza na primeira tentativa que funcionar e devolve o grafo e o modo que produziram o arquivo.
 
     Cada grafo distinto (com e sem janelas) tem seu próprio script de filtro em `.tmp`,
-    criado só quando sua tentativa chega e removido ao final em qualquer desfecho.
+    criado só quando sua tentativa chega e removido ao final em qualquer desfecho. O mesmo
+    `quality` vale em todas as tentativas, inclusive no fallback da GPU para a CPU (que então
+    usa o `crf` do preset).
     """
 
     filter_scripts: dict[int, Path] = {}
@@ -479,6 +578,7 @@ def _render_with_fallback(
                 duration_seconds=duration_seconds,
                 frame_rate=frame_rate,
                 accel=accel,
+                quality=quality,
             )
             try:
                 _run_ffmpeg(arguments, duration_seconds, artifact_name)
@@ -611,6 +711,7 @@ def _render_artifact(
     max_dimension: int | None = MAX_PREVIEW_DIMENSION,
     artifact_name: str = "preview",
     read_paths: Mapping[str, Path] | None = None,
+    quality: str = DEFAULT_QUALITY,
 ) -> tuple[media.MediaMetadata, str, dict[str, Any]]:
     """Corpo único de render de preview e full: grafos, tentativas, validação e publicação atômica.
 
@@ -622,6 +723,9 @@ def _render_artifact(
     `read_paths` (id -> arquivo) troca só o `-i` dessas fontes; grafo, canvas, taxa de quadros e
     validação continuam derivados dos metadados do original validado. Só a preview informa
     proxies aqui; a full nunca passa este argumento, então sempre lê os originais (decisão 10).
+
+    `quality` é o preset do encoder de vídeo (decisão 20): só a full o recebe (`render_full`), a
+    preview usa sempre `standard`, e ele não entra no plano, na aprovação nem em nenhum hash.
     """
 
     plain = build_ffmpeg_graph(
@@ -655,6 +759,7 @@ def _render_artifact(
             duration_seconds=expected_duration,
             frame_rate=float(frame_rate) if frame_rate is not None else None,
             artifact_name=artifact_name,
+            quality=quality,
         )
         metadata = _validate_rendered_preview(
             staging,

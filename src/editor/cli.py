@@ -21,7 +21,7 @@ from .contracts import (
 from .integrity.approval import approve_workdir
 from .plan.validation import validate_plan
 from .render.full import render_full
-from .render.preview import ACCEL_CHOICES, PROXY_CHOICES, render_preview
+from .render.preview import ACCEL_CHOICES, DEFAULT_QUALITY, PROXY_CHOICES, QUALITY_CHOICES, render_preview
 from .render.proxy import build_proxies
 from .workdir import derive_source_id, init_workdir, resolve_workdir
 
@@ -77,6 +77,17 @@ def _add_accel_argument(parser: argparse.ArgumentParser) -> None:
         choices=ACCEL_CHOICES,
         default="none",
         help="aceleração do render, padrão: none (CPU); gpu usa NVIDIA e cai para CPU se falhar",
+    )
+
+
+def _add_quality_argument(parser: argparse.ArgumentParser) -> None:
+    """Registra `--quality` só na full (decisão 20); a preview não recebe a opção e usa sempre `standard`."""
+
+    parser.add_argument(
+        "--quality",
+        choices=QUALITY_CHOICES,
+        default=DEFAULT_QUALITY,
+        help="preset de qualidade do vídeo da full, padrão: standard; high e max geram arquivos maiores e mais fiéis",
     )
 
 
@@ -191,6 +202,7 @@ def register_shortcut_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_workdir_argument(full_shortcut)
     _add_accel_argument(full_shortcut)
+    _add_quality_argument(full_shortcut)
     _add_json_argument(full_shortcut)
 
 
@@ -441,6 +453,7 @@ def build_parser() -> CliArgumentParser:
     )
     full_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     _add_accel_argument(full_parser)
+    _add_quality_argument(full_parser)
     full_parser.add_argument(
         "--json",
         action="store_true",
@@ -592,7 +605,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if (args.command == "render" and args.render_command == "full") or args.command == "full":
-            result = render_full(resolve_workdir(args.workdir), accel=args.accel)
+            result = render_full(resolve_workdir(args.workdir), accel=args.accel, quality=args.quality)
             write_json(success_envelope("render full", result))
             return 0
 
