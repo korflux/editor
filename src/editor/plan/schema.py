@@ -17,6 +17,7 @@ ROOT_FIELDS = frozenset(
         "cuts",
         "layers",
         "audio_processing",
+        "captions",
     }
 )
 PLAN_SCHEMA_VERSION = 2
@@ -147,6 +148,27 @@ OUTLINE_REQUIRED_FIELDS = frozenset({"width_px"})
 OUTLINE_WIDTH_MIN = 1
 OUTLINE_WIDTH_MAX = 30
 DEFAULT_OUTLINE_COLOR = "#000000"
+
+# --- Legendas ancoradas na fala da fonte (phase 6): contrato compartilhado com capabilities ---
+CAPTIONS_FIELDS = frozenset({"style", "items"})
+CAPTION_ITEM_FIELDS = frozenset({"source_id", "in_s", "out_s", "text"})
+CAPTION_STYLE_FIELDS = frozenset({
+    "font", "size_px", "color", "align", "shadow", "outline", "x", "y", "width", "height"
+})
+MIN_CAPTION_ITEMS = 1
+MAX_CAPTION_ITEMS = 2_000
+MAX_CAPTION_TEXT_CHARS = 200
+MAX_CAPTION_DURATION_SECONDS = 30.0
+MIN_CAPTION_OCCURRENCE_SECONDS = 0.3
+CAPTION_OVERLAP_TOLERANCE_SECONDS = 0.001
+DEFAULT_CAPTION_ALIGN = "center"
+DEFAULT_CAPTION_BOXES = {
+    "16:9": {"x": 0.05, "y": 0.80, "width": 0.9, "height": 0.14},
+    "9:16": {"x": 0.05, "y": 0.62, "width": 0.9, "height": 0.14},
+    "1:1": {"x": 0.05, "y": 0.78, "width": 0.9, "height": 0.14},
+    "4:5": {"x": 0.05, "y": 0.78, "width": 0.9, "height": 0.14},
+}
+"""Caixas normalizadas; no retrato a base evita a interface de Shorts e Reels."""
 
 AUDIO_PROCESSING_FIELDS = frozenset({"normalize_loudness", "target_lufs", "limiter", "ducking"})
 LIMITER_FIELDS = frozenset({"enabled", "ceiling_dbfs"})

@@ -42,17 +42,20 @@ Esta entrega permite legendar trechos de fala com o texto escrito pelo agente, p
 
 ### T2: Validar o bloco `captions` e mapear as legendas para a timeline
 
-- [ ] T2 concluída
+- [x] T2 concluída
 - **Spec:** A2, A3 (F2, decisões 1, 4 a 9, 14)
 - **O quê:** `captions` opcional no schema v2 com allowlist de `captions`, `captions.style` e itens; validação estrutural antes de inspecionar mídia (texto, tamanhos, números, estilo reaproveitando as regras e `_validate_text_style` da camada `text` e `_validate_layer_geometry`), validação contra as fontes (existência, áudio, duração, 30 s por item, sobreposição na mesma fonte) e mapeamento pelas faixas de áudio e janelas `audio_start_s`/`audio_end_s` (decisões 4 a 6), com recusa de ocorrências sobrepostas na timeline (decisão 7). `data.captions` (`items`, `occurrences`, `unplaced`) só quando o plano declara legendas; o estilo normalizado com a caixa padrão da proporção e as ocorrências ficam num campo privado da validação para a T3. Constantes (limites, mínimo de 0,3 s, caixas padrão por proporção, tolerância de 1 ms) em `plan/schema.py`.
 - **Aceite:**
-  - [ ] Um plano com jump cut que atravessa uma fala, reordenação, gancho repetido, corte J, corte L, segmento `replace`, faixa `loop` e um item totalmente cortado produz `occurrences` iguais aos intervalos calculados à parte no teste, omite o fragmento abaixo de 0,3 s, junta ocorrências contíguas do mesmo item e lista o item cortado em `unplaced`.
-  - [ ] Cada violação de A3 é recusada com `PLAN_INVALID` e mensagem sem o valor recebido; as estruturais sem chamar o FFprobe.
-  - [ ] Um plano sem `captions` gera o envelope, o JSON canônico e o SHA-256 de antes; o canônico de um plano com `captions` inclui o bloco como escrito.
+  - [x] Um plano com jump cut que atravessa uma fala, reordenação, gancho repetido, corte J, corte L, segmento `replace`, faixa `loop` e um item totalmente cortado produz `occurrences` iguais aos intervalos calculados à parte no teste, omite o fragmento abaixo de 0,3 s, junta ocorrências contíguas do mesmo item e lista o item cortado em `unplaced`.
+  - [x] Cada violação de A3 é recusada com `PLAN_INVALID` e mensagem sem o valor recebido; as estruturais sem chamar o FFprobe.
+  - [x] Um plano sem `captions` gera o envelope, o JSON canônico e o SHA-256 de antes; o canônico de um plano com `captions` inclui o bloco como escrito.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_captions_plan tests.test_plan_validation -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_captions_plan tests.test_plan_validation -v`
 - **Deps:** nenhuma
 - **Arquivos:** `src/editor/plan/schema.py`, `src/editor/plan/validation.py`, `tests/test_captions_plan.py` (novo)
+
+- **Prova:** `.venv\Scripts\python.exe -B -m unittest tests.test_captions_plan tests.test_plan_validation -v` -> 35 testes, 22,093 s, OK, sem skips; diff sem erros.
+- **Visual:** dispensada, intervalos e recusas conferidos no envelope da CLI; render pertence à T3.
 
 ### T3: Desenhar as legendas na preview e na full
 

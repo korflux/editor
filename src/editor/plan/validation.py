@@ -23,6 +23,17 @@ from ..workdir import resolve_source_path, validate_workdir
 from .canonical import canonical_json, canonical_sha256
 from .schema import (
     ASPECT_RATIOS,
+    CAPTIONS_FIELDS,
+    CAPTION_ITEM_FIELDS,
+    CAPTION_STYLE_FIELDS,
+    MIN_CAPTION_ITEMS,
+    MAX_CAPTION_ITEMS,
+    MAX_CAPTION_TEXT_CHARS,
+    MAX_CAPTION_DURATION_SECONDS,
+    MIN_CAPTION_OCCURRENCE_SECONDS,
+    CAPTION_OVERLAP_TOLERANCE_SECONDS,
+    DEFAULT_CAPTION_ALIGN,
+    DEFAULT_CAPTION_BOXES,
     AUDIO_FIELDS,
     AUDIO_MODES,
     AUDIO_PROCESSING_FIELDS,
@@ -853,6 +864,119 @@ def _validate_layers_structure(value: Any) -> tuple[list[dict[str, Any]], dict[i
     return layers, text_styles
 
 
+def _validate_captions_structure(value: Any, aspect_ratio: str) -> dict[str, Any]:
+    """Fecha a borda das legendas sem mídia e reutiliza o contrato textual das camadas.
+
+    O portador temporário de camada só aplica geometria, fonte, tamanho, cor e efeitos já
+    existentes. Não entra no documento canônico nem na timeline de camadas. A caixa pode
+    declarar campos individuais, completados com o padrão da proporção.
+    """
+
+    captions = require_object(value, "captions")
+    reject_unknown_fields(captions, CAPTIONS_FIELDS, "captions")
+    style = require_object(captions.get("style"), "captions.style")
+    reject_unknown_fields(style, CAPTION_STYLE_FIELDS, "captions.style")
+    normalized_style = {
+        **DEFAULT_CAPTION_BOXES[aspect_ratio], **style,
+        "align": style.get("align", DEFAULT_CAPTION_ALIGN), "wrap": True,
+    }
+    carrier = {**normalized_style, "type": "text", "text": "caption", "start_s": 0, "end_s": 1}
+    try:
+        _, effects = _validate_layers_structure([carrier])
+    except CliError as error:
+        raise plan_error(error.message.replace("layers[]", "captions.style").replace("camada", "legenda")) from error
+    normalized_style.update(effects.get(0, {}))
+    items = require_array(captions.get("items"), "captions.items")
+    if not MIN_CAPTION_ITEMS <= len(items) <= MAX_CAPTION_ITEMS:
+        raise plan_error(f"O campo captions.items deve declarar de {MIN_CAPTION_ITEMS} a {MAX_CAPTION_ITEMS} itens.")
+    for value in items:
+        item = require_object(value, "captions.items[]")
+        reject_unknown_fields(item, CAPTION_ITEM_FIELDS, "captions.items[]")
+        source_id = item.get("source_id")
+        if not isinstance(source_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", source_id):
+            raise plan_error("A legenda deve referenciar uma fonte válida.")
+        start = _finite_number(item.get("in_s"), "captions.items[].in_s")
+        end = _finite_number(item.get("out_s"), "captions.items[].out_s")
+        if start < 0 or end <= start or end - start > MAX_CAPTION_DURATION_SECONDS:
+            raise plan_error("O intervalo da legenda deve ser crescente e ter no máximo 30 segundos.")
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_CAPTION_TEXT_CHARS:
+            raise plan_error("O texto da legenda deve ser não vazio e ter até 200 caracteres.")
+        _reject_nul(text, "captions.items[].text")
+    return {"style": normalized_style, "items": items}
+
+
+def _map_captions(
+    captions: dict[str, Any], source_map: dict[str, dict[str, Any]],
+    segments: list[dict[str, Any]], timeline_segments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Intersecciona fala e áudio ouvido, une ocorrências do item e recusa falas concorrentes.
+
+    J/L já estão nas janelas validadas. `out_s` da faixa pode cobrir mais que a janela:
+    o render só ouve `audio_duration_s`; loops não representam fala. A união precede o
+    mínimo legível, para fragmentos contíguos curtos formarem uma ocorrência válida.
+    """
+
+    by_source: dict[str, list[tuple[float, float, int]]] = {}
+    items = captions["items"]
+    for index, item in enumerate(items, 1):
+        source = source_map.get(item["source_id"])
+        if source is None or source["metadata"].audio_codec is None:
+            raise plan_error("A legenda deve referenciar uma fonte com áudio compatível.")
+        start, end = float(item["in_s"]), float(item["out_s"])
+        duration = source["metadata"].duration_seconds
+        if duration is None or end > duration:
+            raise plan_error("O intervalo da legenda está fora da duração da fonte.")
+        by_source.setdefault(item["source_id"], []).append((start, end, index))
+    for intervals in by_source.values():
+        intervals.sort()
+        latest_end, latest_index = -1.0, 0
+        for start, end, index in intervals:
+            if latest_end - start > CAPTION_OVERLAP_TOLERANCE_SECONDS + 1e-12:
+                raise plan_error(f"As legendas {latest_index} e {index} se sobrepõem na fonte.")
+            if end > latest_end:
+                latest_end, latest_index = end, index
+
+    occurrences: list[dict[str, Any]] = []
+    unplaced: list[int] = []
+    for index, item in enumerate(items, 1):
+        fragments: list[tuple[float, float]] = []
+        for segment, timeline in zip(segments, timeline_segments, strict=True):
+            for track in segment["audio"]["tracks"]:
+                if track["source_id"] != item["source_id"] or track.get("loop", False):
+                    continue
+                source_start = float(track["in_s"])
+                start = max(float(item["in_s"]), source_start)
+                end = min(float(item["out_s"]), source_start + float(timeline["audio_duration_s"]))
+                if end > start:
+                    offset = float(timeline["audio_start_s"]) - source_start
+                    fragments.append((start + offset, end + offset))
+        merged: list[list[float]] = []
+        # Epsilon só absorve arredondamento binário: não preenche a tolerância de 1 ms.
+        for start, end in sorted(fragments):
+            if merged and start <= merged[-1][1] + 1e-12:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        placed = [
+            {"item": index, "start_s": _rounded(start), "end_s": _rounded(end)}
+            for start, end in merged
+            if end - start + 1e-12 >= MIN_CAPTION_OCCURRENCE_SECONDS
+        ]
+        occurrences.extend(placed)
+        if not placed:
+            unplaced.append(index)
+    occurrences.sort(key=lambda occurrence: (occurrence["start_s"], occurrence["end_s"], occurrence["item"]))
+    active: list[dict[str, Any]] = []
+    for occurrence in occurrences:
+        active = [other for other in active if other["end_s"] - occurrence["start_s"] > CAPTION_OVERLAP_TOLERANCE_SECONDS + 1e-12]
+        for other in active:
+            if other["item"] != occurrence["item"]:
+                raise plan_error(f"As legendas {other['item']} e {occurrence['item']} se sobrepõem na timeline.")
+        active.append(occurrence)
+    return {"items": len(items), "occurrences": occurrences, "unplaced": unplaced}
+
+
 def _validate_plan_structure(
     document: dict[str, Any],
 ) -> tuple[
@@ -1237,7 +1361,12 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         raise plan_error(f"O plano deve usar schema_version {PLAN_SCHEMA_VERSION}.")
     aspect_ratio, max_full_width = _validate_profile(document.get("profile"))
     cut_definitions, layer_definitions, text_styles, audio_processing = _validate_plan_structure(document)
-    resolved_font_files = _resolve_layer_fonts(layer_definitions)
+    captions = (
+        _validate_captions_structure(document["captions"], aspect_ratio)
+        if "captions" in document else None
+    )
+    font_layers = layer_definitions + ([{"type": "text", **captions["style"]}] if captions else [])
+    resolved_font_files = _resolve_layer_fonts(font_layers)
     source_map, source_records = _inspect_sources(root, document.get("sources"))
     timeline_segments, timeline_duration = _validate_segments(
         document.get("segments"),
@@ -1247,7 +1376,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
     )
     _validate_layer_intervals(layer_definitions, timeline_duration, source_map)
     profile = _calculated_profile(aspect_ratio, max_full_width, source_records, timeline_segments)
-    return {
+    result = {
         "plan_path": str(plan_path),
         "relative_plan_path": "plan.json",
         "schema_version": PLAN_SCHEMA_VERSION,
@@ -1269,6 +1398,15 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
             "segments": timeline_segments,
         },
     }
+
+    if captions is not None:
+        mapped = _map_captions(captions, source_map, document["segments"], timeline_segments)
+        result["captions"] = mapped
+        # Contrato privado para o grafo: style completo com wrap=True e efeitos normalizados;
+        # items na ordem do plano (índice público base 1), occurrences com tempos de timeline.
+        # font é resolvido no mapa compartilhado _resolved_font_files; documento/hash intactos.
+        result["_captions"] = {**captions, "occurrences": mapped["occurrences"]}
+    return result
 
 
 def load_validated_plan(workdir: str | Path) -> tuple[dict[str, Any], dict[str, Any]]:
