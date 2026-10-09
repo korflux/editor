@@ -49,16 +49,19 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
 
 ### T2: Aprovar e liberar a full sem `preview.mp4` (aprovação v2)
 
-- [ ] T2 concluída
+- [x] T2 concluída
 - **Spec:** A10, parte de C4 (suposições 10 e 11; F8 passos 5 a 7)
 - **O quê:** o `approval.json` passa para `schema_version` 2, com `approved_at`, `plan_sha256` e `sources`. `editor approve` deixa de exigir preview, e `render full` verifica só plano e fontes. Registro v1 vira `APPROVAL_STALE`. Os envelopes de `approve` e `render full` perdem `preview_sha256`. O núcleo de aprovação ganha a forma condicionada que o servidor vai usar: recebe o `plan_sha256` esperado e a impressão das fontes (tamanho e `mtime_ns`) do carregamento, e recusa com `APPROVAL_PLAN_CHANGED`, sem gravar, se algum divergir; depois de calcular os SHA-256 das fontes, confere a impressão de novo, para não gravar o hash de uma fonte trocada durante o cálculo. A impressão é comparada pela `sources_fingerprint` (SHA-256 da lista canônica de `source_id`, tamanho e `mtime_ns`), a mesma que o estado da T3 expõe. `render preview` segue igual e sem efeito na aprovação. Fixtures e jornadas E2E existentes são ajustadas ao contrato novo.
 - **Aceite:**
-  - [ ] `approve` publica v2 sem preview no trabalho; `render full` aceita v2 e recusa v1, plano alterado e fonte alterada com `APPROVAL_STALE`, preservando a full vigente.
-  - [ ] A aprovação condicionada recusa hash divergente e impressão divergente (antes e depois do cálculo dos SHA-256) com `APPROVAL_PLAN_CHANGED`, sem criar nem alterar `approval.json`.
-  - [ ] `render preview` funciona e não altera a aprovação.
+  - [x] `approve` publica v2 sem preview no trabalho; `render full` aceita v2 e recusa v1, plano alterado e fonte alterada com `APPROVAL_STALE`, preservando a full vigente.
+  - [x] A aprovação condicionada recusa hash divergente e impressão divergente (antes e depois do cálculo dos SHA-256) com `APPROVAL_PLAN_CHANGED`, sem criar nem alterar `approval.json`.
+  - [x] `render preview` funciona e não altera a aprovação.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_approval tests.test_full_render tests.test_render_quality tests.test_preview_proxy tests.test_cli_contract tests.test_hevc_sources tests.e2e.test_mvp_flow tests.e2e.test_phase_2_flow tests.e2e.test_phase_5_flow -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_approval tests.test_full_render tests.test_render_quality tests.test_preview_proxy tests.test_cli_contract tests.test_hevc_sources tests.e2e.test_mvp_flow tests.e2e.test_phase_2_flow tests.e2e.test_phase_5_flow -v`
 - **Deps:** nenhuma
+- **Prova:** verificação da T2 -> 94 testes OK; suíte completa `unittest discover -s tests` -> 380 testes OK.
+- **API para T3/T6:** `editor.integrity.approval.sources_fingerprint(validation) -> str` (SHA-256 da lista canônica `source_id`, `size_bytes`, `mtime_ns` lida por `os.stat`; `SOURCE_INVALID` se ilegível) e `approve_workdir_if_unchanged(workdir, expected_plan_sha256, expected_sources_fingerprint)` (recusa `APPROVAL_PLAN_CHANGED`, exit 5, sem gravar). `contracts.py` não mudou: os códigos nascem no `CliError`.
+- **Notas:** ajustados também `tests/e2e/test_phase_1_flow.py` (mutação da preview deixou de bloquear a full, por A10) e `tests/test_preview_proxy.py` (asserção de `preview_sha256`). `tests/fixtures/workflow/preview.mp4` permanece no fixture, sem uso obrigatório. `ponytail` no código: a impressão por tamanho e `mtime_ns` não detecta troca que preserve os dois; o SHA-256 da aprovação cobre o conteúdo.
 - **Decisões:** APPROVAL-01 (substitui o vínculo da aprovação com a preview)
 - **Arquivos:** `src/editor/integrity/approval.py`, `src/editor/render/full.py`, `src/editor/cli.py` (só `approve`), `src/editor/contracts.py` (código novo, se necessário), `tests/test_approval.py`, `tests/test_full_render.py`, `tests/fixtures/workflow/`, `tests/e2e/`
 - **Risco:** é a quebra de contrato da phase. A versão 2.0.0 só é publicada na T7, junto com a documentação.

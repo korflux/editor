@@ -1,16 +1,29 @@
-"""Registro atômico da aprovação de um plano e de sua preview vigente."""
+"""Registro atômico da aprovação v2 (plano e fontes), sua forma condicionada e sua verificação.
+
+A aprovação vincula o hash canônico do plano e o SHA-256 de cada fonte declarada. Ela não olha
+`preview.mp4`: a preview é só uma exportação opcional e nunca decide se a full pode ser gerada.
+
+Pontos de entrada:
+- `approve_workdir`: caminho da CLI, aprova o estado atual do trabalho;
+- `approve_workdir_if_unchanged`: caminho do servidor da interface, aprova só a versão que o
+  operador viu, recusando com `APPROVAL_PLAN_CHANGED` se plano ou fontes mudaram desde o carregamento;
+- `sources_fingerprint`: impressão leve das fontes, fonte única para o estado exibido e para a recusa;
+- `verify_approval`: barreira da full, recalcula os hashes e libera ou recusa com `APPROVAL_STALE`.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any
 
 from ..contracts import CliError, EXIT_CODES, reject_duplicate_json_keys
 from ..dependencies import is_regular_path
+from ..plan.canonical import canonical_sha256
 from ..plan.validation import load_validated_plan
 from ..workdir import (
     prepare_approval_layout,
@@ -22,11 +35,12 @@ from .hashes import sha256_file
 
 MAX_APPROVAL_BYTES = 64 * 1024
 """Limite suficiente para o registro local e para impedir payloads arbitrários."""
+APPROVAL_SCHEMA_VERSION = 2
+"""Versão do `approval.json`: a v1 (que vinculava `preview_sha256`) é tratada como obsoleta."""
 _APPROVAL_FIELDS = {
     "schema_version",
     "approved_at",
     "plan_sha256",
-    "preview_sha256",
     "sources",
 }
 _SOURCE_APPROVAL_FIELDS = {"source_id", "sha256"}
@@ -88,6 +102,49 @@ def _hash_sources(validation: dict[str, Any]) -> list[dict[str, str]]:
     return source_hashes
 
 
+def sources_fingerprint(validation: Mapping[str, Any]) -> str:
+    """Impressão leve das fontes do plano validado: SHA-256 da lista canônica de tamanho e `mtime_ns`.
+
+    É a fonte única da impressão: o estado exibido pela interface a entrega no carregamento e a
+    aprovação condicionada a recalcula (por esta mesma função) para detectar fonte trocada sem
+    ler a mídia inteira. A lista segue a ordem do plano, com `source_id`, `size_bytes` e `mtime_ns`
+    lidos do arquivo no momento da chamada, não do que a validação sondou antes.
+
+    ponytail: tamanho e `mtime_ns` não detectam uma troca que preserve os dois, usar hash parcial
+    do conteúdo na impressão se esse caso aparecer; o SHA-256 completo gravado na aprovação e
+    conferido pela full continua cobrindo a identidade do conteúdo.
+    """
+
+    entries: list[dict[str, Any]] = []
+    for source in validation["sources"]:
+        try:
+            metadata = os.stat(Path(str(source["path"])))
+        except OSError as error:
+            raise _error(
+                "SOURCE_INVALID",
+                "Não foi possível ler uma fonte do plano para aprovação.",
+                EXIT_CODES["MEDIA"],
+            ) from error
+        entries.append(
+            {
+                "source_id": str(source["id"]),
+                "size_bytes": metadata.st_size,
+                "mtime_ns": metadata.st_mtime_ns,
+            }
+        )
+    return canonical_sha256(entries)
+
+
+def _plan_changed() -> CliError:
+    """Recusa pública da aprovação condicionada, usada quando a versão exibida deixou de ser a atual."""
+
+    return _error(
+        "APPROVAL_PLAN_CHANGED",
+        "O plano mudou desde que foi carregado. Revise a versão atual antes de aprovar.",
+        EXIT_CODES["STATE"],
+    )
+
+
 def _approval_stale(message: str) -> CliError:
     """Cria o erro único usado quando a aprovação não autoriza mais o trabalho atual."""
 
@@ -108,7 +165,7 @@ def _validate_sha256(value: object, field: str) -> None:
 
 
 def _read_approval(path: Path) -> dict[str, Any]:
-    """Lê e valida estruturalmente o approval.json antes de comparar seus hashes."""
+    """Lê e valida estruturalmente o approval.json v2 antes de comparar seus hashes."""
 
     if not path.exists():
         raise _error(
@@ -131,10 +188,17 @@ def _read_approval(path: Path) -> dict[str, Any]:
     except (OSError, UnicodeError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise _approval_stale("O registro de aprovação não contém JSON válido.") from error
 
-    if not isinstance(payload, dict) or set(payload) != _APPROVAL_FIELDS:
+    if not isinstance(payload, dict):
         raise _approval_stale("O registro de aprovação não possui o schema esperado.")
-    if isinstance(payload.get("schema_version"), bool) or payload.get("schema_version") != 1:
-        raise _approval_stale("O registro de aprovação usa uma versão incompatível.")
+    # A versão vem antes dos campos: um registro v1 (com `preview_sha256`) deve dizer que é obsoleto
+    # e pedir nova aprovação, em vez de parecer apenas malformado.
+    if (
+        isinstance(payload.get("schema_version"), bool)
+        or payload.get("schema_version") != APPROVAL_SCHEMA_VERSION
+    ):
+        raise _approval_stale("O registro de aprovação usa uma versão obsoleta. Aprove o plano novamente.")
+    if set(payload) != _APPROVAL_FIELDS:
+        raise _approval_stale("O registro de aprovação não possui o schema esperado.")
 
     approved_at = payload.get("approved_at")
     if not isinstance(approved_at, str) or len(approved_at) > 64:
@@ -147,7 +211,6 @@ def _read_approval(path: Path) -> dict[str, Any]:
         raise _approval_stale("O instante da aprovação deve estar em UTC.")
 
     _validate_sha256(payload.get("plan_sha256"), "plan_sha256")
-    _validate_sha256(payload.get("preview_sha256"), "preview_sha256")
     sources = payload.get("sources")
     if not isinstance(sources, list):
         raise _approval_stale("A lista de fontes da aprovação é inválida.")
@@ -164,16 +227,17 @@ def verify_approval(
     workdir: str | Path,
     validation: dict[str, Any],
 ) -> dict[str, Any]:
-    """Recalcula plano, preview e fontes e libera a full somente com hashes coincidentes."""
+    """Recalcula plano e fontes e libera a full somente com hashes coincidentes.
+
+    Não consulta `preview.mp4`: a aprovação v2 vincula só o plano e as fontes. Qualquer divergência,
+    registro v1 ou registro corrompido vira `APPROVAL_STALE`; a ausência do arquivo é
+    `APPROVAL_REQUIRED`.
+    """
 
     layout = prepare_approval_layout(workdir)
     approval = _read_approval(layout.destination)
-    preview_path = layout.root / "preview.mp4"
-    if not is_regular_path(preview_path):
-        raise _approval_stale("A preview vinculada à aprovação não está disponível.")
 
     try:
-        preview_sha256 = sha256_file(preview_path)
         source_hashes = _hash_sources(validation)
     except (CliError, OSError) as error:
         raise _approval_stale(
@@ -182,44 +246,43 @@ def verify_approval(
 
     if (
         approval["plan_sha256"] != validation["plan_sha256"]
-        or approval["preview_sha256"] != preview_sha256
         or approval["sources"] != source_hashes
     ):
         raise _approval_stale(
-            "A aprovação não corresponde ao plano, à preview ou às fontes atuais."
+            "A aprovação não corresponde ao plano ou às fontes atuais."
         )
     return approval
 
 
-def approve_workdir(workdir: str | Path) -> dict[str, Any]:
-    """Valida o plano, exige uma preview regular e publica a aprovação vinculada aos hashes."""
+def _approve(workdir: str | Path, expected: tuple[str, str] | None) -> dict[str, Any]:
+    """Valida o plano, calcula os hashes das fontes e publica `approval.json` v2 atomicamente.
+
+    `expected` é `(plan_sha256, sources_fingerprint)` da versão que o chamador exibiu, ou `None` para
+    aprovar o estado atual sem condição. Com `expected`, a divergência de qualquer um dos dois é
+    recusada com `APPROVAL_PLAN_CHANGED` antes de gravar. A impressão é conferida duas vezes: antes
+    do cálculo dos SHA-256 (recusa barata) e depois dele, porque o cálculo lê as fontes por
+    inteiro e uma troca nesse intervalo gravaria o hash de uma fonte que o operador não viu.
+    """
 
     _, validation = load_validated_plan(workdir)
     layout = prepare_approval_layout(workdir)
-    preview_path = layout.root / "preview.mp4"
-    if not is_regular_path(preview_path):
-        raise _error(
-            "APPROVAL_REQUIRED",
-            "Uma preview publicada é necessária antes da aprovação.",
-            EXIT_CODES["STATE"],
-        )
-
-    try:
-        preview_sha256 = sha256_file(preview_path)
-    except OSError as error:
-        raise _error(
-            "APPROVAL_REQUIRED",
-            "A preview publicada não pôde ser lida para aprovação.",
-            EXIT_CODES["STATE"],
-        ) from error
+    if expected is not None:
+        expected_plan_sha256, expected_fingerprint = expected
+        if (
+            validation["plan_sha256"] != expected_plan_sha256
+            or sources_fingerprint(validation) != expected_fingerprint
+        ):
+            raise _plan_changed()
 
     approved_at = _approved_at()
     source_hashes = _hash_sources(validation)
+    if expected is not None and sources_fingerprint(validation) != expected[1]:
+        raise _plan_changed()
+
     document = {
-        "schema_version": 1,
+        "schema_version": APPROVAL_SCHEMA_VERSION,
         "approved_at": approved_at,
         "plan_sha256": str(validation["plan_sha256"]),
-        "preview_sha256": preview_sha256,
         "sources": source_hashes,
     }
     publish_approval_atomic(layout, _serialize_approval(document))
@@ -228,6 +291,27 @@ def approve_workdir(workdir: str | Path) -> dict[str, Any]:
         "relative_artifact_path": relative_artifact_path(layout),
         "approved_at": approved_at,
         "plan_sha256": document["plan_sha256"],
-        "preview_sha256": preview_sha256,
         "sources": source_hashes,
     }
+
+
+def approve_workdir(workdir: str | Path) -> dict[str, Any]:
+    """Caminho da CLI: valida o plano atual e publica a aprovação v2, sem exigir preview."""
+
+    return _approve(workdir, None)
+
+
+def approve_workdir_if_unchanged(
+    workdir: str | Path,
+    expected_plan_sha256: str,
+    expected_sources_fingerprint: str,
+) -> dict[str, Any]:
+    """Caminho do servidor da interface: aprova só a versão exibida ao operador.
+
+    Recusa com `APPROVAL_PLAN_CHANGED`, sem criar nem alterar `approval.json`, se o hash canônico do
+    plano ou a `sources_fingerprint` atuais diferirem dos informados (checados antes e depois do
+    cálculo dos SHA-256 das fontes). Plano inválido propaga `PLAN_INVALID`; fonte ilegível,
+    `SOURCE_INVALID`.
+    """
+
+    return _approve(workdir, (expected_plan_sha256, expected_sources_fingerprint))

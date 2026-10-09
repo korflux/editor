@@ -113,8 +113,8 @@ def configure_cut_workflow(workdir: Path) -> None:
     (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
 
 
-def approve_workflow(workdir: Path) -> None:
-    """Gera preview e aprovação antes de iniciar uma prova de renderização final."""
+def render_preview(workdir: Path) -> None:
+    """Gera a preview, exportação opcional que não participa da aprovação nem da full."""
 
     preview = run_module(
         "render",
@@ -125,6 +125,11 @@ def approve_workflow(workdir: Path) -> None:
     )
     if preview.returncode != 0:
         raise AssertionError(f"preview não publicada: {preview.stderr}\n{preview.stdout}")
+
+
+def approve_workflow(workdir: Path) -> None:
+    """Publica a aprovação v2 antes de uma prova de renderização final, sem preview no trabalho."""
+
     approval = run_module(
         "approve",
         "--workdir",
@@ -153,6 +158,7 @@ class FullRenderTests(unittest.TestCase):
         with workspace_tempdir() as workdir:
             copy_workflow(workdir)
             approve_workflow(workdir)
+            self.assertFalse((workdir / "preview.mp4").exists())
             plan_before = (workdir / "plan.json").read_bytes()
             approval_before = (workdir / "approval.json").read_bytes()
             sources_before = {
@@ -173,6 +179,10 @@ class FullRenderTests(unittest.TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["command"], "render full")
             self.assertEqual(payload["data"]["timeline_duration_seconds"], 2.0)
+            self.assertEqual(
+                set(payload["data"]["approval"]), {"approved_at", "plan_sha256"}
+            )
+            self.assertEqual(payload["data"]["approval"]["plan_sha256"], payload["data"]["plan_sha256"])
             self.assertEqual(payload["data"]["video"]["max_dimension"], 320)
             self.assertEqual(payload["data"]["profile"]["max_full_width"], 1920)
             self.assertEqual(payload["data"]["profile"]["effective_full_width"], 320)
@@ -195,6 +205,8 @@ class FullRenderTests(unittest.TestCase):
                 sources_before,
             )
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+            # A full sai sem que a preview exista em nenhum momento do trabalho.
+            self.assertFalse((workdir / "preview.mp4").exists())
 
     def test_explicit_max_full_width_limits_only_full_without_upscaling(self) -> None:
         """Renderiza teto explícito e confirma que preview e fonte menor não são ampliadas."""
@@ -205,6 +217,7 @@ class FullRenderTests(unittest.TestCase):
             document["profile"]["max_full_width"] = 160
             (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
             approve_workflow(workdir)
+            render_preview(workdir)
 
             preview_metadata = inspect_source(
                 workdir / "preview.mp4", require_audio=True, require_video=True
@@ -423,12 +436,11 @@ class FullRenderTests(unittest.TestCase):
             )
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
-    def test_separate_plan_preview_and_source_mutations_make_approval_stale(self) -> None:
-        """Confirma que qualquer mutação isolada bloqueia a full e preserva a saída vigente."""
+    def test_separate_plan_and_source_mutations_make_approval_stale(self) -> None:
+        """Confirma que mutar o plano ou uma fonte bloqueia a full e preserva a saída vigente."""
 
         mutations: dict[str, Callable[[Path], None]] = {
             "plan": self._mutate_plan,
-            "preview": self._mutate_preview,
             "source": self._mutate_source,
         }
         for name, mutation in mutations.items():
@@ -456,6 +468,53 @@ class FullRenderTests(unittest.TestCase):
                     self.assertEqual((workdir / "full.mp4").read_bytes(), previous_full)
                     self.assertEqual((workdir / "approval.json").read_bytes(), approval_before)
                     self.assertEqual(list((workdir / ".tmp").iterdir()), [])
+
+    def test_preview_never_gates_or_stales_the_approval(self) -> None:
+        """Confirma que preview gerada, alterada ou apagada não muda a decisão da full."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            approve_workflow(workdir)
+            approval_before = (workdir / "approval.json").read_bytes()
+
+            render_preview(workdir)
+            preview_path = workdir / "preview.mp4"
+            preview_path.write_bytes(preview_path.read_bytes() + b"stale")
+
+            altered = run_module("render", "full", "--workdir", str(workdir.resolve()), "--json")
+            self.assertEqual(altered.returncode, 0, altered.stderr)
+
+            preview_path.unlink()
+            removed = run_module("render", "full", "--workdir", str(workdir.resolve()), "--json")
+            self.assertEqual(removed.returncode, 0, removed.stderr)
+            self.assertEqual((workdir / "approval.json").read_bytes(), approval_before)
+
+    def test_v1_approval_is_stale_even_when_its_hashes_match(self) -> None:
+        """Confirma que um registro v1 (com `preview_sha256`) é obsoleto e preserva a full vigente."""
+
+        with workspace_tempdir() as workdir:
+            copy_workflow(workdir)
+            render_preview(workdir)
+            approve_workflow(workdir)
+            previous_full = b"previous-full"
+            (workdir / "full.mp4").write_bytes(previous_full)
+            # Reproduz o contrato antigo com hashes ainda coincidentes: só a versão a torna obsoleta.
+            document = json.loads((workdir / "approval.json").read_text(encoding="utf-8"))
+            document["schema_version"] = 1
+            document["preview_sha256"] = hashlib.sha256((workdir / "preview.mp4").read_bytes()).hexdigest()
+            (workdir / "approval.json").write_text(json.dumps(document), encoding="utf-8")
+            approval_before = (workdir / "approval.json").read_bytes()
+
+            result = run_module("render", "full", "--workdir", str(workdir.resolve()), "--json")
+            payload = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 5)
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(payload["error"]["code"], "APPROVAL_STALE")
+            self.assertIn("obsoleta", payload["error"]["message"])
+            self.assertEqual((workdir / "full.mp4").read_bytes(), previous_full)
+            self.assertEqual((workdir / "approval.json").read_bytes(), approval_before)
+            self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
     def test_invalid_approval_is_stale_without_rendering(self) -> None:
         """Confirma que approval.json corrompido não libera uma renderização final."""
@@ -584,13 +643,6 @@ class FullRenderTests(unittest.TestCase):
         document = json.loads((workdir / "plan.json").read_text(encoding="utf-8"))
         document["segments"][0]["audio"]["tracks"][0]["gain_db"] = -1
         (workdir / "plan.json").write_text(json.dumps(document), encoding="utf-8")
-
-    @staticmethod
-    def _mutate_preview(workdir: Path) -> None:
-        """Muda os bytes da preview vigente sem alterar o registro de aprovação."""
-
-        preview_path = workdir / "preview.mp4"
-        preview_path.write_bytes(preview_path.read_bytes() + b"stale")
 
     @staticmethod
     def _mutate_source(workdir: Path) -> None:

@@ -309,7 +309,14 @@ class MvpFlowTests(unittest.TestCase):
             )
             self.assertEqual(full["data"]["plan_sha256"], approval_document["plan_sha256"])
             self.assertEqual(full["data"]["timeline_duration_seconds"], preview["data"]["timeline_duration_seconds"])
-            self.assertEqual(full["data"]["approval"]["preview_sha256"], approval_document["preview_sha256"])
+            self.assertEqual(
+                set(approval_document), {"schema_version", "approved_at", "plan_sha256", "sources"}
+            )
+            self.assertEqual(approval_document["schema_version"], 2)
+            self.assertEqual(
+                full["data"]["approval"],
+                {"approved_at": approval_document["approved_at"], "plan_sha256": approval_document["plan_sha256"]},
+            )
             self.assertEqual(source_hashes(working_sources), initial_working_hashes)
             self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 

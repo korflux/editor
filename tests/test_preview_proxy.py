@@ -20,7 +20,6 @@ from uuid import uuid4
 from editor import dependencies, process
 from editor.contracts import CliError
 from editor.integrity.approval import approve_workdir
-from editor.integrity.hashes import sha256_file
 from editor.render.full import render_full
 from editor.render.preview import render_preview
 from tests.test_proxy_build import make_source, run_module, touch_source, write_plan
@@ -148,10 +147,10 @@ class PreviewProxyTests(unittest.TestCase):
                 self.assertEqual(proxied["preview"]["video"][key], plain["preview"]["video"][key])
             self.assertEqual((plain["preview"]["video"]["width"], plain["preview"]["video"]["height"]), (704, 396))
 
-            # Aprovação: plano e originais idênticos; preview_sha256 é o hash real da preview vigente.
-            for name, result in (("plain", plain), ("proxy", proxied)):
-                workdir = plain_dir if name == "plain" else proxy_dir
-                self.assertEqual(result["approval"]["preview_sha256"], sha256_file(workdir / "preview.mp4"))
+            # Aprovação v2: plano e originais idênticos; a preview (com ou sem proxy) não entra no registro.
+            for result in (plain, proxied):
+                self.assertEqual(result["approval"]["schema_version"], 2)
+                self.assertNotIn("preview_sha256", result["approval"])
             self.assertEqual(proxied["approval"]["plan_sha256"], plain["approval"]["plan_sha256"])
             self.assertEqual(proxied["approval"]["sources"], plain["approval"]["sources"])
 

@@ -256,12 +256,13 @@ class PhaseFiveFlowTests(unittest.TestCase):
             self.assertAlmostEqual(preview_metadata.duration_seconds, TIMELINE_DURATION_S, delta=0.3)
             self.assertEqual(tmp_entries(workdir), [])
 
-            # --- Aprovação: vincula plano, preview e o ORIGINAL (nunca o proxy) por SHA-256.
+            # --- Aprovação v2: vincula plano e o ORIGINAL (nunca o proxy) por SHA-256, sem a preview.
             assert_json_success(self, run_cli("approve", "--workdir", workdir_argument, "--json"), "approve")
             approval_path = workdir / "approval.json"
             approval = json.loads(approval_path.read_text(encoding="utf-8"))
             self.assertEqual(approval["plan_sha256"], plan_sha256)
-            self.assertEqual(approval["preview_sha256"], sha256_file(workdir / "preview.mp4"))
+            self.assertEqual(approval["schema_version"], 2)
+            self.assertNotIn("preview_sha256", approval)
             self.assertEqual(approval["sources"], [{"source_id": SOURCE_ID, "sha256": original_source_hash}])
             self.assertNotEqual(sha256_file(proxy_video), original_source_hash)
             self.assertNotIn(sha256_file(proxy_video), approval_path.read_text(encoding="utf-8"))
@@ -292,7 +293,10 @@ class PhaseFiveFlowTests(unittest.TestCase):
                 self, run_cli("render", "full", "--workdir", workdir_argument, "--json"), "render full"
             )
             self.assertEqual(full["data"]["plan_sha256"], plan_sha256)
-            self.assertEqual(full["data"]["approval"]["preview_sha256"], approval["preview_sha256"])
+            self.assertEqual(
+                full["data"]["approval"],
+                {"approved_at": approval["approved_at"], "plan_sha256": approval["plan_sha256"]},
+            )
             self.assertEqual(full["data"]["decode"], {"windowed": True, "inputs": 2, "sources": [SOURCE_ID]})
             self.assertNotIn("proxy", full["data"])
             self.assertEqual((full["data"]["video"]["width"], full["data"]["video"]["height"]), FULL_SIZE)

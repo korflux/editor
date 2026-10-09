@@ -335,8 +335,9 @@ class PhaseOneFlowTests(unittest.TestCase):
             )
 
             # Cada mutação é isolada para provar que a aprovação vigente nunca é reutilizada indevidamente.
+            # A preview não entra na aprovação v2: alterá-la não bloqueia a full (provado em
+            # tests/test_full_render.py), então ela não está entre os alvos.
             original_plan = plan_path.read_bytes()
-            original_preview = preview_path.read_bytes()
             original_approval = approval_path.read_bytes()
             original_full = full_path.read_bytes()
             original_sources = {
@@ -344,7 +345,6 @@ class PhaseOneFlowTests(unittest.TestCase):
             }
             mutation_targets = (
                 ("plan", plan_path),
-                ("preview", preview_path),
                 ("video", source_dir / "layer.mp4"),
                 ("audio", source_dir / "music.mp3"),
                 ("image", source_dir / "alpha.png"),
@@ -355,8 +355,6 @@ class PhaseOneFlowTests(unittest.TestCase):
                         mutated_document = json.loads(original_plan.decode("utf-8"))
                         mutated_document["layers"][0]["x"] = 0.11
                         target.write_text(json.dumps(mutated_document), encoding="utf-8")
-                    elif kind == "preview":
-                        target.write_bytes(original_preview + b"mutation")
                     else:
                         target.write_bytes(original_sources[target] + b"mutation")
 
@@ -370,11 +368,7 @@ class PhaseOneFlowTests(unittest.TestCase):
                     self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
                     target.write_bytes(
-                        original_plan
-                        if kind == "plan"
-                        else original_preview
-                        if kind == "preview"
-                        else original_sources[target]
+                        original_plan if kind == "plan" else original_sources[target]
                     )
 
             self.assertEqual(

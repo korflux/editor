@@ -17,7 +17,7 @@ from .preview import DEFAULT_QUALITY, _quality_preset, _render_artifact, _requir
 
 
 def render_full(workdir: str | Path, accel: str = "none", quality: str = DEFAULT_QUALITY) -> dict[str, Any]:
-    """Revalida a aprovação e renderiza exatamente a timeline aprovada em `full.mp4`.
+    """Revalida a aprovação (plano e fontes, sem olhar a preview) e renderiza a timeline aprovada em `full.mp4`.
 
     O render em si (janelas de decode, fallback, validação e publicação) é o mesmo corpo
     da preview, `_render_artifact`; aqui ficam só a aprovação e o perfil final.
@@ -70,7 +70,6 @@ def render_full(workdir: str | Path, accel: str = "none", quality: str = DEFAULT
         "approval": {
             "approved_at": approval["approved_at"],
             "plan_sha256": approval["plan_sha256"],
-            "preview_sha256": approval["preview_sha256"],
         },
         "source_count": validation["source_count"],
         "segment_count": validation["segment_count"],

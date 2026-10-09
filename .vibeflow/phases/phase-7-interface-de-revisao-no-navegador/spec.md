@@ -228,7 +228,7 @@ O operador revisa a montagem que a IA cria e altera por CLI numa interface no na
 - [ ] A7: no modo Fonte, cada fonte de vídeo e áudio toca inteira, com usados e descartados na barra iguais aos intervalos do plano; "Ver fonte" e Alt+clique levam entre montagem e fonte nos tempos corretos.
 - [ ] A8: "Copiar para IA" coloca na área de transferência o bloco de F7 com hash, timecodes, segundos, segmentos, camadas e legendas corretos para a seleção, sem caminho absoluto nem token.
 - [ ] A9: o botão aprova a versão exibida e grava `approval.json` v2 (sem `preview_sha256`); com o plano ou uma fonte alterados depois do carregamento, recusa com `APPROVAL_PLAN_CHANGED` sem gravar; o selo mostra aprovado e, após nova alteração, desatualizado.
-- [ ] A10: `editor approve` funciona sem `preview.mp4`; `render full` aceita a aprovação v2 sem preview e recusa v1, mutação de plano e mutação de fonte com `APPROVAL_STALE`, preservando a full vigente; `render preview` continua funcionando e não afeta a aprovação.
+- [x] A10: `editor approve` funciona sem `preview.mp4`; `render full` aceita a aprovação v2 sem preview e recusa v1, mutação de plano e mutação de fonte com `APPROVAL_STALE`, preservando a full vigente; `render preview` continua funcionando e não afeta a aprovação.
 - [ ] A11: `capabilities` expõe `operations.ui` (comandos, resoluções, limites de sessão e de inatividade) e o contrato de aprovação v2, lidos das constantes; skill `vibe-editor`, suas referências e `AGENTS.md` descrevem o fluxo ui start → revisão → aprovação → full sem contradizer o código.
 
 ### Critérios de sucesso

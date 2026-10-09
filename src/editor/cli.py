@@ -412,8 +412,8 @@ def build_parser() -> CliArgumentParser:
     )
     approve_parser = subparsers.add_parser(
         "approve",
-        help="registra aprovação do plano e da preview por hash",
-        description="valida o plano e publica approval.json com hashes locais",
+        help="registra a aprovação do plano e das fontes por hash",
+        description="valida o plano e publica approval.json (v2, sem preview) com os hashes do plano e das fontes",
     )
     approve_parser.add_argument("--workdir", required=False, default=None, help="diretório absoluto do trabalho (padrão: diretório atual)")
     approve_parser.add_argument(

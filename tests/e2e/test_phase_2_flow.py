@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 import unittest
@@ -33,13 +32,6 @@ TEXT_LAYERS = 15
 IMAGE_LAYERS = 14
 VIDEO_LAYERS = 14
 TIMELINE_DURATION_S = round(SEGMENT_COUNT * SEGMENT_DURATION_S, 6)
-
-
-def sha256_file(path: Path) -> str:
-    """Calcula o hash de um artefato em blocos para vincular aprovação e render."""
-
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def copy_scale_fixture(workdir: Path) -> None:
@@ -237,10 +229,8 @@ class PhaseTwoFlowTests(unittest.TestCase):
             approval_document = json.loads((workdir / "approval.json").read_text(encoding="utf-8"))
             self.assertEqual(approval_document["plan_sha256"], plan["data"]["plan_sha256"])
             self.assertEqual(len(approval_document["sources"]), 69)
-            self.assertEqual(
-                approval_document["preview_sha256"],
-                sha256_file(workdir / "preview.mp4"),
-            )
+            self.assertEqual(approval_document["schema_version"], 2)
+            self.assertNotIn("preview_sha256", approval_document)
 
             full = assert_json_success(
                 self,
@@ -250,8 +240,8 @@ class PhaseTwoFlowTests(unittest.TestCase):
             self.assertEqual(full["data"]["timeline_duration_seconds"], TIMELINE_DURATION_S)
             self.assertEqual(full["data"]["plan_sha256"], approval_document["plan_sha256"])
             self.assertEqual(
-                full["data"]["approval"]["preview_sha256"],
-                approval_document["preview_sha256"],
+                full["data"]["approval"],
+                {"approved_at": approval_document["approved_at"], "plan_sha256": approval_document["plan_sha256"]},
             )
             self.assertEqual(full["data"]["video"]["width"], 320)
             self.assertEqual(full["data"]["video"]["height"], 180)
