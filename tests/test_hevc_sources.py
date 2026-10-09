@@ -690,6 +690,13 @@ class HevcSourceJourneyTests(HevcFixtureCase):
                 (proxy["codec_name"], proxy["pix_fmt"], proxy["width"], proxy["height"]),
                 ("h264", "yuv420p", 1280, 720),
             )
+            # R8: o proxy só leva vídeo e áudio. A fonte tem trilhas `tmcd` (o `-timecode` do gerador) que o
+            # muxer recriaria no proxy, como terceiro stream, sem o `-write_tmcd 0` do `proxy build`.
+            self.assertTrue(any(item["codec_type"] == "data" for item in probe_streams(source)))
+            self.assertEqual(
+                [item["codec_type"] for item in probe_streams(workdir / "proxy" / "a.mp4")],
+                ["video", "audio"],
+            )
 
             # Preview com proxy e sem proxy: H.264/AAC yuv420p, na proporção do perfil e na cor certa.
             with_proxy = cli(self, "render", "preview", *args)["data"]

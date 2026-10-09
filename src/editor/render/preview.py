@@ -94,6 +94,13 @@ QUALITY_CHOICES = tuple(QUALITY_PRESETS)
 DEFAULT_QUALITY = "standard"
 """Preset usado quando `--quality` é omitido e, sempre, pela preview (que não recebe a opção)."""
 
+RENDERED_VIDEO_CODEC = "h264"
+RENDERED_AUDIO_CODEC = "aac"
+"""Codecs que o MP4 renderizado (preview e full) precisa declarar para ser publicado (`codec_name` do FFprobe).
+
+`libx264` e `h264_nvenc` saem como `h264` e o encoder `aac` como `aac`. A allowlist de FONTES de `media.py`
+aceita mais (HEVC), por isso `_validate_rendered_preview` confere estes dois valores à parte (R7)."""
+
 CPU_VIDEO_ENCODER = "libx264"
 CPU_ENCODER_PRESET = "veryfast"
 GPU_ENCODER_PRESET = "p3"
@@ -616,7 +623,8 @@ def _validate_rendered_preview(
 ) -> media.MediaMetadata:
     """Valida o MP4 produzido antes de permitir sua publicação como artefato vigente.
 
-    Exige as dimensões exatas do canvas do perfil (`aspect_ratio`) e, na preview, o lado maior
+    Exige vídeo H.264 (`RENDERED_VIDEO_CODEC`) e, havendo áudio, AAC (`RENDERED_AUDIO_CODEC`), as
+    dimensões exatas do canvas do perfil (`aspect_ratio`) e, na preview, o lado maior
     dentro de `max_dimension`. A razão largura/altura só é conferida no 16:9, cujo canvas é
     derivado da fonte: nas proporções fixas as dimensões da tabela já são o contrato, e uma razão
     exata é impossível com dimensões pares (404x720 difere de 9:16 em ~0,0014).
@@ -635,6 +643,18 @@ def _validate_rendered_preview(
             f"A {artifact_name} renderizada não passou na validação de mídia.",
             EXIT_CODES["OPERATION"],
         ) from error
+
+    # `inspect_rendered_artifact` reutiliza a allowlist das fontes, que aceita HEVC desde a T8; o que
+    # este módulo publica é sempre H.264 (e AAC quando há áudio), como a spec e o contrato descrevem.
+    # Mensagem fixa: o codec encontrado vem do arquivo e não é repetido.
+    if metadata.video_codec != RENDERED_VIDEO_CODEC or (
+        metadata.audio_codec is not None and metadata.audio_codec != RENDERED_AUDIO_CODEC
+    ):
+        raise _error(
+            "RENDER_FAILED",
+            f"A {artifact_name} renderizada não usa os codecs H.264 e AAC do contrato.",
+            EXIT_CODES["OPERATION"],
+        )
 
     exceeds_max_dimension = (
         max_dimension is not None

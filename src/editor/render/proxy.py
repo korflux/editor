@@ -206,8 +206,11 @@ def _ffmpeg_arguments(source: Path, staging: Path) -> list[str]:
 
     `0:v:0` e `0:a:0?` valem como os demais consumidores da fonte (invariante em
     `media._validate_probe_payload`): o vídeo real é o primeiro stream de vídeo e há no máximo um
-    áudio. O proxy só leva esses dois streams, sem trilhas de dados nem miniatura. `-pix_fmt` é o que
-    converte uma fonte HEVC 10 bits para o `yuv420p` de 8 bits do proxy.
+    áudio. O proxy só leva esses dois streams, sem trilhas de dados nem miniatura: o `-map` já deixa
+    de fora as trilhas da fonte, mas com timecode nos metadados o muxer recriaria uma trilha `tmcd`, e é
+    o `-write_tmcd 0` que a impede (R8). Os pacotes de vídeo e áudio não mudam, então
+    `PROXY_PARAMETERS_VERSION` segue o mesmo e os proxies já publicados continuam válidos. `-pix_fmt` é
+    o que converte uma fonte HEVC 10 bits para o `yuv420p` de 8 bits do proxy.
     """
 
     return [
@@ -244,6 +247,8 @@ def _ffmpeg_arguments(source: Path, staging: Path) -> list[str]:
         "demux",
         "-c:a",
         "copy",
+        "-write_tmcd",
+        "0",
         "-f",
         "mp4",
         str(staging),

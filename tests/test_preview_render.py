@@ -946,6 +946,9 @@ class PreviewRenderTests(unittest.TestCase):
             "dimension": MediaMetadata(**(valid | {"video_width": 640})),
             "duration": MediaMetadata(**(valid | {"duration_seconds": 3.0})),
             "audio_stream": MediaMetadata(**(valid | {"audio_codec": None})),
+            # R7: a allowlist das fontes aceita HEVC e o MP4 renderizado só pode ser H.264/AAC.
+            "video_codec_hevc": MediaMetadata(**(valid | {"video_codec": "hevc"})),
+            "audio_codec_not_aac": MediaMetadata(**(valid | {"audio_codec": "mp3"})),
         }
 
         for name, inspection in cases.items():
@@ -973,6 +976,12 @@ class PreviewRenderTests(unittest.TestCase):
                         render_preview(workdir)
 
                 self.assertEqual(raised.exception.code, "RENDER_FAILED")
+                if name in ("video_codec_hevc", "audio_codec_not_aac"):
+                    # Os demais metadados são os válidos: a recusa vem só da conferência dos codecs.
+                    self.assertEqual(
+                        raised.exception.message,
+                        "A preview renderizada não usa os codecs H.264 e AAC do contrato.",
+                    )
                 self.assertEqual(previous_path.read_bytes(), previous)
                 self.assertEqual(list((workdir / ".tmp").iterdir()), [])
 
@@ -980,13 +989,19 @@ class PreviewRenderTests(unittest.TestCase):
 # --- Escala do texto entre preview e full (T3 da phase 5, A6 e decisão 11) ----------------------
 
 GOLDEN_WORKFLOW_FULL_TEXT_GRAPH_SHA256_1280 = (
-    "0d1f6b6027d5c0db388a1eef4f0ed2833b2ad4ff09164583ccfb996b9fc835f2"
+    "5c4645ae0bef441b8db858381f1319b83ed344f7eca3f2abc94359141224d61e"
 )
 GOLDEN_WORKFLOW_FULL_TEXT_GRAPH_SHA256_320 = (
-    "d548e98836318c9d67246408a34f94c62603f6cd6316f3b92e81cd60b95126a9"
+    "0141f15de92cc3265f16d9e13fde0a450c2bff14ad0f43189acfe578e56bd000"
 )
 """`filter_complex` do plano do fixture `workflow` (texto "Paraty", `size_px` 32) em canvas 1280x720 e
-320x180, registrados com o código anterior à T3: a full de planos existentes não pode mudar (decisão 11)."""
+320x180, registrados com o código anterior à T3: a full de planos existentes não pode mudar (decisão 11).
+
+R5 (re-review final): os dois hashes foram regravados só porque o grafo ganhou `setsar=1` ao fim dos ramos
+`crop`, `contain` e `preserve` (os valores anteriores eram 0d1f6b60... para 1280 e d548e988... para 320, e
+o texto novo sem essa inserção devolve o antigo). Os pixels não mudaram: `framemd5` de vídeo e de áudio da
+preview e da full da fixture `workflow` e de um plano 16:9 com texto são idênticos antes e depois (SAR já
+1:1), o que cumpre a decisão 14."""
 
 TEXT_SAMPLE_SECONDS = 0.7
 """Instante com o texto visível (as camadas dos planos desta seção vão de 0,2 s a 1,3 s)."""

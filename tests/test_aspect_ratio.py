@@ -7,7 +7,9 @@ Cobre, nesta ordem:
    `fit: "preserve"` contra a proporção do perfil e envelope `data.profile`.
 3. Render real de preview e full em 9:16, 1:1 e 4:5 com `crop` (sem barras) e `contain` (com
    barras), provado por FFprobe das dimensões e por inspeção de pixels.
-4. Mensagens da checagem do MP4 renderizado.
+3b. SAR 1:1 com ramos de `fit` misturados (R5): preview e full reais com `crop`, `contain`, `preserve`,
+   `reframe` e `motion` no mesmo plano, publicados e declarados com pixel quadrado por FFprobe.
+4. Mensagens da checagem do MP4 renderizado, inclusive a exigência de H.264/AAC (R7).
 5. Regressão do 16:9 (A6): o canvas e o grafo de filtros de um plano 16:9 são os mesmos de antes.
 6. Largura da full 16:9 (T5, A9, decisão 16): canvas legado (alinhado a 16) preservado sempre que a
    checagem do MP4 o aceita e alinhamento a 32 só onde ele seria recusado; tabela de equivalência
@@ -26,6 +28,7 @@ As fontes são geradas aqui por `ffmpeg -f lavfi` (sem fixtures grandes), numa p
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -98,8 +101,13 @@ FRAME_SAMPLE_SECONDS = 0.3
 # Valores registrados com o código anterior à T1 para o plano 16:9 sintético de `golden_plan`.
 GOLDEN_PREVIEW_CANVAS = (704, 396)
 GOLDEN_FULL_CANVAS = (1_280, 720)
-GOLDEN_PREVIEW_GRAPH_SHA256 = "2889f5d4ca4a25626dcf259c4a60c5fa1fa06675a0090f82079e64a8eb792558"
-GOLDEN_FULL_GRAPH_SHA256 = "5f4bff1886145f0b5aaf9896a0969a38f589f32d25b85cdbbff350917475e4c7"
+# R5 (re-review final): os dois hashes foram regravados só porque o grafo ganhou `setsar=1` ao fim dos
+# ramos `crop`, `contain` e `preserve` (o texto de cada ramo é o anterior mais essa inserção; removê-la
+# devolve os hashes antigos 2889f5d4... e 5f4bff18...). A decisão 14 (full 16:9 de plano existente
+# inalterada) foi provada por PIXELS: `framemd5` de vídeo e de áudio da preview e da full deste plano,
+# da fixture `workflow`, da `e2e` e de um plano com texto são idênticos antes e depois (SAR já 1:1).
+GOLDEN_PREVIEW_GRAPH_SHA256 = "bc6363f67e485cc239641990b42630dd969c2ffc539f66d85a2b58aec7859d76"
+GOLDEN_FULL_GRAPH_SHA256 = "80af524289963d02faac5bd3da719ff5d634afb4ceef65ba617f8c06b58743a8"
 
 
 # --- Infraestrutura: fontes, planos e leitura de pixels ------------------------------------
@@ -563,6 +571,139 @@ class AspectRatioRenderTests(AspectRatioCase):
         self.assertEqual(raised.exception.code, "APPROVAL_STALE")
 
 
+# --- 3b. SAR 1:1 com ramos de `fit` misturados (R5 da re-review final) -----------------------
+
+MIXED_SOURCE_SIZES = {
+    "hd": (1_920, 1_080),
+    "tall1080": (1_080, 1_920),
+    "odd": (1_000, 562),
+}
+"""Fontes onde a escala para o canvas é inexata: 1080p e 1000x562 deixam o `scale` gravar SAR != 1:1."""
+
+BRANCH_VIDEO_FIELDS: dict[str, dict[str, object]] = {
+    "crop": {"fit": "crop"},
+    "contain": {"fit": "contain"},
+    "preserve": {"fit": "preserve"},
+    "reframe": {"fit": "crop", "reframe": {"keyframes": [{"t_s": 0, "x": 0.3, "y": 0.5}]}},
+    "motion": {
+        "fit": "crop",
+        "motion": {"from": {"x": 0.5, "y": 0.5, "zoom": 1.0}, "to": {"x": 0.4, "y": 0.5, "zoom": 1.5}},
+    },
+}
+"""Campos de `segments[].video` de cada ramo do `_video_segment_filter`. `reframe` e `motion` terminam
+num `overlay` sobre `color` (SAR 1:1); `crop`, `contain` e `preserve` terminam no `crop`/`pad` da fonte."""
+
+
+def mixed_plan(aspect_ratio: str, *branches: tuple[str, str]) -> dict[str, object]:
+    """Plano com um segmento por par `(source_id, ramo)`, cada um com o áudio AAC da própria fonte."""
+
+    sources: dict[str, dict[str, str]] = {}
+    segments = []
+    for source_id, branch in branches:
+        sources[source_id] = {"id": source_id, "kind": "video", "path": f"sources/{source_id}.mp4"}
+        segments.append({
+            "video": {"source_id": source_id, "in_s": 0, "out_s": SEGMENT_SECONDS, **BRANCH_VIDEO_FIELDS[branch]},
+            "audio": keep_audio(source_id),
+        })
+    plan = single_segment_plan(aspect_ratio, "hd", "crop")
+    plan["sources"] = list(sources.values())
+    plan["segments"] = segments
+    return plan
+
+
+def sample_aspect_ratio(path: Path) -> str | None:
+    """SAR declarado no MP4 pelo FFprobe (`1:1` quando o pixel é quadrado), ou `None` se ausente."""
+
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=sample_aspect_ratio", "-of", "json", str(path),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return json.loads(result.stdout)["streams"][0].get("sample_aspect_ratio")
+
+
+class MixedFitSampleAspectRatioTests(AspectRatioCase):
+    """R5: todo ramo do `fit` termina em pixel quadrado, então misturar ramos publica e declara SAR 1:1.
+
+    Causa raiz provada aqui: o `setsar=1` só vinha ANTES do `scale`, e um `scale` de razão inexata (1080p
+    para 1080x1920, 1000x562 para 1280x720...) grava SAR != 1:1 no fim do ramo. O `concat` recusa
+    segmentos de SAR diferentes (os ramos `reframe` e `motion` saem do `overlay` com SAR 1:1) e o MP4
+    publicado de um ramo só saía com SAR como 10240:10239.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Gera, além das fontes base, as três fontes de escala inexata."""
+
+        super().setUpClass()
+        for name, (width, height) in MIXED_SOURCE_SIZES.items():
+            make_source(cls.sources_dir / f"{name}.mp4", width, height)
+
+    def assert_publishes_with_square_pixels(self, plan: dict[str, object]) -> None:
+        """Renderiza preview, aprova e renderiza a full; as duas publicam e declaram SAR 1:1."""
+
+        source_ids = [str(source["id"]) for source in plan["sources"]]
+        workdir = self.new_workdir(plan, *source_ids)
+        preview = render_preview(workdir)
+        approve_workdir(workdir)
+        full = render_full(workdir)
+        for name, payload in (("preview.mp4", preview), ("full.mp4", full)):
+            with self.subTest(artifact=name):
+                self.assertEqual(sample_aspect_ratio(workdir / name), "1:1")
+                metadata = inspect_source(workdir / name, require_audio=True, require_video=True)
+                self.assertEqual(
+                    (metadata.video_width, metadata.video_height),
+                    (payload["video"]["width"], payload["video"]["height"]),
+                )
+
+    def test_mixing_branches_publishes_in_every_ratio(self) -> None:
+        """9:16, 1:1 e 4:5 sobre 1080p: `crop` com `reframe`, `motion` e `contain`, e `reframe` com `contain`."""
+
+        combinations = (
+            ("crop", "reframe"),
+            ("crop", "motion"),
+            ("crop", "contain"),
+            ("reframe", "contain"),
+        )
+        for aspect_ratio in ("9:16", "1:1", "4:5"):
+            for first, second in combinations:
+                with self.subTest(aspect_ratio=aspect_ratio, branches=f"{first}+{second}"):
+                    self.assert_publishes_with_square_pixels(
+                        mixed_plan(aspect_ratio, ("hd", first), ("hd", second))
+                    )
+
+    def test_single_branch_plans_declare_square_pixels(self) -> None:
+        """Um ramo só também sai em 1:1: antes o SAR publicado era 10240:10239, 908:909, 1216:1215..."""
+
+        cases = (
+            ("9:16", "hd", "crop"),
+            ("9:16", "hd", "contain"),
+            ("1:1", "hd", "contain"),
+            ("4:5", "hd", "contain"),
+            ("9:16", "tall1080", "preserve"),
+            ("16:9", "odd", "crop"),
+        )
+        for aspect_ratio, source_id, branch in cases:
+            with self.subTest(aspect_ratio=aspect_ratio, source=source_id, branch=branch):
+                self.assert_publishes_with_square_pixels(mixed_plan(aspect_ratio, (source_id, branch)))
+
+    def test_preserve_of_a_native_vertical_source_mixes_with_crop(self) -> None:
+        """9:16 `preserve` de fonte 1080x1920 (escala inexata na preview) com um trecho `crop` de 1080p."""
+
+        self.assert_publishes_with_square_pixels(
+            mixed_plan("9:16", ("tall1080", "preserve"), ("hd", "crop"))
+        )
+
+    def test_landscape_source_off_the_exact_ratio_mixes_crop_and_motion(self) -> None:
+        """16:9 com fonte 1000x562, `crop` e `crop` com `motion`: já falhava em `eaa8473`, antes da phase 5."""
+
+        self.assert_publishes_with_square_pixels(
+            mixed_plan("16:9", ("odd", "crop"), ("odd", "motion"))
+        )
+
+
 # --- 4. Checagem do MP4 renderizado ---------------------------------------------------------
 
 
@@ -661,6 +802,45 @@ class RenderedArtifactCheckTests(unittest.TestCase):
             raised.exception.message,
             "A preview renderizada não respeita o perfil 9:16 de até 720 pixels.",
         )
+
+    def test_rendered_artifact_must_be_h264_and_aac(self) -> None:
+        """R7: HEVC no vídeo ou áudio fora do AAC não é publicado, com mensagem fixa e sem eco do codec.
+
+        A allowlist das fontes (`media.py`) aceita HEVC desde a T8 e é a que `inspect_rendered_artifact`
+        aplica; sem a conferência própria de `_validate_rendered_preview` um MP4 renderizado em HEVC passava.
+        """
+
+        video_only = self.metadata(704, 396)
+        with_audio = replace(video_only, audio_codec="aac")
+        rejected = (
+            ("vídeo HEVC", replace(video_only, video_codec="hevc"), False),
+            ("vídeo HEVC com áudio AAC", replace(with_audio, video_codec="hevc"), True),
+            ("áudio MP3", replace(with_audio, audio_codec="mp3"), True),
+            ("sem codec de vídeo", replace(video_only, video_codec=None), False),
+        )
+        for name, metadata, expected_audio in rejected:
+            for artifact_name, max_dimension, message in (
+                ("preview", 720, "A preview renderizada não usa os codecs H.264 e AAC do contrato."),
+                ("full", None, "A full renderizada não usa os codecs H.264 e AAC do contrato."),
+            ):
+                with self.subTest(case=name, artifact=artifact_name):
+                    with patch(
+                        "editor.render.preview.media.inspect_rendered_artifact", return_value=metadata
+                    ):
+                        with self.assertRaises(CliError) as raised:
+                            _validate_rendered_preview(
+                                Path("staging.mp4"), expected_duration=0.6,
+                                expected_audio=expected_audio, canvas_width=704, canvas_height=396,
+                                max_dimension=max_dimension, artifact_name=artifact_name,
+                            )
+                    self.assertEqual(raised.exception.code, "RENDER_FAILED")
+                    self.assertEqual(raised.exception.message, message)
+        with patch("editor.render.preview.media.inspect_rendered_artifact", return_value=with_audio):
+            accepted = _validate_rendered_preview(
+                Path("staging.mp4"), expected_duration=0.6, expected_audio=True,
+                canvas_width=704, canvas_height=396,
+            )
+        self.assertEqual((accepted.video_codec, accepted.audio_codec), ("h264", "aac"))
 
 
 # --- 5. Regressão do 16:9 (A6) --------------------------------------------------------------

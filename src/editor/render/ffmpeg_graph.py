@@ -367,6 +367,8 @@ def _video_segment_filter(
     Com `reframe` (já normalizado pela validação, só existe com `crop`) o recorte central é
     trocado pelo recorte animado por keyframes sobre a fonte original (`_reframe_filter_graph`).
     O `trim` usa os tempos do plano menos o início da janela de decode da entrada.
+    Todo ramo entrega pixel quadrado (SAR 1:1) ao `concat`: `reframe` e `motion` por nascerem do
+    `overlay` sobre `color`, e `crop`, `contain` e `preserve` pelo `setsar=1` que fecha o ramo.
 
     `[i:v:0]` é o vídeo real da entrada (invariante em `media._validate_probe_payload`: a miniatura
     anexada nunca é o primeiro stream de vídeo e as trilhas de dados não contam como vídeo). O
@@ -416,6 +418,12 @@ def _video_segment_filter(
                 f"pad={canvas_width}:{canvas_height}:(ow-iw)/2:(oh-ih)/2:color=black",
             ]
         )
+    # Pixel quadrado no FIM do ramo: o `scale` com razão inexata (1080p para 1080x1920, 1000x562 para
+    # 992x558...) regrava o SAR para preservar a proporção, e o `setsar=1` do início do filtro já ficou
+    # para trás. O `concat` recusa segmentos de SAR diferentes (o ramo `reframe` e o `motion` saem do
+    # `overlay` sobre `color`, SAR 1:1) e o MP4 sairia declarando SAR como 10240:10239. Só altera o
+    # metadado: o conteúdo dos quadros é o mesmo e, onde o SAR já era 1:1, o filtro não muda nada.
+    filters.append("setsar=1")
     if "motion" in video:
         base_label = f"v{segment_index}base"
         motion_graph, motion_label = _motion_filter_graph(

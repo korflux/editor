@@ -19,6 +19,10 @@ MAX_SOURCE_SIZE_BYTES = 4 * 1024**3
 MAX_SOURCE_DURATION_SECONDS = 3_600
 MAX_IMAGE_SIZE_BYTES = 100 * 1024**2
 MAX_IMAGE_DIMENSION = 8_192
+# Os tetos acima valem assim: tamanho e duração para as fontes audiovisuais; tamanho e dimensão só para
+# imagens. Não existe teto de dimensão de vídeo (`_validate_probe_payload` lê `width` e `height` sem limitar).
+# ponytail: sem teto de dimensão de vídeo (um payload HEVC 16384x16384 seria aceito), criar um teto único em
+# `media.py`, em `capabilities` e em teste se o humano decidir endurecer a entrada.
 # Extensões audiovisuais (vídeo com ou sem áudio). `.mp4` e `.mov` compartilham o demuxer `mov` do
 # FFmpeg: o `format_name` de ambos é `mov,mp4,m4a,3gp,3g2,mj2`, e `_validate_probe_payload` exige que
 # o nome da extensão conste nele, então `.mov` e `.mp4` aceitam o mesmo conteúdo.
