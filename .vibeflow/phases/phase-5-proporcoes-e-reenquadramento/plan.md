@@ -240,6 +240,24 @@ Pedido do humano depois da review final: resolver R1 a R4 (rodada de correção,
 - **Terceiro registro (resolvido na mesma tarefa):** `tests/test_installation.py` removia `tmp-installation-*` por PowerShell `Remove-Item` com `check=False` sem ler o resultado (mesma classe de defeito, mecanismo diferente, risco latente, sobra não observada); o `finally` de `workspace_tempdir` passou a chamar `remove_tree` (a criação segue por `New-Item` por causa da ACL e nenhuma asserção mudou); a junction criada por um dos testes é removida no próprio `finally` antes da limpeza, dentro da mesma pasta, e o `rmtree` do Python 3.11 não segue junction. Prova: `tests.test_installation` -> 17 testes OK e nenhuma `tmp-installation-*` na raiz; suíte completa -> 330 testes OK em 367 s, sem aviso de limpeza. Registro `2026-10-09-test-installation-remove-pasta-sem-verificar.md` marcado como resolvido.
 - **Limitação registrada:** o `.gitignore` não tem regra `tmp-*` (pasta vazia não aparece no `git status`, mas uma `tmp-*` com conteúdo, por exemplo de um processo morto no meio de um teste, apareceria como untracked); fica como sugestão ao humano, sem alteração de configuração do repositório.
 
+### T11: Ajustes decididos pelo humano na confirmação final (versão 1.1.0 e `tmp-*/` no `.gitignore`)
+
+- [x] T11 concluída
+- **Spec:** A16 (decisões 21 e 22 do adendo)
+- **O quê:** na confirmação final o humano respondeu "siga suas recomendações" para a lista de escolhas de produto: (item 6) subir a versão do pacote para `1.1.0`, porque a regra semver do projeto classifica como minor o que esta phase adicionou (nada foi removido nem renomeado) e agentes leem `capabilities.cli_version` e `--version`; (item 7) manter a limpeza dos testes que avisa em vez de falhar e acrescentar `tmp-*/` ao `.gitignore`, para um teste interrompido não deixar vídeos descartáveis prontos para um `git add .`. Os itens 1 a 4 (`upscale` com `contain`, `preserve` e `motion`; canvas legado 16:9 mantido; `-level 5.2` no NVENC em `high` e `max`; `standard` da GPU como está) ficam como estão; o teto de dimensão de vídeo (item 5) fica para uma tarefa própria depois e o teste com bruto real de câmera (item 8) depende de o humano indicar um arquivo.
+- **Aceite:**
+  - [x] `python -m editor --version`, `capabilities.cli_version` e `contracts.CLI_VERSION` informam `1.1.0` e coincidem com `pyproject.toml`; nenhuma outra menção à versão do pacote ficou em `1.0.0` (não mexer em versões de dependências nem em `schema_version`); `requirements.lock` não muda.
+  - [x] `git check-ignore -v tmp-exemplo/arquivo.mp4` aponta a regra nova e nenhum arquivo versionado casa com `tmp-*/` (`git ls-files` limpo).
+- **Verificação:**
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_cli_contract tests.test_capabilities tests.test_installation -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
+- **Deps:** nenhuma
+- **Arquivos:** `pyproject.toml`, `src/editor/contracts.py`, `tests/test_cli_contract.py`, `tests/test_capabilities.py`, `.gitignore`, `.vibeflow/REGRAS.md` (só se citar a versão do pacote)
+- **Prova:** `python -m editor --version` -> `editor 1.1.0`; `--version --json` -> `{"command":"version","data":{"version":"1.1.0"},"ok":true,"schema_version":1}`; `tomllib` sobre `pyproject.toml` coincide com `contracts.CLI_VERSION`; `capabilities.cli_version` lê a constante; `rg "1\.0\.0"` (sem `requirements.lock`, `.venv` e `.git`) não acha mais menção à versão do pacote e `requirements.lock` não mudou; `tests.test_cli_contract tests.test_capabilities tests.test_installation` -> 57 testes OK; suíte completa (`discover -s tests`) -> 335 testes OK em 395 s, sem `tmp-*` na raiz depois. `.gitignore`: `git check-ignore -v tmp-exemplo/arquivo.mp4` aponta `.gitignore:21:tmp-*/`, e `git ls-files | rg "(^|/)tmp-"` não acha arquivo versionado (a regra não ignora nada versionado).
+- **Arquivos (efetivos):** `pyproject.toml`, `src/editor/contracts.py`, `tests/test_cli_contract.py`, `tests/test_capabilities.py`, `.gitignore`. `REGRAS.md`, as skills, `scripts/install.ps1` e `tests/test_installation.py` não citam a versão do pacote.
+- **Decisões de implementação:** só as 4 menções à versão do pacote `editor` mudaram; nenhuma versão de dependência, `requirements.lock`, `schema_version` do plano ou `PROXY_PARAMETERS_VERSION` foi tocada. Fora do repositório, o coordenador atualizou os metadados do pacote editável do `.venv` (`pip install --no-deps --no-build-isolation -e .`, sem rede, `pip show editor` mostrava `0.1.0`, defasado desde antes da phase; agora `1.1.0`, `pip check` sem conflitos); o Python global do host não foi tocado.
+- **Fora desta tarefa, decidido pelo humano:** teto de dimensão de vídeo (item 5) fica para uma tarefa própria depois (`ponytail:` em `media.py` e em `REGRAS.md`), e o teste com bruto real de câmera (item 8) aguarda o humano indicar um arquivo.
+
 ## Paralelização
 
 - Grupo: T2 e T3

@@ -173,6 +173,9 @@ Origem: depois da review final, o humano pediu em chat para resolver todos os ac
 19. Fontes HEVC e MOV: `.mov` e `.mp4` são aceitos para fontes audiovisuais, com vídeo `h264` ou `hevc` (perfis Main e Main 10, `yuv420p` ou `yuv420p10le`) e áudio AAC; streams de dados (por exemplo `tmcd`) e miniatura anexada (`attached_pic`) são ignorados quando não são o stream de vídeo selecionado; continuam recusados MKV e outros contêineres, mais de um stream de áudio, mais de um stream de vídeo real, legendas, codecs fora da allowlist e todos os tetos vigentes. A saída é sempre `yuv420p` de 8 bits (a conversão de 10 bits acontece no grafo e no proxy), e a análise de áudio, a extração de frames, o proxy, a preview e a full tratam essas fontes como as H.264. O caminho `--accel gpu` decodifica HEVC por CUDA quando possível e cai para CPU como hoje.
 20. Preset de qualidade da full: `render full --quality standard|high|max` (padrão `standard`, que mantém exatamente os argumentos atuais de encoder: x264 `crf 23` e NVENC `p3`/`cq 31`). `high` e `max` reduzem `crf` e `cq` por equivalência de SSIM medida e documentada; a preview não recebe a opção e a qualidade não entra na aprovação nem no hash (não é conteúdo editorial). `capabilities` expõe os presets e `data.video.quality` informa o usado.
 
+21. Versão: o pacote passa de `1.0.0` para `1.1.0` (minor pela regra semver do projeto: esta phase só adiciona campos, opções e formatos, sem remover nem renomear). Decidido pelo humano na confirmação final ("siga suas recomendações"). O `schema_version` do plano continua 2.
+22. `.gitignore` ganha `tmp-*/` (pastas descartáveis dos testes); a limpeza dos testes continua avisando em vez de falhar. Decidido pelo humano na mesma confirmação.
+
 ### Aceite do adendo
 
 - [x] A9: uma fonte 16:9 de 1200x674 gera preview, aprovação e full válidas (full 1184x666, razão exata 16:9), e o canvas de toda largura cuja full já era gerada permanece idêntico. (decisão 16)
@@ -182,6 +185,7 @@ Origem: depois da review final, o humano pediu em chat para resolver todos os ac
 - [x] A13: uma fonte HEVC 10 bits em `.mov` e em `.mp4` com stream de dados e miniatura anexada percorre `analyze audio`, `extract frames`, `plan validate`, `proxy build`, preview e full (com janelas de decode e, quando disponível, `--accel gpu`) e sai em H.264 8 bits; MKV, dois áudios, codec fora da allowlist e vídeo extra continuam recusados. (decisão 19)
 - [x] A14: `render full --quality standard` gera exatamente a full de antes; `high` e `max` geram arquivos de qualidade crescente (SSIM e tamanho medidos) tanto na CPU quanto na GPU; `capabilities` expõe os presets. (decisão 20)
 - [x] A15: R3 e R4 aplicados (registro do teto de 32.767 marcado como resolvido; o perfil do canal proíbe também `video.reframe`), e cada registro aberto de `.erros-encontrados/` tratado por este adendo está marcado como resolvido com o commit correspondente.
+- [x] A16: a versão do pacote é `1.1.0` em `pyproject.toml`, `contracts.CLI_VERSION`, `--version` e `capabilities.cli_version`, e `tmp-*/` está no `.gitignore` sem casar arquivo versionado. (decisões 21 e 22)
 
 ## Handoff
 

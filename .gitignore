@@ -16,3 +16,6 @@ models/
 __pycache__/
 *.pyc
 *.pyo
+
+# Pastas descartáveis criadas pelos testes dentro do repositório, nunca fazem parte da fonte versionada.
+tmp-*/
