@@ -54,11 +54,31 @@ PREVIEW_WIDTH_ALIGNMENT = 32
 
 SOURCE_FIELDS = frozenset({"id", "kind", "path"})
 SEGMENT_FIELDS = frozenset({"video", "audio"})
-VIDEO_FIELDS = frozenset({"source_id", "in_s", "out_s", "fit", "motion"})
+VIDEO_FIELDS = frozenset({"source_id", "in_s", "out_s", "fit", "motion", "reframe"})
 MOTION_FIELDS = frozenset({"from", "to"})
 MOTION_STATE_FIELDS = frozenset({"x", "y", "zoom"})
 MOTION_ZOOM_MIN = 0.5
 MOTION_ZOOM_MAX = 4.0
+
+# --- Reenquadramento por keyframes (`segments[].video.reframe`, phase 5) ---
+# Fonte única da allowlist e dos limites, lida pela validação, pelo grafo e (T4) por `capabilities`.
+REFRAME_FIELDS = frozenset({"keyframes"})
+"""Única chave aceita em `reframe`; qualquer outra é campo não permitido."""
+
+KEYFRAME_FIELDS = frozenset({"t_s", "x", "y", "zoom", "interpolation"})
+"""Campos de cada keyframe; `zoom` e `interpolation` são opcionais."""
+
+MAX_REFRAME_KEYFRAMES = 32
+# ponytail: 32 keyframes por segmento, ampliar quando um acompanhamento real precisar de marcação mais densa
+REFRAME_ZOOM_MIN = 1.0
+REFRAME_ZOOM_MAX = 4.0
+DEFAULT_REFRAME_ZOOM = REFRAME_ZOOM_MIN
+"""Zoom 1.0 é o maior recorte da proporção do canvas que cabe na fonte."""
+
+REFRAME_INTERPOLATIONS = ("ease", "linear")
+"""Curvas por trecho: `ease` é `3p² - 2p³` e `linear` é velocidade constante."""
+
+DEFAULT_REFRAME_INTERPOLATION = "ease"
 MAX_CUT_DURATION_SECONDS = 30.0
 AUDIO_FIELDS = frozenset({"mode", "tracks"})
 TRACK_FIELDS = frozenset({"source_id", "in_s", "out_s", "gain_db", "loop"})

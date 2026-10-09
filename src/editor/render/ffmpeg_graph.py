@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import math
 import textwrap
@@ -126,6 +126,47 @@ def _linear_motion_expression(start: object, end: object, duration: float) -> st
     return f"({_number(start)}+({_number(end)}-{_number(start)})*{progress})"
 
 
+def _scaled_overlay_graph(
+    input_label: str,
+    *,
+    scale_options: str,
+    overlay_x: str,
+    overlay_y: str,
+    segment_index: int,
+    segment_duration: float,
+    frame_rate: float | None,
+    canvas_width: int,
+    canvas_height: int,
+) -> tuple[str, str]:
+    """Escala o quadro e o posiciona num canvas preto do tamanho da saída (base de `motion` e `reframe`).
+
+    O overlay recorta o que excede o canvas e preenche com preto o que falta. Ele avalia `x`/`y`
+    a cada quadro com o tamanho do quadro escalado (`w`/`h`) e o tempo `t` do canvas, que nasce em
+    zero no início do segmento, então a posição acompanha um `scale` de tamanho variável. Os rótulos
+    `m{segmento}s|b|p` são exclusivos do segmento, que nunca tem `motion` e `reframe` juntos.
+    """
+
+    rate = _number(frame_rate if frame_rate and frame_rate > 0 else 25.0)
+    scaled_label = f"m{segment_index}s"
+    background_label = f"m{segment_index}b"
+    output_label = f"m{segment_index}p"
+    graph = ";".join(
+        [
+            f"[{input_label}]scale={scale_options}[{scaled_label}]",
+            (
+                f"color=c=black:s={canvas_width}x{canvas_height}:r={rate}:"
+                f"d={_number(segment_duration)}[{background_label}]"
+            ),
+            (
+                f"[{background_label}][{scaled_label}]overlay="
+                f"x={overlay_x}:y={overlay_y}:eval=frame:shortest=1"
+                f"[{output_label}]"
+            ),
+        ]
+    )
+    return graph, output_label
+
+
 def _motion_filter_graph(
     input_label: str,
     motion: Mapping[str, Any],
@@ -143,33 +184,156 @@ def _motion_filter_graph(
     focal_x = _linear_motion_expression(start["x"], end["x"], segment_duration)
     focal_y = _linear_motion_expression(start["y"], end["y"], segment_duration)
     zoom = _linear_motion_expression(start["zoom"], end["zoom"], segment_duration)
-    rate = _number(frame_rate if frame_rate and frame_rate > 0 else 25.0)
     scaled_width = f"trunc(iw*{zoom}/2)*2"
     scaled_height = f"trunc(ih*{zoom}/2)*2"
-    scaled_label = f"m{segment_index}s"
-    background_label = f"m{segment_index}b"
-    output_label = f"m{segment_index}p"
     # A imagem escalada é posicionada em (W-w)*fx dentro do próprio canvas de saída; o overlay
     # recorta o que excede (zoom > 1) e preenche com preto o que falta (zoom < 1). Antes o quadro
     # era composto num canvas preto 4x maior e recortado depois, o que custava ~16x mais por frame
     # para chegar à mesma posição.
     # ponytail: `scale eval=frame` recria o scaler a cada frame (~8 ms/frame em 1080p, o maior custo
     # do render com movimento), trocar por um caminho sem reinicialização se o zoom animado dominar o tempo.
-    graph = ";".join(
-        [
-            f"[{input_label}]scale=w={scaled_width}:h={scaled_height}:eval=frame[{scaled_label}]",
-            (
-                f"color=c=black:s={canvas_width}x{canvas_height}:r={rate}:"
-                f"d={_number(segment_duration)}[{background_label}]"
-            ),
-            (
-                f"[{background_label}][{scaled_label}]overlay="
-                f"x=(W-w)*{focal_x}:y=(H-h)*{focal_y}:eval=frame:shortest=1"
-                f"[{output_label}]"
-            ),
-        ]
+    return _scaled_overlay_graph(
+        input_label,
+        scale_options=f"w={scaled_width}:h={scaled_height}:eval=frame",
+        overlay_x=f"(W-w)*{focal_x}",
+        overlay_y=f"(H-h)*{focal_y}",
+        segment_index=segment_index,
+        segment_duration=segment_duration,
+        frame_rate=frame_rate,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height,
     )
-    return graph, output_label
+
+
+def _reframe_position_statements(keyframes: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Instruções FFmpeg que deixam na memória 0 a posição `s(t)` no espaço dos keyframes.
+
+    `s` vale `i` no keyframe `i` e `i + e(p)` no trecho entre `i` e `i+1`, onde `p` é o progresso
+    de 0 a 1 do trecho e `e` é a curva do `interpolation` do keyframe inicial (`ease` é
+    `3p² - 2p³`, `linear` é `p`). Cada eixo vira uma soma plana de `delta * clip(s - j, 0, 1)`
+    (`_reframe_axis`), então `s` é calculado uma vez por expressão e a profundidade do parser
+    nunca cresce com o número de keyframes. Antes do primeiro e depois do último keyframe `s`
+    satura em `0` e `m - 1`, o que mantém o estado do primeiro e do último.
+
+    `st(0,u)` soma o progresso linear de cada trecho (`u = i + p`); com algum `ease`, a parte
+    inteira `i` e a fração `p` vêm de `floor(u)`, e a fração é remodelada na memória 2. Com todos
+    `ease` o remodelado é `p²(3-2p)`; com mistura, `p + w*p(1-p)(2p-1)`, em que `w` é 1 nos trechos
+    `ease` (escolhendo o menor dos dois conjuntos de índices para o texto ficar curto). A forma
+    contínua em `u` inteiro (a curva vale 0 e 1 nas pontas) torna o resultado exato mesmo quando o
+    arredondamento deixa `u` um ulp abaixo do inteiro.
+    """
+
+    spans = [
+        f"clip((t-{_number(first['t_s'])})/{_number(second['t_s'] - first['t_s'])},0,1)"
+        for first, second in zip(keyframes, keyframes[1:])
+    ]
+    statements = [f"st(0,{'+'.join(spans)})"]
+    eased = [index for index, item in enumerate(keyframes[:-1]) if item["interpolation"] == "ease"]
+    if not eased:
+        return statements
+    statements.extend(["st(1,floor(ld(0)))", "st(2,ld(0)-ld(1))"])
+    if len(eased) == len(spans):
+        shaped = "ld(2)*ld(2)*(3-2*ld(2))"
+    else:
+        linear = [index for index in range(len(spans)) if index not in eased]
+        if len(eased) <= len(linear):
+            weight = "+".join(f"eq(ld(1),{index})" for index in eased)
+        else:
+            weight = "1-(" + "+".join(f"eq(ld(1),{index})" for index in linear) + ")"
+        shaped = f"ld(2)+({weight})*ld(2)*(1-ld(2))*(2*ld(2)-1)"
+    statements.append(f"st(0,ld(1)+{shaped})")
+    return statements
+
+
+def _reframe_axis(keyframes: Sequence[Mapping[str, Any]], axis: str) -> tuple[str, bool]:
+    """Expressão de um eixo (`x`, `y` ou `zoom`) em função de `s` e se ele varia ao longo do segmento.
+
+    O valor é o do primeiro keyframe mais, para cada trecho com variação, `delta * clip(s - j, 0, 1)`;
+    trechos sem variação não geram termo, e um eixo que não varia é só uma constante e dispensa `s`.
+    Os números passam por `_number`, o único formatador de valores do plano no grafo.
+    """
+
+    values = [item[axis] for item in keyframes]
+    expression = _number(values[0])
+    animated = False
+    for index, (first, second) in enumerate(zip(values, values[1:])):
+        delta = second - first
+        if delta == 0:
+            continue
+        animated = True
+        position = "ld(0)" if index == 0 else f"ld(0)-{index}"
+        sign = "+" if delta > 0 else "-"
+        expression += f"{sign}{_number(abs(delta))}*clip({position},0,1)"
+    return expression, animated
+
+
+def _reframe_filter_graph(
+    input_label: str,
+    keyframes: Sequence[Mapping[str, Any]],
+    *,
+    segment_index: int,
+    segment_duration: float,
+    frame_rate: float | None,
+    canvas_width: int,
+    canvas_height: int,
+) -> tuple[str, str]:
+    """Recorta o quadro original na proporção do canvas conforme os keyframes de `reframe`.
+
+    O quadro inteiro é escalado para que o recorte do `zoom` do instante preencha exatamente a
+    largura do canvas, e o canvas é posicionado sobre ele com o ponto `(x, y)` no centro, encostado
+    na borda quando o centro levaria o recorte para fora (nunca aparece preto, pois o quadro
+    escalado nunca é menor que o canvas). Escalar primeiro e posicionar depois dá precisão de pixel
+    da saída, e não da fonte, e as expressões só usam `iw`/`ih`/`w`/`h` e coordenadas normalizadas,
+    então valem igualmente para o original e para o proxy reduzido da preview.
+
+    - Maior recorte da proporção do canvas que cabe na fonte (zoom 1.0): `min(iw, ih*cw/ch)` de
+      largura. Fator de escala `cw*zoom/essa largura`; a altura vem de `h=-2` (par, mais próxima).
+    - A largura escalada usa `ceil(x/2 - 0.001)*2`: nunca fica abaixo do canvas por arredondamento
+      (o que abriria uma faixa preta) e ignora o ruído de ponto flutuante de um valor já par.
+    - `t` é o tempo desde o início do segmento (após `trim`/`setpts`), igual com e sem janela de decode.
+    - Se o zoom é o mesmo em todos os keyframes o `scale` é estático; só o zoom animado paga o
+      `eval=frame`. Posição em `x`/`y` sempre avalia por quadro no overlay.
+    - Cada expressão vai entre aspas simples (o texto só tem números do `_number` e funções do
+      FFmpeg), o que dispensa escapar cada vírgula e `;` e mantém o grafo curto.
+    """
+
+    # ponytail: o quadro inteiro é escalado, então zoom alto em fonte grande cria quadros enormes (zoom 4
+    # em 4K para 9:16 passa de 13 mil pixels de largura) e `eval=frame` recria o scaler a cada quadro;
+    # pré-recortar a fonte na região usada quando o zoom animado ou alto dominar o tempo de render.
+    # ponytail: o overlay em yuv420p alinha a posição a pixel par da saída, erro de até 1 pixel; usar
+    # overlay yuv444 se um acompanhamento sub-pixel for necessário.
+    x_axis, x_animated = _reframe_axis(keyframes, "x")
+    y_axis, y_animated = _reframe_axis(keyframes, "y")
+    zoom_axis, zoom_animated = _reframe_axis(keyframes, "zoom")
+    # Sem eixo animado (foco estático ou keyframes iguais) não há `s(t)` a calcular.
+    positioned = (
+        ";".join(_reframe_position_statements(keyframes)) + ";"
+        if x_animated or y_animated or zoom_animated
+        else ""
+    )
+
+    def expression(body: str, animated: bool) -> str:
+        """Prefixa as instruções de `s(t)` só nas expressões cujo eixo varia."""
+
+        return f"'{positioned if animated else ''}{body}'"
+
+    width = _number(canvas_width)
+    height = _number(canvas_height)
+    scaled_width = expression(
+        f"2*ceil(iw*{width}*({zoom_axis})/min(iw,ih*{width}/{height})/2-0.001)", zoom_animated
+    )
+    scale_options = f"w={scaled_width}:h=-2" + (":eval=frame" if zoom_animated else "")
+    return _scaled_overlay_graph(
+        input_label,
+        scale_options=scale_options,
+        overlay_x=expression(f"max(min(W/2-({x_axis})*w,0),W-w)", x_animated),
+        overlay_y=expression(f"max(min(H/2-({y_axis})*h,0),H-h)", y_animated),
+        segment_index=segment_index,
+        segment_duration=segment_duration,
+        frame_rate=frame_rate,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height,
+    )
 
 
 def _video_segment_filter(
@@ -179,12 +343,15 @@ def _video_segment_filter(
     canvas_width: int,
     canvas_height: int,
     frame_rate: float | None,
+    reframe: Mapping[str, Any] | None = None,
 ) -> str:
     """Corta um vídeo e normaliza sua imagem para o canvas do perfil (qualquer proporção).
 
     `crop` amplia até cobrir o canvas e recorta o centro (sem barras); `preserve` e `contain`
     cabem inteiros e preenchem o resto com preto. O canvas já chega na proporção do perfil,
     então este filtro não depende de ela ser 16:9.
+    Com `reframe` (já normalizado pela validação, só existe com `crop`) o recorte central é
+    trocado pelo recorte animado por keyframes sobre a fonte original (`_reframe_filter_graph`).
     O `trim` usa os tempos do plano menos o início da janela de decode da entrada.
     """
 
@@ -198,6 +365,21 @@ def _video_segment_filter(
         "setpts=PTS-STARTPTS",
         "setsar=1",
     ]
+    if reframe is not None:
+        base_label = f"v{segment_index}base"
+        reframe_graph, reframe_label = _reframe_filter_graph(
+            base_label,
+            reframe["keyframes"],
+            segment_index=segment_index,
+            segment_duration=float(video["out_s"]) - float(video["in_s"]),
+            frame_rate=frame_rate,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+        )
+        return (
+            f"[{input_index}:v:0]{','.join(filters)}[{base_label}];"
+            f"{reframe_graph};[{reframe_label}]format=yuv420p[v{segment_index}]"
+        )
     if fit == "crop":
         filters.extend(
             [
@@ -570,6 +752,7 @@ def build_ffmpeg_graph(
                 canvas_width,
                 canvas_height,
                 float(source_frame_rate) if source_frame_rate is not None else None,
+                timeline_segment.get("reframe"),
             )
         )
         video_labels.append(f"v{segment_index}")

@@ -29,8 +29,11 @@ from .schema import (
     CUT_FIELDS,
     CUT_TYPES,
     DEFAULT_MAX_FULL_WIDTH,
+    DEFAULT_REFRAME_INTERPOLATION,
+    DEFAULT_REFRAME_ZOOM,
     FIT_MODES,
     IMAGE_LAYER_FIELDS,
+    KEYFRAME_FIELDS,
     LANDSCAPE_ASPECT_RATIO,
     LAYER_FIT_MODES,
     LAYER_TYPES,
@@ -38,6 +41,7 @@ from .schema import (
     MAX_CUT_DURATION_SECONDS,
     MAX_FULL_WIDTH_STEP,
     MAX_MAX_FULL_WIDTH,
+    MAX_REFRAME_KEYFRAMES,
     MIN_MAX_FULL_WIDTH,
     MOTION_FIELDS,
     MOTION_STATE_FIELDS,
@@ -45,6 +49,10 @@ from .schema import (
     MOTION_ZOOM_MIN,
     PLAN_SCHEMA_VERSION,
     PROFILE_FIELDS,
+    REFRAME_FIELDS,
+    REFRAME_INTERPOLATIONS,
+    REFRAME_ZOOM_MAX,
+    REFRAME_ZOOM_MIN,
     ROOT_FIELDS,
     SEGMENT_FIELDS,
     SOURCE_FIELDS,
@@ -375,6 +383,31 @@ def _validate_profile(value: Any) -> tuple[str, int | None]:
     return aspect_ratio, max_full_width
 
 
+def _upscale_factor(
+    segment: dict[str, Any],
+    source: dict[str, Any],
+    canvas_width: int,
+    canvas_height: int,
+) -> float:
+    """Fator linear com que a fonte original é ampliada no canvas da full (acima de 1.0 amplia).
+
+    Com `crop`, o recorte usado é o maior da proporção do canvas que cabe na fonte dividido pelo
+    maior `zoom` dos keyframes (1.0 sem `reframe`, o recorte central), e o fator é a largura do
+    canvas sobre a largura desse recorte (decisão 9 da spec). Com `contain` e `preserve` a imagem
+    inteira cabe no canvas e o fator é o encolhimento ou a ampliação dessa escala. Usa as dimensões
+    da fonte original, que é o que a full lê; a preview e o proxy só reduzem.
+    """
+
+    source_width = float(source["video_width"])
+    source_height = float(source["video_height"])
+    if segment["fit"] != "crop":
+        return min(canvas_width / source_width, canvas_height / source_height)
+    reframe = segment.get("reframe")
+    zoom = max(item["zoom"] for item in reframe["keyframes"]) if reframe else DEFAULT_REFRAME_ZOOM
+    base_width = min(source_width, source_height * canvas_width / canvas_height)
+    return canvas_width * zoom / base_width
+
+
 def _calculated_profile(
     aspect_ratio: str,
     max_full_width: int | None,
@@ -385,11 +418,13 @@ def _calculated_profile(
 
     No 16:9 informa também o teto e a largura efetiva, sem ampliar a primeira fonte visual da
     timeline. `full_width`/`full_height` vêm de `schema.canvas_dimensions`, a mesma função que a
-    full lê ao renderizar, para o envelope e o arquivo nunca divergirem.
+    full lê ao renderizar, para o envelope e o arquivo nunca divergirem. `upscale` lista, com o
+    índice 1-based da timeline (o `index` de `timeline.segments[]`) e o fator arredondado a 2
+    casas, os segmentos ampliados acima de 1.0; ampliar não bloqueia, só avisa o agente.
     """
 
-    first_source_id = timeline_segments[0]["video_source_id"]
-    first_source = next(record for record in source_records if record["id"] == first_source_id)
+    sources_by_id = {record["id"]: record for record in source_records}
+    first_source = sources_by_id[timeline_segments[0]["video_source_id"]]
     source_width = first_source.get("video_width")
     if isinstance(source_width, bool) or not isinstance(source_width, int) or source_width <= 0:
         raise plan_error("A largura da primeira fonte visual não pôde ser determinada.")
@@ -402,9 +437,17 @@ def _calculated_profile(
         profile["effective_full_width"] = min(source_width, max_full_width)
     profile["full_width"] = full_width
     profile["full_height"] = full_height
-    # Segmentos ampliados (índice e fator, decisão 9): ficam vazios até o reenquadramento (T2)
-    # definir o recorte de cada segmento; o campo já existe para o contrato do envelope não mudar.
-    profile["upscale"] = []
+    upscale: list[dict[str, Any]] = []
+    for segment in timeline_segments:
+        factor = round(
+            _upscale_factor(
+                segment, sources_by_id[segment["video_source_id"]], full_width, full_height
+            ),
+            2,
+        )
+        if factor > 1.0:
+            upscale.append({"segment": segment["index"], "factor": factor})
+    profile["upscale"] = upscale
     return profile
 
 
@@ -464,6 +507,69 @@ def _validate_motion(value: Any, location: str) -> dict[str, dict[str, float]]:
     return normalized
 
 
+def _validate_reframe(video: dict[str, Any], location: str) -> dict[str, list[dict[str, Any]]]:
+    """Valida e normaliza `segments[].video.reframe` (foco estático ou keyframes) sem tocar em mídia.
+
+    Roda na fronteira estrutural, antes de qualquer FFprobe, e de novo em `_validate_video` para
+    obter a forma normalizada (mesmo padrão do `motion`). Só usa campos do próprio segmento: o
+    `fit`, a ausência de `motion` e a duração `out_s - in_s` contra a qual `t_s` é conferido.
+    Normaliza `zoom` e `interpolation` para seus padrões e arredonda os números como o `motion`;
+    a ordem estritamente crescente é checada sobre os `t_s` já arredondados, para dois instantes
+    que só diferem além da 6ª casa não gerarem uma divisão por zero no grafo.
+    """
+
+    reframe = require_object(video["reframe"], f"{location}.reframe")
+    reject_unknown_fields(reframe, REFRAME_FIELDS, f"{location}.reframe")
+    keyframes = require_array(reframe.get("keyframes"), f"{location}.reframe.keyframes")
+    if not 1 <= len(keyframes) <= MAX_REFRAME_KEYFRAMES:
+        raise plan_error(
+            f"O reenquadramento deve declarar de 1 a {MAX_REFRAME_KEYFRAMES} keyframes."
+        )
+    if video.get("fit") != "crop":
+        raise plan_error("O reenquadramento exige fit crop.")
+    if "motion" in video:
+        raise plan_error("Um segmento não pode declarar motion e reframe ao mesmo tempo.")
+    duration = _rounded(
+        _finite_number(video.get("out_s"), f"{location}.out_s")
+        - _finite_number(video.get("in_s"), f"{location}.in_s")
+    )
+
+    normalized: list[dict[str, Any]] = []
+    for keyframe_value in keyframes:
+        keyframe_location = f"{location}.reframe.keyframes[]"
+        keyframe = require_object(keyframe_value, keyframe_location)
+        reject_unknown_fields(keyframe, KEYFRAME_FIELDS, keyframe_location)
+        t_s = _rounded(_finite_number(keyframe.get("t_s"), f"{keyframe_location}.t_s"))
+        x = _finite_number(keyframe.get("x"), f"{keyframe_location}.x")
+        y = _finite_number(keyframe.get("y"), f"{keyframe_location}.y")
+        zoom = _finite_number(
+            keyframe.get("zoom", DEFAULT_REFRAME_ZOOM), f"{keyframe_location}.zoom"
+        )
+        interpolation = keyframe.get("interpolation", DEFAULT_REFRAME_INTERPOLATION)
+        if not isinstance(interpolation, str) or interpolation not in REFRAME_INTERPOLATIONS:
+            raise plan_error("A interpolação do keyframe deve ser ease ou linear.")
+        if not 0 <= x <= 1 or not 0 <= y <= 1:
+            raise plan_error("Os pontos x e y do keyframe devem estar entre 0 e 1.")
+        if not REFRAME_ZOOM_MIN <= zoom <= REFRAME_ZOOM_MAX:
+            raise plan_error("O zoom do keyframe deve estar entre 1.0 e 4.0.")
+        if (
+            t_s < 0
+            or t_s > duration + ASPECT_TOLERANCE
+            or (normalized and t_s <= normalized[-1]["t_s"])
+        ):
+            raise plan_error("Os keyframes devem ter t_s crescente dentro da duração do segmento.")
+        normalized.append(
+            {
+                "t_s": t_s,
+                "x": _rounded(x),
+                "y": _rounded(y),
+                "zoom": _rounded(zoom),
+                "interpolation": interpolation,
+            }
+        )
+    return {"keyframes": normalized}
+
+
 def _validate_segment_structure(value: Any) -> None:
     """Valida objetos e números dos segmentos antes de consultar suas fontes reais."""
 
@@ -489,6 +595,8 @@ def _validate_segment_structure(value: Any) -> None:
         _finite_number(video.get("out_s"), "segments[].video.out_s")
         if "motion" in video:
             _validate_motion(video["motion"], "segments[].video.motion")
+        if "reframe" in video:
+            _validate_reframe(video, "segments[].video")
 
         audio = require_object(segment.get("audio"), "segments[].audio")
         reject_unknown_fields(audio, AUDIO_FIELDS, "segments[].audio")
@@ -721,6 +829,8 @@ def _validate_video(
     reject_unknown_fields(video, VIDEO_FIELDS, location)
     if "motion" in video:
         video = {**video, "motion": _validate_motion(video["motion"], f"{location}.motion")}
+    if "reframe" in video:
+        video = {**video, "reframe": _validate_reframe(video, location)}
     source_id = video.get("source_id")
     if (
         not isinstance(source_id, str)
@@ -932,6 +1042,8 @@ def _validate_segments(
         }
         if "motion" in video:
             timeline_segment["motion"] = video["motion"]
+        if "reframe" in video:
+            timeline_segment["reframe"] = video["reframe"]
         timeline_segments.append(timeline_segment)
     return timeline_segments, _rounded(timeline_end)
 

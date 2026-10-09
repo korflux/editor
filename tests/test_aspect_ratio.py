@@ -294,16 +294,30 @@ class AspectRatioValidationTests(AspectRatioCase):
     """Valida o perfil, `max_full_width` e `fit: "preserve"` pela API real de `plan validate`."""
 
     def test_accepts_four_ratios_and_reports_the_full_canvas(self) -> None:
-        """Cada proporção valida e `data.profile` informa as dimensões da full e `upscale` vazio."""
+        """Cada proporção valida e `data.profile` informa as dimensões da full e as ampliações.
+
+        A fonte `wide` tem 640x360 e o canvas fixo tem 1080 de largura, então o `crop` central a
+        amplia (fator = largura do canvas / largura do recorte central, decisão 9 da spec, T2):
+        1080/202.5 no 9:16, 1080/360 no 1:1 e 1080/288 no 4:5. No 16:9 o canvas é a própria fonte.
+        """
 
         expected_profiles = {
             "16:9": {
                 "aspect_ratio": "16:9", "max_full_width": 1_920, "effective_full_width": 640,
                 "full_width": 640, "full_height": 360, "upscale": [],
             },
-            "9:16": {"aspect_ratio": "9:16", "full_width": 1_080, "full_height": 1_920, "upscale": []},
-            "1:1": {"aspect_ratio": "1:1", "full_width": 1_080, "full_height": 1_080, "upscale": []},
-            "4:5": {"aspect_ratio": "4:5", "full_width": 1_080, "full_height": 1_350, "upscale": []},
+            "9:16": {
+                "aspect_ratio": "9:16", "full_width": 1_080, "full_height": 1_920,
+                "upscale": [{"segment": 1, "factor": 5.33}],
+            },
+            "1:1": {
+                "aspect_ratio": "1:1", "full_width": 1_080, "full_height": 1_080,
+                "upscale": [{"segment": 1, "factor": 3.0}],
+            },
+            "4:5": {
+                "aspect_ratio": "4:5", "full_width": 1_080, "full_height": 1_350,
+                "upscale": [{"segment": 1, "factor": 3.75}],
+            },
         }
         for aspect_ratio, expected in expected_profiles.items():
             with self.subTest(aspect_ratio=aspect_ratio):
@@ -326,7 +340,10 @@ class AspectRatioValidationTests(AspectRatioCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(
             payload["data"]["profile"],
-            {"aspect_ratio": "9:16", "full_width": 1_080, "full_height": 1_920, "upscale": []},
+            {
+                "aspect_ratio": "9:16", "full_width": 1_080, "full_height": 1_920,
+                "upscale": [{"segment": 1, "factor": 5.33}],
+            },
         )
 
     def test_rejects_unknown_aspect_ratio_before_probing_media(self) -> None:

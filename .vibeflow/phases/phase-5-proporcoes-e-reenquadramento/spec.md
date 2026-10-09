@@ -106,10 +106,10 @@ O operador (agente ou humano) monta, a partir de gravações 16:9, vídeos 9:16,
 ### Aceite
 
 - [ ] A1: um plano com cada uma das quatro proporções valida e informa as dimensões da full e da preview; outra proporção, ou `max_full_width` fora do 16:9, é recusada com `PLAN_INVALID`.
-- [ ] A2: `reframe` válido é normalizado no envelope e entra no hash canônico; cada violação da decisão 4, 6, 8 ou 10 (sem `crop`, com `motion`, `t_s` fora de ordem ou da duração, faixa de `x`, `y` ou `zoom`, mais de 32 keyframes, campo desconhecido) é recusada com `PLAN_INVALID` e mensagem segura.
-- [ ] A3: `data.profile.upscale` lista os segmentos ampliados com o fator correto e fica vazio quando nenhum é ampliado.
+- [x] A2: `reframe` válido é normalizado no envelope e entra no hash canônico; cada violação da decisão 4, 6, 8 ou 10 (sem `crop`, com `motion`, `t_s` fora de ordem ou da duração, faixa de `x`, `y` ou `zoom`, mais de 32 keyframes, campo desconhecido) é recusada com `PLAN_INVALID` e mensagem segura.
+- [x] A3: `data.profile.upscale` lista os segmentos ampliados com o fator correto e fica vazio quando nenhum é ampliado.
 - [x] A4: preview e full de um plano 9:16 sobre fonte 16:9 saem em 404x720 e 1080x1920; as de 1:1 e 4:5 saem nas dimensões da decisão 3 e 2.
-- [ ] A5: com keyframes, o recorte segue as posições declaradas nos instantes dos keyframes, desliza entre eles conforme `ease` ou `linear`, encosta na borda sem preto e mantém o estado fora do intervalo dos keyframes.
+- [x] A5: com keyframes, o recorte segue as posições declaradas nos instantes dos keyframes, desliza entre eles conforme `ease` ou `linear`, encosta na borda sem preto e mantém o estado fora do intervalo dos keyframes.
 - [ ] A6: um plano 16:9 existente, sem `reframe`, gera full idêntica à de antes da phase, e a preview mostra o texto na mesma proporção da full.
 - [ ] A7: aprovação, bloqueio da full por mutação, janelas de decode, fallback e preview com proxy funcionam num plano 9:16 com `reframe`.
 - [ ] A8: `capabilities` expõe proporções, dimensões e limites do `reframe`, e a skill documenta o fluxo vertical, os keyframes e as zonas seguras.
@@ -117,7 +117,7 @@ O operador (agente ou humano) monta, a partir de gravações 16:9, vídeos 9:16,
 ### Critérios de sucesso
 
 - [ ] C1: todas as provas de A1 a A8 passam junto com a suíte vigente, sem regressão.
-- [ ] C2: a posição do recorte nos instantes dos keyframes coincide com a esperada com tolerância de até 2 pixels na full, e nenhum quadro com `crop` contém barras pretas.
+- [x] C2: a posição do recorte nos instantes dos keyframes coincide com a esperada com tolerância de até 2 pixels na full, e nenhum quadro com `crop` contém barras pretas.
 - [ ] C3: nenhum plano v2 válido antes da phase passa a ser recusado (mudança minor).
 - [ ] C4: `REGRAS.md`, `capabilities` e a skill descrevem o mesmo contrato, com as limitações registradas como `ponytail`.
 
@@ -125,7 +125,7 @@ O operador (agente ou humano) monta, a partir de gravações 16:9, vídeos 9:16,
 
 - Dados e invariantes: o plano canônico e o hash incluem `reframe` e `aspect_ratio`; tempos e coordenadas do plano nunca são alterados pelo render; a full nunca usa proxy; fontes originais nunca são modificadas.
 - Integrações e interfaces: campos novos em `profile` (valores de `aspect_ratio`), `segments[].video.reframe`, `data.profile.full_width`, `data.profile.full_height` e `data.profile.upscale`; `capabilities` ganha as proporções e os limites do `reframe`. Nada é removido nem renomeado.
-- Segurança e operação: o `plan.json` é entrada não confiável. Allowlist: `profile` com `aspect_ratio` (quatro valores) e `max_full_width` (só 16:9, regra vigente); `reframe` só com a chave `keyframes`; cada keyframe só com `t_s`, `x`, `y`, `zoom` e `interpolation`. Tamanho: até 32 keyframes por segmento, dentro dos tetos vigentes de segmentos, camadas e tamanho do plano. Números finitos, sem booleanos como número. Os valores entram no grafo apenas como números formatados pelo helper atual, nunca como texto livre. O grafo continua transportado por arquivo, com o teto vigente de 32.767 caracteres; um plano que o excederia falha com o erro vigente em vez de truncar.
+- Segurança e operação: o `plan.json` é entrada não confiável. Allowlist: `profile` com `aspect_ratio` (quatro valores) e `max_full_width` (só 16:9, regra vigente); `reframe` só com a chave `keyframes`; cada keyframe só com `t_s`, `x`, `y`, `zoom` e `interpolation`. Tamanho: até 32 keyframes por segmento, dentro dos tetos vigentes de segmentos, camadas e tamanho do plano. Números finitos, sem booleanos como número. Os valores entram no grafo apenas como números formatados pelo helper atual, nunca como texto livre. O grafo continua transportado por arquivo (`-/filter_complex`) e não tem teto próprio; o teto de 32.767 caracteres vigente é o da linha de comando do FFmpeg no Windows, que não cresce com o grafo (correção de premissa registrada na T2).
 - Tecnologia imposta: FFmpeg e FFprobe locais, `libx264` e `aac`, sem rede e sem shell, como na pipeline vigente.
 
 ## Como provar
