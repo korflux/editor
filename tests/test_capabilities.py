@@ -219,6 +219,15 @@ class CapabilitiesTests(unittest.TestCase):
         full_width, full_height = plan_schema.canvas_dimensions("16:9", 10_000, 1_920, final=True)
         self.assertEqual((full_width, full_height), (1_920, 1_080))
         self.assertEqual(full_width % landscape["full"]["width_alignment"], 0)
+        # T5: a full alinha a 16 (canvas legado, preservado enquanto a checagem do MP4 o aceita) e a
+        # 32, o da preview, onde o legado seria recusado; os dois valores expostos são os usados.
+        self.assertEqual(landscape["full"]["width_alignment"], 16)
+        self.assertEqual(landscape["full"]["width_alignment_fallback"], 32)
+        self.assertEqual(
+            landscape["full"]["width_alignment_fallback"], landscape["preview"]["width_alignment"]
+        )
+        self.assertEqual(plan_schema.canvas_dimensions("16:9", 1_200, 1_920, final=True), (1_184, 666))
+        self.assertEqual(plan_schema.canvas_dimensions("16:9", 3_184, 3_840, final=True), (3_184, 1_790))
         preview_width, preview_height = plan_schema.canvas_dimensions(
             "16:9", 10_000, landscape["preview"]["max_width"], final=False
         )

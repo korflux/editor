@@ -9,6 +9,9 @@ Cobre, nesta ordem:
    barras), provado por FFprobe das dimensões e por inspeção de pixels.
 4. Mensagens da checagem do MP4 renderizado.
 5. Regressão do 16:9 (A6): o canvas e o grafo de filtros de um plano 16:9 são os mesmos de antes.
+6. Largura da full 16:9 (T5, A9, decisão 16): canvas legado (alinhado a 16) preservado sempre que a
+   checagem do MP4 o aceita e alinhamento a 32 só onde ele seria recusado; tabela de equivalência
+   contra a regra antiga e jornada real das fontes de 1200x674 e de 3184x1790.
 
 Sobre a prova de que a full 16:9 não mudou (A6): o `framemd5` do MP4 codificado depende do
 número de threads do x264 e, portanto, da máquina; não serve como valor fixo em teste. A prova
@@ -41,7 +44,14 @@ from editor.plan.schema import (
     ASPECT_RATIO_TERMS,
     ASPECT_RATIOS,
     FIXED_CANVAS_DIMENSIONS,
+    FULL_FALLBACK_WIDTH_ALIGNMENT,
+    FULL_WIDTH_ALIGNMENT,
     LANDSCAPE_ASPECT_RATIO,
+    LANDSCAPE_RATIO_TOLERANCE,
+    MAX_FULL_WIDTH_STEP,
+    MAX_MAX_FULL_WIDTH,
+    MIN_MAX_FULL_WIDTH,
+    PREVIEW_WIDTH_ALIGNMENT,
     aspect_ratio_value,
     canvas_dimensions,
 )
@@ -51,6 +61,7 @@ from editor.render.full import render_full
 from editor.render.preview import (
     MAX_PREVIEW_DIMENSION,
     _preview_dimensions,
+    _require_renderable_canvas,
     _validate_rendered_preview,
     render_preview,
 )
@@ -259,7 +270,7 @@ class AspectRatioTableTests(unittest.TestCase):
         self.assertEqual(aspect_ratio_value("4:5"), 0.8)
 
     def test_canvas_dimensions_keeps_landscape_rule_and_fixes_the_others(self) -> None:
-        """Fixa a regra vigente do 16:9 (sem upscale, alinhamento 32 na preview e 16 na full)."""
+        """Fixa a regra vigente do 16:9 (sem upscale; preview a 32; full a 16, com fallback a 32, T5)."""
 
         landscape = LANDSCAPE_ASPECT_RATIO
         cases = (
@@ -736,6 +747,244 @@ class LandscapeRegressionTests(AspectRatioCase):
 
         self.assertEqual((preview["video"]["width"], preview["video"]["height"]), (704, 396))
         self.assertEqual((full["video"]["width"], full["video"]["height"]), (1_280, 720))
+
+
+# --- 6. Largura da full 16:9 (T5, A9, decisão 16) -------------------------------------------
+
+LEGACY_FULL_WIDTH_ALIGNMENT = 16
+"""Alinhamento da full 16:9 antes da T5; só existe aqui, como parte do oráculo."""
+
+
+def legacy_full_canvas(source_width: int, max_width: int) -> tuple[int, int]:
+    """Canvas da full 16:9 anterior à T5, reimplementado como oráculo da tabela de equivalência.
+
+    Cópia literal da regra antiga de `schema.canvas_dimensions` (`final=True`): largura limitada
+    por `max_width`, alinhada a 16, e altura `largura * 9 // 16` reduzida a par. Não importa
+    nada de `schema.py` de propósito, para que a prova não mude junto com a regra nova.
+    """
+
+    width = min(source_width, max_width)
+    width -= width % LEGACY_FULL_WIDTH_ALIGNMENT
+    height = width * 9 // 16
+    height -= height % 2
+    return width, height
+
+
+def full_canvas_is_renderable(canvas: tuple[int, int]) -> bool:
+    """Diz se uma full com este canvas passaria pelas checagens reais do render.
+
+    Usa as mesmas funções que `render full` aplica (`_require_renderable_canvas` antes do grafo e
+    `_validate_rendered_preview` sobre o MP4 publicado, com a tolerância de razão intacta),
+    alimentando a segunda com os metadados que um MP4 exatamente nesse canvas teria.
+    """
+
+    width, height = canvas
+    if (width % 2, height % 2) != (0, 0):
+        return False
+    try:
+        _require_renderable_canvas(width, height, "full")
+        with patch(
+            "editor.render.preview.media.inspect_rendered_artifact",
+            return_value=RenderedArtifactCheckTests.metadata(width, height),
+        ):
+            _validate_rendered_preview(
+                Path("staging.mp4"), expected_duration=0.6, expected_audio=False,
+                canvas_width=width, canvas_height=height, max_dimension=None, artifact_name="full",
+            )
+    except CliError:
+        return False
+    return True
+
+
+class FullWidthTableTests(unittest.TestCase):
+    """Prova, sem FFmpeg, que a full 16:9 só muda onde o canvas legado seria recusado."""
+
+    def test_constants_keep_the_legacy_alignment_and_a_fallback_equal_to_the_preview(self) -> None:
+        """A full segue em 16 (full inalterada, decisão 14), com 32 de fallback e tolerância 0,001."""
+
+        self.assertEqual(FULL_WIDTH_ALIGNMENT, 16)
+        self.assertEqual(FULL_FALLBACK_WIDTH_ALIGNMENT, 32)
+        self.assertEqual(FULL_FALLBACK_WIDTH_ALIGNMENT, PREVIEW_WIDTH_ALIGNMENT)
+        # A tolerância da checagem do MP4 não foi relaxada ao virar constante.
+        self.assertEqual(LANDSCAPE_RATIO_TOLERANCE, 0.001)
+
+    def test_rejected_legacy_canvases_fall_back_to_32_and_accepted_ones_are_kept(self) -> None:
+        """1200 vira 1184x666 (legado recusado); 3184x1790, 3600x2024 e 3824x2150 não mudam."""
+
+        cases = (
+            # (largura da fonte, teto, canvas legado, canvas novo)
+            (1_200, 1_920, (1_200, 674), (1_184, 666)),
+            (1_360, 1_920, (1_360, 764), (1_344, 756)),
+            (1_680, 1_920, (1_680, 944), (1_664, 936)),
+            (1_200, 3_840, (1_200, 674), (1_184, 666)),
+            (2_000, 1_200, (1_200, 674), (1_184, 666)),
+            (3_152, 3_840, (3_152, 1_772), (3_136, 1_764)),
+            # Largura múltipla de 32: o legado é exato e é mantido.
+            (1_280, 1_920, (1_280, 720), (1_280, 720)),
+            (3_856, 3_840, (3_840, 2_160), (3_840, 2_160)),
+            # Múltiplas ímpares de 16 de 3184 a 3824: o legado passa pela tolerância e é mantido.
+            (3_184, 3_840, (3_184, 1_790), (3_184, 1_790)),
+            (3_600, 3_616, (3_600, 2_024), (3_600, 2_024)),
+            (3_824, 3_840, (3_824, 2_150), (3_824, 2_150)),
+        )
+        for source_width, max_width, legacy, expected in cases:
+            with self.subTest(source_width=source_width, max_width=max_width):
+                self.assertEqual(legacy_full_canvas(source_width, max_width), legacy)
+                self.assertEqual(
+                    canvas_dimensions(LANDSCAPE_ASPECT_RATIO, source_width, max_width, final=True),
+                    expected,
+                )
+
+    def test_preview_canvas_is_unchanged_by_the_full_rule(self) -> None:
+        """A preview segue alinhada a 32 com altura exata, inclusive nas larguras que a full recua."""
+
+        for source_width, expected in ((1_200, (704, 396)), (3_184, (704, 396)), (320, (320, 180))):
+            with self.subTest(source_width=source_width):
+                self.assertEqual(
+                    canvas_dimensions(LANDSCAPE_ASPECT_RATIO, source_width, MAX_PREVIEW_DIMENSION, final=False),
+                    expected,
+                )
+
+    def test_every_width_and_cap_keeps_the_legacy_canvas_when_accepted_and_is_exact_otherwise(self) -> None:
+        """Tabela completa: toda largura de fonte de 2 a 3840 contra todo `max_full_width` válido.
+
+        Os tetos válidos são os múltiplos de 32 de 32 a 3840 (inclui 32, 640, 1280, 1920 e 3840).
+        O canvas legado é julgado pelas checagens reais do render, e o canvas novo é:
+
+        1. IDÊNTICO ao legado sempre que o legado era renderável, inclusive as 21 larguras
+           múltiplas ímpares de 16 de 3184 a 3824, que passam pela tolerância (3184x1790);
+        2. onde o legado era recusado (o defeito, 1200x674), de largura múltipla de 32 (a maior que
+           não excede a fonte nem o teto, sem upscale), altura par, razão exata
+           `largura * 9 == altura * 16` e aceito pelas checagens reais; é o legado menos 16 pixels
+           de largura. Fonte menor que 32 pixels gera 0x0, recusado como na preview.
+        """
+
+        landscape = LANDSCAPE_ASPECT_RATIO
+        caps = range(MIN_MAX_FULL_WIDTH, MAX_MAX_FULL_WIDTH + 1, MAX_FULL_WIDTH_STEP)
+        for named_cap in (32, 640, 1_280, 1_920, 3_840):
+            self.assertIn(named_cap, caps)
+
+        # Cada canvas distinto é julgado uma só vez pelas checagens reais (poucas centenas).
+        renderable: dict[tuple[int, int], bool] = {}
+
+        def is_renderable(canvas: tuple[int, int]) -> bool:
+            if canvas not in renderable:
+                renderable[canvas] = full_canvas_is_renderable(canvas)
+            return renderable[canvas]
+
+        violations: list[str] = []
+        pairs = identical = rejected = changed = degenerate = 0
+        kept_by_tolerance: set[int] = set()
+        for max_width in caps:
+            for source_width in range(2, 3_841):
+                pairs += 1
+                new = canvas_dimensions(landscape, source_width, max_width, final=True)
+                old = legacy_full_canvas(source_width, max_width)
+                new_width, new_height = new
+                old_width = old[0]
+                limit = min(source_width, max_width)
+                where = f"fonte {source_width}, teto {max_width}: novo {new}, legado {old}"
+
+                if is_renderable(old):
+                    # Grupo 1: o legado já era gerado, então a full é a mesma de antes.
+                    identical += 1
+                    if new != old:
+                        violations.append(f"{where}: canvas legado renderável mudou")
+                    if old_width % 32 == 16:
+                        kept_by_tolerance.add(old_width)
+                    continue
+
+                rejected += 1
+                if limit < 32:
+                    # Menor que um bloco de 32: canvas degenerado, recusado como na preview.
+                    degenerate += 1
+                    if new != (0, 0) or is_renderable(new):
+                        violations.append(f"{where}: canvas degenerado deveria ser (0, 0) e recusado")
+                    continue
+                # Grupo 2: o fallback de largura múltipla de 32, exato e aceito pelo render.
+                if new_width % 32 != 0 or new_height % 2 != 0 or new_width * 9 != new_height * 16:
+                    violations.append(f"{where}: novo não é 16:9 exato, par e múltiplo de 32")
+                if not limit - 32 < new_width <= limit:
+                    violations.append(f"{where}: novo não é a maior largura alinhada sem upscale")
+                if not is_renderable(new):
+                    violations.append(f"{where}: novo não passa nas checagens do render")
+                if old_width % 32 != 16 or new_width != old_width - 16:
+                    violations.append(f"{where}: mudança diferente de um degrau de 16 pixels")
+                changed += 1
+
+        self.assertEqual(violations[:10], [])
+        self.assertEqual(pairs, len(caps) * (3_841 - 2))
+        self.assertEqual(identical + rejected, pairs)
+        # A tabela não é vacuosa: cada grupo e as larguras degeneradas aparecem.
+        for count in (identical, rejected, changed, degenerate):
+            self.assertGreater(count, 0)
+        # As 21 larguras de 3184 a 3824 foram preservadas pela regra (decisão 14), e só elas.
+        self.assertEqual(kept_by_tolerance, set(range(3_184, 3_825, 32)))
+
+
+class FullWidthRenderTests(AspectRatioCase):
+    """Jornadas reais: 1200x674 (legado recusado, fallback) e 3184x1790 (legado preservado), A9."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Gera, além das fontes base, as fontes H.264/AAC de 1200x674 e de 3184x1790."""
+
+        super().setUpClass()
+        make_source(cls.sources_dir / "odd16.mp4", 1_200, 674)
+        make_source(cls.sources_dir / "tolerance.mp4", 3_184, 1_790)
+
+    def assert_real_full(
+        self, source_id: str, expected: tuple[int, int], **profile_extra: object
+    ) -> None:
+        """Valida, gera preview, aprova e renderiza a full; confere envelope e arquivo (FFprobe).
+
+        `data.profile` de `plan validate` deve coincidir com o canvas da full renderizada, e o MP4
+        sai H.264/AAC no canvas esperado, sem relaxar a checagem de razão da publicação.
+        """
+
+        plan = single_segment_plan("16:9", source_id, "crop", **profile_extra)
+        workdir = self.new_workdir(plan, source_id)
+        validated = validate_plan(workdir)["profile"]
+        self.assertEqual((validated["full_width"], validated["full_height"]), expected)
+
+        render_preview(workdir)
+        approve_workdir(workdir)
+        full = render_full(workdir)
+
+        self.assertEqual((full["video"]["width"], full["video"]["height"]), expected)
+        self.assertEqual(full["profile"], validated)
+        metadata = inspect_source(workdir / "full.mp4", require_audio=True, require_video=True)
+        self.assertEqual((metadata.video_width, metadata.video_height), expected)
+        self.assertEqual((metadata.video_codec, metadata.audio_codec), ("h264", "aac"))
+        self.assertLessEqual(
+            abs(metadata.video_width / metadata.video_height - 16 / 9), LANDSCAPE_RATIO_TOLERANCE
+        )
+
+    def test_source_1200x674_renders_a_1184x666_full_with_exact_ratio(self) -> None:
+        """Antes da T5 a full falhava com RENDER_FAILED; agora sai em 1184x666, razão 16:9 exata."""
+
+        self.assert_real_full("odd16", (1_184, 666))
+        self.assertEqual(1_184 * 9, 666 * 16)
+
+    def test_source_3184x1790_keeps_the_legacy_full_canvas(self) -> None:
+        """O legado 3184x1790 passa pela tolerância e já era gerado: a full continua a mesma."""
+
+        self.assert_real_full("tolerance", (3_184, 1_790), max_full_width=3_200)
+
+    def test_real_cli_plan_validate_reports_the_canvas_before_rendering(self) -> None:
+        """O contrato público já mostra 1184x666 em `plan validate`, antes de qualquer render."""
+
+        workdir = self.new_workdir(single_segment_plan("16:9", "odd16", "crop"), "odd16")
+        result = subprocess.run(
+            [sys.executable, "-m", "editor", "plan", "validate", "--workdir", str(workdir.resolve()), "--json"],
+            cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8", check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["ok"])
+        profile = payload["data"]["profile"]
+        self.assertEqual((profile["full_width"], profile["full_height"]), (1_184, 666))
 
 
 if __name__ == "__main__":

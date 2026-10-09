@@ -23,6 +23,7 @@ from .plan.schema import (
     DEFAULT_REFRAME_INTERPOLATION,
     DEFAULT_REFRAME_ZOOM,
     FIXED_CANVAS_DIMENSIONS,
+    FULL_FALLBACK_WIDTH_ALIGNMENT,
     FULL_WIDTH_ALIGNMENT,
     KEYFRAME_FIELDS,
     LANDSCAPE_ASPECT_RATIO,
@@ -189,7 +190,10 @@ def _canvas_capabilities() -> dict[str, Any]:
                 "full": {
                     "max_width": "profile.max_full_width",
                     "max_width_default": DEFAULT_MAX_FULL_WIDTH,
+                    # A full alinha a 16 (canvas legado, mantido enquanto a checagem do MP4 o
+                    # aceita) e a 32 onde o canvas legado seria recusado (1200 vira 1184x666).
                     "width_alignment": FULL_WIDTH_ALIGNMENT,
+                    "width_alignment_fallback": FULL_FALLBACK_WIDTH_ALIGNMENT,
                 },
                 "preview": {
                     "max_width": MAX_PREVIEW_DIMENSION,

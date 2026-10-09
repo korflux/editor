@@ -34,7 +34,8 @@ def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
 
     # O canvas da full é o que `plan validate` informou em `data.profile` (mesma função,
     # `schema.canvas_dimensions`): tamanho fixo de plataforma em 9:16, 1:1 e 4:5 e, no 16:9,
-    # a largura da primeira fonte limitada por `max_full_width`, sem upscale e alinhada a 16.
+    # a largura da primeira fonte limitada por `max_full_width`, sem upscale e alinhada a 16 (canvas
+    # legado, mantido enquanto a checagem do MP4 o aceita) e, onde seria recusado, alinhada a 32.
     canvas_width, canvas_height = _require_renderable_canvas(
         int(validation["profile"]["full_width"]),
         int(validation["profile"]["full_height"]),

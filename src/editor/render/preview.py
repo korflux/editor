@@ -13,7 +13,7 @@ from typing import Any
 from .. import dependencies, media, process
 from ..contracts import CliError, EXIT_CODES
 from ..dependencies import is_regular_path
-from ..plan.schema import LANDSCAPE_ASPECT_RATIO, canvas_dimensions
+from ..plan.schema import LANDSCAPE_ASPECT_RATIO, LANDSCAPE_RATIO_TOLERANCE, canvas_dimensions
 from ..plan.validation import load_validated_plan
 from ..workdir import (
     FullLayout,
@@ -541,7 +541,7 @@ def _validate_rendered_preview(
         or exceeds_max_dimension
         or (
             aspect_ratio == LANDSCAPE_ASPECT_RATIO
-            and abs(metadata.video_width / metadata.video_height - 16 / 9) > 0.001
+            and abs(metadata.video_width / metadata.video_height - 16 / 9) > LANDSCAPE_RATIO_TOLERANCE
         )
     ):
         raise _error(

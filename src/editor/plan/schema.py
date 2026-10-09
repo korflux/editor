@@ -47,7 +47,29 @@ Todas as dimensões são pares (exigência de `yuv420p`) e o lado maior da previ
 """
 
 FULL_WIDTH_ALIGNMENT = 16
-"""Alinhamento legado da largura da full 16:9, que preserva fontes menores que o teto."""
+"""Alinhamento legado da largura da full 16:9, preservado para a full continuar inalterada (decisão 14).
+
+A full 16:9 usa este alinhamento sempre que o canvas legado (largura alinhada a 16 e altura
+`largura * 9 // 16` reduzida a par) é aceito pela checagem do MP4 (`LANDSCAPE_RATIO_TOLERANCE`);
+só quando ele seria recusado entra `FULL_FALLBACK_WIDTH_ALIGNMENT`. Ver `canvas_dimensions`.
+"""
+
+FULL_FALLBACK_WIDTH_ALIGNMENT = 32
+"""Alinhamento da full 16:9 onde o canvas legado seria recusado, o mesmo da preview.
+
+Com altura exata `largura * 9 / 16`, largura e altura só são ambas pares (exigência de
+`yuv420p`) quando a largura é múltipla de 32. Nas larguras múltiplas ímpares de 16 (1200, 1360,
+1680...) o canvas legado tem altura ímpar reduzida a par e razão fora da tolerância, e a checagem
+do MP4 recusava a full recém-renderizada (RENDER_FAILED); com 32 a fonte de 1200x674 sai em
+1184x666, com razão 16:9 exata.
+"""
+
+LANDSCAPE_RATIO_TOLERANCE = 0.001
+"""Desvio máximo aceito entre largura/altura de um MP4 16:9 renderizado e 16/9.
+
+Fonte única da tolerância: `canvas_dimensions` a usa para saber se o canvas legado da full seria
+aceito e `render/preview.py` (`_validate_rendered_preview`) a usa para recusar o MP4 renderizado.
+"""
 
 PREVIEW_WIDTH_ALIGNMENT = 32
 """Alinhamento da largura da preview 16:9, que mantém ambas as dimensões pares em `yuv420p`."""
@@ -124,7 +146,12 @@ def canvas_dimensions(
     Fonte única do tamanho de saída, lida por `plan validate` (`data.profile.full_*`), pelo render
     e, na T4, por `capabilities`. As proporções 9:16, 1:1 e 4:5 têm tamanho fixo de plataforma. O
     16:9 mantém a regra vigente: largura da primeira fonte de vídeo limitada por `max_width`
-    (teto da preview ou `max_full_width`), sem upscale, alinhada ao artefato e com altura par.
+    (teto da preview ou `max_full_width`) e sem upscale. A preview alinha a 32 (`width * 9 // 16`
+    exato e par). A full usa o canvas legado, alinhado a 16 com altura reduzida a par, sempre que a
+    razão dele fica dentro de `LANDSCAPE_RATIO_TOLERANCE` (o MP4 seria aceito, então a full segue
+    idêntica à de antes); só onde ele seria recusado (larguras múltiplas ímpares de 16 como 1200,
+    cuja altura ímpar tira a razão da tolerância) usa o alinhamento 32 de fallback, com altura
+    exata. Fonte menor que 32 pixels de largura gera canvas 0x0 (recusado antes do grafo).
     `max_width` só é lido no 16:9; as demais proporções o ignoram.
     """
 
@@ -132,10 +159,23 @@ def canvas_dimensions(
     if fixed is not None:
         return fixed["full" if final else "preview"]
     width = min(source_width, max_width)
-    width -= width % (FULL_WIDTH_ALIGNMENT if final else PREVIEW_WIDTH_ALIGNMENT)
-    height = width * 9 // 16
-    height -= height % 2
-    return width, height
+    if not final:
+        width -= width % PREVIEW_WIDTH_ALIGNMENT
+        return width, width * 9 // 16
+    # ponytail: a regra legada da full é mantida porque a full 16:9 de todo plano v2 válido deve
+    # continuar a mesma (decisão 14), embora deixe a razão até 0,001 fora do 16:9 exato (3184x1790);
+    # unificar tudo em largura múltipla de 32 numa versão major.
+    legacy_width = width - width % FULL_WIDTH_ALIGNMENT
+    legacy_height = legacy_width * 9 // 16
+    legacy_height -= legacy_height % 2
+    if (
+        legacy_height >= 2
+        and abs(legacy_width / legacy_height - 16 / 9) <= LANDSCAPE_RATIO_TOLERANCE
+    ):
+        return legacy_width, legacy_height
+    # Largura múltipla de 32: `* 9 // 16` é exato (18 por bloco de 32) e a altura já é par.
+    width -= width % FULL_FALLBACK_WIDTH_ALIGNMENT
+    return width, width * 9 // 16
 
 
 def plan_error(message: str) -> CliError:
