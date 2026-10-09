@@ -32,6 +32,7 @@ from .plan.validation import validate_plan
 from .render.full import render_full
 from .render.preview import ACCEL_CHOICES, DEFAULT_QUALITY, PROXY_CHOICES, QUALITY_CHOICES, render_preview
 from .render.proxy import build_proxies
+from .ui.instance import start_ui, stop_ui
 from .workdir import derive_source_id, init_workdir, resolve_workdir
 
 
@@ -546,6 +547,40 @@ def build_parser() -> CliArgumentParser:
         ),
     )
     _add_json_argument(captions_suggest_parser)
+    # Grupo `ui`: interface de revisão no navegador, aberta pela IA e encerrada por ela (spec da phase 7, F1).
+    ui_parser = subparsers.add_parser(
+        "ui",
+        help="abre e encerra a interface de revisão da montagem no navegador",
+        description="abre e encerra o servidor local da interface de revisão, uma instância por trabalho",
+    )
+    _add_json_argument(ui_parser)
+    ui_subparsers = ui_parser.add_subparsers(
+        dest="ui_command",
+        title="operações da interface",
+        metavar="OPERATION",
+    )
+    ui_start_parser = ui_subparsers.add_parser(
+        "start",
+        help="inicia o servidor local em segundo plano e abre o navegador",
+        description=(
+            "inicia o servidor local (127.0.0.1, porta livre) em segundo plano, devolve a URL com o token e "
+            "abre o navegador padrão; com uma instância viva no trabalho, devolve a mesma URL"
+        ),
+    )
+    _add_workdir_argument(ui_start_parser)
+    ui_start_parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="não abre o navegador; a URL segue no envelope",
+    )
+    _add_json_argument(ui_start_parser)
+    ui_stop_parser = ui_subparsers.add_parser(
+        "stop",
+        help="encerra o servidor do trabalho e os FFmpeg filhos",
+        description="encerra o servidor da interface e os processos FFmpeg filhos; sem instância, informa not_running",
+    )
+    _add_workdir_argument(ui_stop_parser)
+    _add_json_argument(ui_stop_parser)
     register_shortcut_parsers(subparsers)
     return parser
 
@@ -682,6 +717,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_duration_s=args.max_duration_s,
             )
             write_json(success_envelope("captions suggest", result))
+            return 0
+
+        if args.command == "ui" and args.ui_command == "start":
+            result = start_ui(resolve_workdir(args.workdir), open_browser=not args.no_open)
+            write_json(success_envelope("ui start", result))
+            return 0
+
+        if args.command == "ui" and args.ui_command == "stop":
+            result = stop_ui(resolve_workdir(args.workdir))
+            write_json(success_envelope("ui stop", result))
             return 0
 
         if args.command is None:

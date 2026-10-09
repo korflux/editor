@@ -68,7 +68,7 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
 
 ### T3: Abrir a interface por `editor ui start` com servidor local protegido
 
-- [ ] T3 concluída
+- [x] T3 concluída
 - **Spec:** A1, A2 (F1, F2, F5 passo 1; suposições 7, 9 e 13; Contratos de segurança)
 - **O quê:**
   - **CLI:** `editor ui start --workdir <abs> [--no-open] --json` inicia o servidor em segundo plano, preso a `127.0.0.1` numa porta livre, e devolve `state`, `url`, `pid` e `port`. Uma instância viva é reaproveitada (`running`). `editor ui stop` encerra o servidor e os FFmpeg filhos (`stopped` ou `not_running`). O registro da instância fica em arquivo regular de `.tmp`, sem links. O servidor encerra sozinho depois de 2 h sem requisições.
@@ -80,16 +80,19 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
     - texto da seleção: o mapeamento de um intervalo da montagem para segmentos, camadas e legendas com tempos da fonte, e o bloco "Copiar para IA" de F7.
   - **Estáticos:** a página da interface vazia e a tela "Sessão inválida", servidas do pacote.
 - **Aceite:**
-  - [ ] Processo real: dois `start` (o segundo devolve `running` com a mesma URL), `stop` sem processo nem FFmpeg órfão, `stop` sem instância devolve `not_running`, e encerramento por inatividade com prazo reduzido no teste.
-  - [ ] Pedidos HTTP reais recebem `UI_TOKEN_INVALID`, `UI_HOST_INVALID`, `UI_ORIGIN_INVALID` e `UI_SESSION_LIMIT` nos casos da spec. Query ou corpo fora da allowlist recebem `ARGUMENT_INVALID`. Os headers de segurança estão presentes.
-  - [ ] O estado muda de hash em até 2 s depois de alterar `plan.json`, e de `sources_fingerprint` depois de alterar uma fonte. Plano inválido devolve código e mensagem segura, mantendo a última versão válida.
-  - [ ] Duas instâncias em trabalhos diferentes, abertas no mesmo cliente HTTP com cookies, mantêm as duas sessões válidas; uma terceira sessão descarta a ociosa mais antiga e só recebe `UI_SESSION_LIMIT` quando as duas estão ativas.
-  - [ ] Rota e método fora da allowlist recebem 404 e 405; o stderr e o log do servidor, capturados no teste, não contêm o token.
-  - [ ] O texto da seleção confere campo a campo com `plan validate` (segmentos, J/L, camadas, legendas, timecode e segundos) e não contém caminho absoluto nem token.
-  - [ ] O stream servido pela API é o mesmo da T1 e termina quando o cliente fecha a conexão.
+  - [x] Processo real: dois `start` (o segundo devolve `running` com a mesma URL), `stop` sem processo nem FFmpeg órfão, `stop` sem instância devolve `not_running`, e encerramento por inatividade com prazo reduzido no teste.
+  - [x] Pedidos HTTP reais recebem `UI_TOKEN_INVALID`, `UI_HOST_INVALID`, `UI_ORIGIN_INVALID` e `UI_SESSION_LIMIT` nos casos da spec. Query ou corpo fora da allowlist recebem `ARGUMENT_INVALID`. Os headers de segurança estão presentes.
+  - [x] O estado muda de hash em até 2 s depois de alterar `plan.json`, e de `sources_fingerprint` depois de alterar uma fonte. Plano inválido devolve código e mensagem segura, mantendo a última versão válida.
+  - [x] Duas instâncias em trabalhos diferentes, abertas no mesmo cliente HTTP com cookies, mantêm as duas sessões válidas; uma terceira sessão descarta a ociosa mais antiga e só recebe `UI_SESSION_LIMIT` quando as duas estão ativas.
+  - [x] Rota e método fora da allowlist recebem 404 e 405; o stderr e o log do servidor, capturados no teste, não contêm o token.
+  - [x] O texto da seleção confere campo a campo com `plan validate` (segmentos, J/L, camadas, legendas, timecode e segundos) e não contém caminho absoluto nem token.
+  - [x] O stream servido pela API é o mesmo da T1 e termina quando o cliente fecha a conexão.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server tests.test_cli_contract -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server tests.test_cli_contract -v`
 - **Deps:** T1
+- **Prova:** `unittest tests.test_ui_server tests.test_cli_contract` -> 65 testes OK (46 novos); suíte completa -> 426 testes OK. Processos, HTTP e FFmpeg reais; sem órfãos depois da suíte (conferido por CIM). Smoke no navegador: tela "Sessão inválida" sem violação de CSP, `/` com estáticos 200, cookie invisível ao JS, `<video>` consumindo `/api/stream`. Wheel descartável confirmou os estáticos no pacote.
+- **API:** `GET /?token=` (302 e cookie `editor_ui_session_<porta>`), `GET /`, `GET /static/<nome>`, `GET /api/state`, `GET /api/stream?t=&res=`, `GET /api/frame?t=&res=`, `GET /api/selection?start=&end=`. Constantes para a T7 em `ui/limits.py` e `render.live.RESOLUTIONS`. Pontos de extensão: rota `/api/approve` (T6) usa `read_json_body` já pronto; tipo de processo `source` (T5) já existe em `PROCESS_KINDS`.
+- **Notas:** decisões do implementador dentro da spec: estados `loading|ready|outdated|missing|invalid` com vigia de 0,25 s e assinatura estável por 2 ciclos; `UI_STOP_FAILED` (servidor ainda vivo 10 s depois do kill); HTTP/1.0 sem `Range`, timeout de 30 s de socket encerra o stream parado; `ui stop` só mata a árvore depois de provar a instância pela porta. `ponytail` no código: cookie não isolado por porta, estado inteiro a cada consulta, assinatura por tamanho e mtime, `ui start` concorrente, `playback.capture_frame` repete parte de `live.extract_frame` para poder cancelar o scrub.
 - **Decisões:** UI-02 (cria), SEC-01 (cria), UI-03 (cria, lado do servidor)
 - **Arquivos:** `src/editor/ui/` (novo: servidor, instância, sessão, estado, seleção e estáticos), `src/editor/cli.py`, `pyproject.toml` (inclusão dos estáticos no pacote), `tests/test_ui_server.py` (novo)
 - **Risco:** é a superfície de segurança da phase. Toda entrada é validada antes de abrir arquivo ou processo, e a mídia só sai das fontes e proxies declarados.

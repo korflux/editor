@@ -1,0 +1,54 @@
+/* Tokens e grade da interface de revisão (design.md, "Kit mínimo"). Tema escuro único, valores finais.
+   Esqueleto da T3: a T4 acrescenta os componentes (player, transporte, timeline, painel) sobre estes tokens. */
+:root {
+  color-scheme: dark;
+  --bg-base: #121214;
+  --bg-panel: #1b1b1f;
+  --bg-raised: #26262c;
+  --bg-hover: #2f2f36;
+  --border: #34343c;
+  --text: #e6e6ea;
+  --text-muted: #9a9aa6;
+  --accent: #4c8dff;
+  --accent-text: #0b1220;
+  --playhead: #ff5c5c;
+  --selection: rgb(76 141 255 / 22%);
+  --ok: #3ecf8e;
+  --warn: #f2b84b;
+  --danger: #ff6b6b;
+  --lane-video: #3b6fd8;
+  --lane-audio: #2fa37a;
+  --lane-text: #b46ad6;
+  --lane-layer: #d08a3a;
+  --lane-caption: #c9b458;
+  --lane-discarded: #3a3a42;
+  --font-ui: system-ui, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg-base);
+  color: var(--text);
+  font: 13px/1.4 var(--font-ui);
+}
+
+/* Janela inteira sem rolagem da página (100dvh): barra superior, faixa de estado, área central e timeline. */
+.shell {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  grid-template-rows: 44px auto 1fr minmax(220px, 34vh);
+  grid-template-areas:
+    "topbar topbar"
+    "status status"
+    "stage panel"
+    "timeline timeline";
+  height: 100dvh;
+}
+
+.zone-topbar { grid-area: topbar; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.zone-status { grid-area: status; }
+.zone-stage { grid-area: stage; background: var(--bg-base); }
+.zone-timeline { grid-area: timeline; background: var(--bg-panel); border-top: 1px solid var(--border); }
+.zone-panel { grid-area: panel; background: var(--bg-panel); border-left: 1px solid var(--border); }

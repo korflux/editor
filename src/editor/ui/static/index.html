@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editor, revisão da montagem</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<!-- Esqueleto da tela de revisão (T3). A T4 preenche as zonas abaixo com player, timeline e painel do
+     trecho, sem script em linha (a CSP só permite scripts de /static/). A ordem do DOM segue a ordem de
+     leitura e de Tab do design: barra superior, transporte, timeline, painel. -->
+<div id="app" class="shell">
+  <header id="topbar" class="zone zone-topbar"></header>
+  <div id="statusbar" class="zone zone-status" hidden></div>
+  <main id="stage" class="zone zone-stage"></main>
+  <section id="timeline" class="zone zone-timeline" aria-label="Linha do tempo"></section>
+  <aside id="panel" class="zone zone-panel" aria-label="Trecho"></aside>
+</div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
