@@ -23,6 +23,8 @@ DOCUMENTATION_PATHS = (
     PROJECT_ROOT / "skills" / "vibe-editor" / "SKILL.md",
     PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "installation.md",
     PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "youtube-editing.md",
+    PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "canal-sonni-viaja.md",
+    PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "source-preparation.md",
     PROJECT_ROOT / ".vibeflow" / "REGRAS.md",
 )
 

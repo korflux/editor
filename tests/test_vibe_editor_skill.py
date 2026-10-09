@@ -11,6 +11,12 @@ SKILL_PATH = PROJECT_ROOT / "skills" / "vibe-editor" / "SKILL.md"
 YOUTUBE_REFERENCE_PATH = (
     PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "youtube-editing.md"
 )
+CHANNEL_PROFILE_PATH = (
+    PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "canal-sonni-viaja.md"
+)
+SOURCE_PREPARATION_PATH = (
+    PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "source-preparation.md"
+)
 
 
 def read_skill_document(path: Path) -> str:
@@ -28,6 +34,8 @@ class VibeEditorSkillTests(unittest.TestCase):
 
         cls.skill = read_skill_document(SKILL_PATH)
         cls.youtube_reference = read_skill_document(YOUTUBE_REFERENCE_PATH)
+        cls.channel_profile = read_skill_document(CHANNEL_PROFILE_PATH)
+        cls.source_preparation = read_skill_document(SOURCE_PREPARATION_PATH)
 
     def test_skill_orders_editorial_gate_before_approval_command(self) -> None:
         """Confirma que o gate aparece antes do comando que registra a aprovação humana."""
@@ -102,6 +110,67 @@ class VibeEditorSkillTests(unittest.TestCase):
             "não pedir aprovação",
         ):
             self.assertIn(marker, audit_lower)
+
+    def test_youtube_reference_is_the_universal_quality_standard(self) -> None:
+        """Mantém a referência válida para qualquer vídeo, sem arquivos ou estilo do canal embutidos."""
+
+        for marker in (
+            "# Padrão de qualidade de edição para YouTube",
+            "qualquer vídeo, de qualquer pessoa",
+            "0,5 s ou mais",
+            "-17 LUFS",
+            "`size_px` não é escalado entre preview e full",
+            "## 3. Estilo: decisões do briefing",
+            "source-preparation.md",
+            "canal-sonni-viaja.md",
+        ):
+            self.assertIn(marker, self.youtube_reference)
+        # arquivos e estilo do canal vivem no perfil; técnicas genéricas antigas foram descartadas
+        for absent in ("QRtiger.png", "Ending.mp4", "Tahoma", "Pattern interrupt", "### 2.3 B-roll e inserções"):
+            self.assertNotIn(absent, self.youtube_reference)
+
+    def test_channel_profile_carries_the_channel_style(self) -> None:
+        """Garante que o estilo do canal fique em um perfil próprio, separado do padrão de qualidade."""
+
+        for marker in (
+            "# Perfil de estilo do canal Sonni Viaja",
+            "Cronologia vivida",
+            "QRtiger.png",
+            "Ending.mp4",
+            "Tahoma",
+            "Correção:",
+            "[youtube-editing.md](youtube-editing.md)",
+        ):
+            self.assertIn(marker, self.channel_profile)
+
+    def test_source_preparation_documents_the_tested_conversion(self) -> None:
+        """Garante que a conversão de fontes HEVC, MOV e com trilhas extras continue documentada."""
+
+        for marker in (
+            "MEDIA_UNSUPPORTED",
+            "-map 0:v:0 -map 0:a:0",
+            "-write_tmcd 0",
+            "-pix_fmt yuv420p",
+            "libx264",
+            "h264_nvenc",
+            "HDR",
+            "aceite",
+        ):
+            self.assertIn(marker, self.source_preparation)
+
+    def test_skill_links_every_reference_and_does_not_impose_the_channel_style(self) -> None:
+        """Garante que o agente descubra as referências e não aplique o estilo do canal a outras pessoas."""
+
+        for marker in (
+            "references/youtube-editing.md",
+            "references/canal-sonni-viaja.md",
+            "references/source-preparation.md",
+            "references/installation.md",
+            "qualquer vídeo, de qualquer pessoa",
+            "Não imponha o estilo",
+            "Não crie cópias convertidas",
+        ):
+            self.assertIn(marker, self.skill)
 
 
 if __name__ == "__main__":

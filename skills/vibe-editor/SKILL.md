@@ -18,6 +18,8 @@ reproduzível e aprovada pelo usuário. O agente conduz a conversa e usa a CLI
 - Use somente quando o usuário pedir uma edição de vídeo real com fontes locais.
 - Não envie vídeos, áudios, transcrições, frames ou planos para serviços externos.
 - Não baixe silenciosamente FFmpeg, modelos ou qualquer dependência.
+- Não crie cópias convertidas das fontes sem avisar o custo (tempo, disco, uma
+  geração de compressão) e obter o aceite do usuário. Os originais nunca são alterados.
 - Não escolha cortes, música, textos ou ordem dos trechos sem confirmar a intenção
   do usuário quando ela não estiver clara.
 - Nunca trate a existência da preview como aprovação. A aprovação precisa ser
@@ -43,10 +45,24 @@ Python do ambiente virtual do repositório:
 Use `editor <comando>` somente quando o executável instalado estiver confirmado no
 ambiente atual.
 
-Quando o usuário disser que o vídeo é para YouTube, leia
+Para qualquer vídeo, de qualquer pessoa, leia
 [references/youtube-editing.md](references/youtube-editing.md) antes de fechar o
-briefing. Use esse manual como ponto de partida para as decisões editoriais e os
-comandos do fluxo, mas respeite o estilo solicitado explicitamente pelo usuário.
+briefing. Ele define o padrão de qualidade da skill (processo com prova, cortes que
+não comem palavras, texto na tela com fonte, áudio nivelado, imagem íntegra, entrega),
+como esse padrão vira campos do plano e as limitações do editor (tamanho do texto na
+preview, texto sem sombra, saída sempre 16:9). O estilo do vídeo (ritmo, b-roll,
+zoom, música, aparência do texto, gancho e fecho) é decisão do briefing: pergunte só
+o que o usuário ainda não definiu. Se o vídeo for do canal Sonni Viaja (vlog de
+viagem de Marco Kormoczi), leia também
+[references/canal-sonni-viaja.md](references/canal-sonni-viaja.md), que traz o estilo
+do canal pronto. Não imponha o estilo, os arquivos nem o fecho desse canal a vídeos de
+outras pessoas.
+
+Se o editor recusar uma fonte (`MEDIA_UNSUPPORTED` ou "formato ou metadados
+compatíveis"), o que é comum em vídeos de câmera e de celular (HEVC, MOV, trilhas
+extras), leia [references/source-preparation.md](references/source-preparation.md)
+antes de orientar o usuário. A conversão para cópias H.264 é testada e resolve, mas
+só se faz depois de avisar o custo e obter o aceite.
 
 ## Fluxo obrigatório
 

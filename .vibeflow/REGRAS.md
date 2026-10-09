@@ -98,6 +98,10 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `CLAUDE.md`: ponteiro para `.vibeflow/REGRAS.md`, usado por agentes compatíveis com CLAUDE.
 - `.erros-encontrados/`: registros de problemas fora do escopo encontrados durante as verificações.
 - `skills/vibe-editor/`: skill que ensina agentes a conduzir o fluxo de edição de vídeo local, incluindo verificação do ambiente, análise, preview, aprovação e full.
+  - `references/youtube-editing.md`: padrão de qualidade de edição para YouTube, válido para qualquer vídeo de qualquer pessoa (fluxo, regra de cortes, texto na tela com fonte, áudio, entrega) e a tabela de decisões de estilo.
+  - `references/canal-sonni-viaja.md`: perfil de estilo do canal Sonni Viaja (letreiros, QR code, tela final, revisões do Marco), consolidado de `A:\Youtube\padrao-de-montagem.md` e `A:\Youtube\S04E33\padrao-de-edicao-S04E31.md`.
+  - `references/source-preparation.md`: diagnóstico e conversão testada de fontes que o editor recusa (HEVC, MOV, trilhas extras) para cópias H.264.
+  - `references/installation.md`: provisionamento do ambiente local.
 - Pontos de entrada da aplicação: `python -m editor` e o comando instalado `editor`.
 - Stack técnica: Python 3.11 x64, setuptools como backend de empacotamento, `faster-whisper==1.2.1`, `ctranslate2==4.8.0`, FFmpeg local, `pip-audit==2.10.1` e gitleaks 8.30.1. A lista transitiva e os hashes ficam em `requirements.lock`.
 <!-- evidência: MVP implementado até a jornada E2E em 2026-09-12; Phase 1 T1 a T8 implementadas e T9 de capacidades/documentação verificada em 2026-09-13; Phase 2 T1 a T6 implementadas e T7 de jornada detalhada verificada em 2026-09-19; Phase 4 T1 a T4 implementadas e T5 de capacidades, documentação e benchmark verificada em 2026-10-08. -->
@@ -229,11 +233,11 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 
 ### Skill de agente `vibe-editor`
 
-- **Propósito:** ensinar agentes compatíveis a reconhecer pedidos de edição de vídeo e conduzir o trabalho do briefing até a `full.mp4` aprovada, usando a CLI local; quando o destino é YouTube, aplica boas práticas de edição.
+- **Propósito:** ensinar agentes compatíveis a reconhecer pedidos de edição de vídeo e conduzir o trabalho do briefing até a `full.mp4` aprovada, usando a CLI local; aplica o padrão de qualidade de edição para YouTube a qualquer vídeo e, quando o vídeo é do canal Sonni Viaja, o perfil de estilo dele.
 - **Entrada:** pedido do usuário para editar, montar, cortar, juntar, sonorizar, legendar ou exportar vídeo com fontes locais.
 - **Saída:** execução guiada de `capabilities`, `init`, análises, plano schema v2, `preview.mp4`, aprovação explícita e `full.mp4`, sem upload ou fallback remoto.
-- **Dependências:** o ambiente local descrito em `skills/vibe-editor/references/installation.md` e as práticas de YouTube em `skills/vibe-editor/references/youtube-editing.md`.
-- **Limitação conhecida:** a skill ainda não produz legendas sincronizadas, easing, keyframes arbitrários, rotação, tracking ou transições; `ponytail: adicionar essas capacidades somente quando uma necessidade editorial real exigir contrato e verificação próprios`.
+- **Dependências:** o ambiente local descrito em `skills/vibe-editor/references/installation.md`, o padrão de qualidade em `skills/vibe-editor/references/youtube-editing.md`, o perfil do canal em `skills/vibe-editor/references/canal-sonni-viaja.md` e a preparação de fontes em `skills/vibe-editor/references/source-preparation.md`.
+- **Limitação conhecida:** a skill ainda não produz legendas sincronizadas, easing, keyframes arbitrários, rotação, tracking ou transições; `ponytail: adicionar essas capacidades somente quando uma necessidade editorial real exigir contrato e verificação próprios`. Do editor: a saída é sempre 16:9 (fonte vertical gera barras ou recorte), a camada de texto não tem sombra e `size_px` não escala entre preview e full (`.erros-encontrados/2026-10-08-size-px-nao-escala-entre-preview-e-full.md`), e fontes HEVC ou MOV exigem a conversão de `source-preparation.md` (`.erros-encontrados/2026-10-05-fontes-dji-hevc-rejeitadas.md`).
 - **Verificação:** `python -X utf8 C:\Users\marco\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\vibe-editor` e revisão dos comandos documentados contra `scripts/install.ps1` e `src/editor/cli.py`.
 
 ### Contrato editorial v2 da Phase 1
