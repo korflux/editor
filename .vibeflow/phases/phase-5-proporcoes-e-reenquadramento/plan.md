@@ -136,18 +136,23 @@ Pedido do humano depois da review final: resolver R1 a R4 (rodada de correção,
 
 ### T6: Áudio idêntico com e sem janelas de decode
 
-- [ ] T6 concluída
+- [x] T6 concluída
 - **Spec:** A10, decisão 17
 - **O quê:** achar a causa raiz do deslocamento de até 1.024 amostras quando o `-ss` da janela cai num keyframe de vídeo (`atrim` seguido de `asetpts=PTS-STARTPTS` das entradas de áudio com janela, `render/ffmpeg_graph.py`, `render/windows.py`) e corrigi-la uma vez na origem; estender `tests/test_decode_windows.py` com a prova de PCM; manter a afirmação do `REGRAS.md` verdadeira e marcar o registro `2026-10-08-janelas-de-decode-deslocam-audio-em-keyframe-de-video.md` como resolvido.
 - **Aceite:**
-  - [ ] Fonte com GOP 25 e cortes em 1,0 s e 8,0 s (mais cortes alinhados e não alinhados a keyframe, várias janelas, corte J/L): o PCM decodificado da saída com janelas é idêntico, amostra a amostra, ao sem janelas; com GOP 12 continua idêntico.
-  - [ ] O `framemd5` de vídeo com e sem janelas continua igual; o golden do grafo 16:9 sem janelas não muda.
+  - [x] Fonte com GOP 25 e cortes em 1,0 s e 8,0 s (mais cortes alinhados e não alinhados a keyframe, várias janelas, corte J/L): o PCM decodificado da saída com janelas é idêntico, amostra a amostra, ao sem janelas; com GOP 12 continua idêntico.
+  - [x] O `framemd5` de vídeo com e sem janelas continua igual; o golden do grafo 16:9 sem janelas não muda.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_decode_windows -v`
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_preview_render tests.test_full_render tests.test_aspect_ratio tests.test_reframe -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_decode_windows -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_preview_render tests.test_full_render tests.test_aspect_ratio tests.test_reframe -v`
 - **Deps:** nenhuma
 - **Arquivos:** `src/editor/render/ffmpeg_graph.py`, `src/editor/render/windows.py` (se a causa estiver no planejador), `tests/test_decode_windows.py`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-08-janelas-de-decode-deslocam-audio-em-keyframe-de-video.md`
 - **Risco:** a correção não pode mudar os tempos do plano nem o hash canônico; o áudio sem janelas é a referência e não deve mudar.
+- **Prova:** `tests.test_decode_windows` -> 18 testes OK; `tests.test_preview_render tests.test_full_render tests.test_aspect_ratio tests.test_reframe` -> 85 testes OK (golden do grafo 16:9 sem janelas inalterado); suíte completa (`discover -s tests`) -> 252 testes OK em 279 s. Defeito reproduzido antes de editar (fonte do E2E, `-g 25 -preset ultrafast`, cortes 1,0-4,0 e 8,0-11,0): 286.976 amostras com janelas contra 288.000 sem; também a 44,1 kHz (287.478 contra 288.000). Os novos testes de PCM falham sem a correção (19 verificações: 18 subcasos e a full, caso do defeito `286976 != 288000`) e passam com ela. `WindowedAudioPcmTests` compara o PCM `s16le` amostra a amostra da preview real com e sem janelas, mais o `framemd5` de vídeo e áudio da saída e do grafo, em 3 fontes (GOP 25 sem B-frames a 48 kHz e a 44,1 kHz, GOP 12 com B-frames) e 11 cenários (cortes alinhados e não alinhados, a 0,01 e 0,02 s do keyframe, cinco janelas, janela no início e perto do início, trilha com `in_s`/`out_s`, `loop`, J/L, camada de vídeo), e a full do caso do defeito (288.000 amostras exatas). Varredura descartável de 256 cortes próximos de keyframes em 4 fontes: 0 divergências.
+- **Causa raiz:** depois de um seek de entrada o demuxer MP4 começa o áudio no pacote que contém o instante do keyframe de vídeo e o decoder AAC descarta o primeiro quadro (1.024 amostras); com B-frames o `dts` do keyframe é anterior ao `pts` e a sobra cobre o corte, mas sem B-frames (`-preset ultrafast`, `-bf 0`) o início do áudio nunca chega ao grafo e o `asetpts=PTS-STARTPTS` esconde a lacuna adiantando a trilha. O gatilho não é o GOP 25 em si. A janela que começa em 0 também perdia o primeiro quadro AAC com `-ss 0`.
+- **Arquivos (efetivos):** `src/editor/render/windows.py`, `src/editor/render/ffmpeg_graph.py`, `src/editor/render/preview.py`, `tests/test_decode_windows.py`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-08-janelas-de-decode-deslocam-audio-em-keyframe-de-video.md`.
+- **Decisões de implementação:** `DecodeWindow` ganhou `seek_s` (`start_s` menos `AUDIO_PREROLL_S` de 0,25 s, 6 casas, 0 no início da fonte) e `read_duration_s`; o comando de entrada (preview e full) emite `-ss seek_s` só quando maior que 0 e `-t read_duration_s`, e `_GraphInputs.locate` subtrai o mesmo `seek_s` dos recortes de vídeo e de áudio (fonte única do deslocamento); o planejador (`duration_s`, estimativa de ganho) não muda; tempos do plano, hash canônico, grafo sem janelas e áudio sem janelas não mudam. A frase do `REGRAS.md` agora diz como a igualdade é provada (`framemd5` do grafo e PCM da preview e da full) e cita o pré-roll.
+- **Limitação registrada (`ponytail`):** a estimativa de ganho de 20% e o teto de leitura ignoram o pré-roll de até 0,25 s por janela; somar o recuo à estimativa se o limiar passar a decidir casos de fronteira reais. `scripts/bench_render.py` não foi rodado de novo (as medições da phase 4 são anteriores); o teste de PCM acrescenta cerca de 35 s à suíte.
 
 ### T7: Sombra e contorno na camada de texto
 

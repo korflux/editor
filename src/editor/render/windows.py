@@ -11,7 +11,17 @@ só janela fonte `video` e só quando a leitura estimada cai pelo menos 20%.
 O seek de entrada do FFmpeg (`-ss` antes do `-i`) decodifica a partir do keyframe
 anterior e descarta o excedente, então quadros e amostras saem iguais aos da leitura
 completa; só muda o tamanho dos blocos de áudio entregues ao grafo, que o encoder
-reagrupa. Não foi preciso pre-roll de áudio: o demuxer MP4 já recua até o keyframe.
+reagrupa.
+
+Pre-roll de áudio (T6 da phase 5): o seek não entrega o áudio de graça. O demuxer MP4 começa
+o áudio no pacote que contém o instante do keyframe de vídeo e o decoder AAC descarta o
+primeiro quadro (1.024 amostras) decodificado depois do seek (medido com `ffprobe -show_frames`
+e `-read_intervals`, sem o recorte do CLI), então o áudio útil só começa até 1.024 amostras
+depois do keyframe. Com B-frames o keyframe tem `dts` anterior ao `pts` e a sobra cobre o corte;
+sem B-frames o keyframe cai no próprio corte e o início do áudio some, e o `asetpts=PTS-STARTPTS`
+do grafo esconde a lacuna adiantando a trilha. Por isso o `-ss` de cada janela recua
+`AUDIO_PREROLL_S` antes do primeiro uso (`DecodeWindow.seek_s`), e o grafo e o comando derivam o
+seek dessa mesma propriedade.
 ponytail: AAC codificado com PNS (substituição perceptual de ruído) sai diferente após
 qualquer seek, pois o ruído depende do estado acumulado do decoder; aceitar ou ler o
 áudio dessas fontes sem janela se uma fonte real exigir igualdade bit a bit.
@@ -39,19 +49,50 @@ MAX_VIDEO_INPUTS = 24
 MIN_READ_REDUCTION = 0.2
 """Redução mínima da leitura estimada para justificar janelar uma fonte."""
 
+AUDIO_PREROLL_S = 0.25
+"""Recuo do seek antes do primeiro uso da janela, que absorve o descarte do decoder AAC após o seek.
+
+O descarte e a posição de entrada do demuxer somam no máximo 1.024 amostras por quadro AAC
+(21 ms a 48 kHz); 0,25 s cobre também taxas baixas e HE-AAC, que tem quadros de 2.048 amostras.
+ponytail: estimativa de ganho e teto de leitura ignoram esse recuo (no máximo 0,25 s por janela);
+somar o recuo à estimativa se o limiar de 20% passar a decidir casos de fronteira reais.
+"""
+
 
 @dataclass(frozen=True)
 class DecodeWindow:
-    """Intervalo contínuo de uma fonte, lido por uma entrada `-ss start_s -t duration_s`."""
+    """Intervalo contínuo de uma fonte, lido por uma entrada `-ss seek_s -t read_duration_s`.
+
+    `start_s` e `end_s` são o primeiro e o último instante realmente usados pela timeline (mais a
+    folga final); o seek começa `AUDIO_PREROLL_S` antes de `start_s`.
+    """
 
     start_s: float
     end_s: float
 
     @property
     def duration_s(self) -> float:
-        """Duração passada a `-t`, derivada para nunca divergir do intervalo."""
+        """Duração do intervalo usado, base da estimativa de ganho do planejador."""
 
         return self.end_s - self.start_s
+
+    @property
+    def seek_s(self) -> float:
+        """Instante de `-ss`, ou 0 quando a janela começa no início da fonte e a entrada não faz seek.
+
+        Fonte única do deslocamento: o comando de entrada e os recortes do grafo derivam daqui.
+        O arredondamento a 6 casas é o mesmo da linha de comando, então `-ss` e deslocamento nunca
+        diferem; sem seek a leitura é a mesma da fonte inteira, inclusive o início do áudio, que
+        um `-ss 0` perderia em fontes sem B-frames.
+        """
+
+        return max(0.0, round(self.start_s - AUDIO_PREROLL_S, 6))
+
+    @property
+    def read_duration_s(self) -> float:
+        """Duração passada a `-t`, contada a partir de `seek_s`, para nunca divergir do intervalo."""
+
+        return self.end_s - self.seek_s
 
 
 def source_intervals(document: Mapping[str, Any]) -> dict[str, list[tuple[float, float]]]:

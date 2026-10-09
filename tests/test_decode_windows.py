@@ -3,7 +3,9 @@
 A equivalência compara o `framemd5` do vídeo e do áudio produzidos pelo mesmo grafo com e
 sem janelas, numa fonte H.264/AAC de GOP curto gerada pelo próprio teste. Os testes de
 render (T2) provam preview e full reais com janelas por padrão, o envelope `data.decode`,
-o fallback sem janelas e a regra do decode por GPU por entradas de vídeo.
+o fallback sem janelas e a regra do decode por GPU por entradas de vídeo. Os testes de PCM
+(T6 da phase 5) provam amostra a amostra que o áudio renderizado com janelas coincide com o
+sem janelas em fontes com e sem B-frames, com cortes dentro e fora dos keyframes.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from editor.render.ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
 from editor.render.full import render_full
 from editor.render.preview import GPU_MAX_VIDEO_INPUTS, _build_ffmpeg_arguments, render_preview
 from editor.render.windows import (
+    AUDIO_PREROLL_S,
     MAX_VIDEO_INPUTS,
     MAX_WINDOWS_PER_SOURCE,
     DecodeWindow,
@@ -123,8 +126,15 @@ def workspace_tempdir() -> Iterator[Path]:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def create_gop_source(path: Path) -> None:
-    """Gera fonte H.264 de GOP 12 com B-frames e AAC estéreo cujo sinal nunca se repete.
+def create_gop_source(
+    path: Path, *, gop: int = 12, b_frames: bool = True, sample_rate: int = 48000
+) -> None:
+    """Gera fonte H.264 e AAC estéreo cujo sinal nunca se repete, com GOP, B-frames e taxa de áudio escolhidos.
+
+    O padrão (GOP 12, com B-frames, 48 kHz) é a fonte da phase 4. `b_frames=False` gera a fonte
+    sem reordenação, em que o `dts` do keyframe coincide com o `pts` (o caso do defeito de áudio
+    da T6 da phase 5); com B-frames o `dts` do keyframe fica 2 quadros antes e o áudio já nasce
+    recuado, o que esconde o defeito.
 
     O PNS do encoder AAC nativo fica desligado: ele sorteia ruído com estado do decoder que
     depende de todos os quadros anteriores, e nenhum seek preserva esse estado.
@@ -135,8 +145,9 @@ def create_gop_source(path: Path) -> None:
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-f", "lavfi", "-i", f"testsrc2=size=160x90:rate=25:duration={SOURCE_DURATION_S:g}",
             "-f", "lavfi", "-i",
-            f"aevalsrc=0.4*sin(2*PI*(220+15*t)*t)|0.4*sin(2*PI*(330+9*t)*t):s=48000:d={SOURCE_DURATION_S:g}",
-            "-c:v", "libx264", "-g", "12", "-pix_fmt", "yuv420p",
+            f"aevalsrc=0.4*sin(2*PI*(220+15*t)*t)|0.4*sin(2*PI*(330+9*t)*t):s={sample_rate}:d={SOURCE_DURATION_S:g}",
+            "-c:v", "libx264", "-g", str(gop), *([] if b_frames else ["-bf", "0"]),
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-aac_pns", "0", "-b:a", "128k",
             "-movflags", "+faststart", "-y", str(path),
         ],
@@ -195,6 +206,20 @@ def output_framemd5(path: Path) -> str:
     if result.returncode != 0:
         raise AssertionError(result.stderr.decode(errors="replace"))
     return result.stdout.decode()
+
+
+def output_pcm(path: Path) -> bytes:
+    """PCM `s16le` decodificado do áudio de um MP4 publicado (4 bytes por amostra estéreo)."""
+
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+         "-map", "0:a", "-f", "s16le", "-"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr.decode(errors="replace"))
+    return result.stdout
 
 
 def decoded_framemd5(workdir: Path, graph: FfmpegGraph, validation: dict[str, Any]) -> str:
@@ -286,6 +311,17 @@ class DecodeWindowPlannerTests(unittest.TestCase):
         inputs = sum(len(first.get(source_id, (None,))) for source_id in intervals)
         self.assertEqual(inputs, MAX_VIDEO_INPUTS)
 
+    def test_seek_leads_the_first_use_by_the_audio_preroll_and_never_seeks_at_the_source_start(self) -> None:
+        window = DecodeWindow(10, 11.5)
+        self.assertEqual(window.seek_s, 10 - AUDIO_PREROLL_S)
+        self.assertEqual(window.read_duration_s, 1.5 + AUDIO_PREROLL_S)
+        # `duration_s` continua sendo o intervalo usado, base da estimativa de ganho.
+        self.assertEqual(window.duration_s, 1.5)
+        # Janela que começa dentro do pre-roll lê a fonte desde o início, sem `-ss`.
+        for start in (0, 0.1, AUDIO_PREROLL_S, AUDIO_PREROLL_S + 0.0000004):
+            self.assertEqual(DecodeWindow(start, 3).seek_s, 0.0, start)
+        self.assertEqual(DecodeWindow(AUDIO_PREROLL_S + 0.00001, 3).seek_s, 0.00001)
+
     def test_more_video_sources_than_the_cap_disables_windows(self) -> None:
         intervals = {f"s{index}": [(50, 51)] for index in range(MAX_VIDEO_INPUTS + 1)}
         self.assertEqual(self.plan_for(intervals), {})
@@ -346,6 +382,26 @@ class DecodeWindowGraphTests(unittest.TestCase):
                 segments.append(item)
             self.assert_unchanged(workdir, plan(segments, sources=sources))
 
+    def test_command_and_graph_share_the_preroll_seek(self) -> None:
+        with workspace_tempdir() as workdir:
+            shutil.copy2(self.source, workdir / "sources" / "main.mp4")
+            document, validation = write_plan(
+                workdir, plan([segment(0, 2), segment(10, 12), segment(20, 21)])
+            )
+            graph = build_ffmpeg_graph(
+                document, validation, windows=True, canvas_width=160, canvas_height=90
+            )
+            arguments = graph_arguments(graph, validation)
+        # A janela que começa em 0 não faz seek; as outras recuam o pre-roll de áudio.
+        self.assertEqual([arguments[i + 1] for i, item in enumerate(arguments) if item == "-ss"], ["9.75", "19.75"])
+        window_reads = [arguments[i + 1] for i, item in enumerate(arguments) if item == "-t"][:3]
+        self.assertEqual(window_reads, ["2.5", "2.75", "1.75"])
+        # O deslocamento do grafo é o mesmo seek: o corte de 10 s começa 0,25 s dentro da janela.
+        for expected in ("trim=start=0:end=2,", "atrim=start=0:end=2,",
+                         "trim=start=0.25:end=2.25,", "atrim=start=0.25:end=2.25,",
+                         "trim=start=0.25:end=1.25,", "atrim=start=0.25:end=1.25,"):
+            self.assertIn(expected, graph.filter_complex)
+
     def test_windowed_graph_decodes_the_same_frames_and_audio(self) -> None:
         video_layer = {
             "type": "video", "source_id": "main", "in_s": 25, "out_s": 27,
@@ -387,6 +443,145 @@ class DecodeWindowGraphTests(unittest.TestCase):
                     expected = decoded_framemd5(workdir, plain, validation)
                     self.assertIn("\n1,", expected)
                     self.assertEqual(decoded_framemd5(workdir, windowed, validation), expected)
+
+
+# --- Áudio idêntico com e sem janelas, inclusive em keyframe de vídeo (T6 da phase 5) -------
+
+
+AUDIO_SOURCES: dict[str, dict[str, Any]] = {
+    # Keyframes a cada 1,0 s e sem B-frames: o `dts` do keyframe é o próprio instante, o caso do defeito.
+    "gop25_sem_b_48khz": {"gop": 25, "b_frames": False, "sample_rate": 48000},
+    # 44,1 kHz também passa pelo `aresample` do grafo depois do recorte.
+    "gop25_sem_b_44khz": {"gop": 25, "b_frames": False, "sample_rate": 44100},
+    # A fonte da phase 4 (GOP 12 com B-frames): continua idêntica.
+    "gop12_com_b": {"gop": 12},
+}
+
+AUDIO_VIDEO_LAYER = {
+    "type": "video", "source_id": "main", "in_s": 25, "out_s": 27,
+    "start_s": 0.5, "end_s": 2.5, "x": 0.5, "y": 0.5, "width": 0.4, "height": 0.4,
+    "fit": "contain",
+}
+
+AUDIO_SCENARIOS: dict[str, dict[str, Any]] = {
+    # O caso reproduzido pelo revisor: cortes de 3 s exatamente nos keyframes de 1,0 s e 8,0 s.
+    "cortes_em_1_0_e_8_0": plan([segment(1, 4), segment(8, 11)]),
+    "cortes_nao_alinhados": plan([segment(1.04, 2.2), segment(9.5, 10.3), segment(17.7, 19.1)]),
+    # A 0,01 s e 0,02 s do keyframe: dentro das primeiras 1.024 amostras que o decoder AAC descarta após o seek.
+    "logo_apos_o_keyframe": plan([segment(3.01, 4.0), segment(11.02, 12.0), segment(20, 21)]),
+    "cinco_janelas_na_mesma_fonte": plan(
+        [segment(1, 2), segment(5, 6), segment(9.01, 10), segment(14, 15.5), segment(21.02, 22)]
+    ),
+    "janela_no_inicio_da_fonte": plan([segment(0, 2), segment(10, 11)]),
+    "janela_perto_do_inicio_da_fonte": plan([segment(0.1, 1.5), segment(12, 13)]),
+    # GOP 12 tem keyframes a cada 0,48 s; os cortes abaixo caem neles nessa fonte.
+    "cortes_em_keyframes_do_gop_12": plan([segment(0.96, 2.4), segment(4.8, 6.24)]),
+    "trilha_com_in_e_out_proprios": plan([segment(1, 4, [track(20, 23)], mode="replace"), segment(8, 9)]),
+    "trilha_com_loop": plan([segment(5, 9, [track(15, 16, loop=True)], mode="replace"), segment(22, 23)]),
+    "cortes_j_e_l": plan(
+        [segment(3, 5), segment(12, 14, [track(11.7, 14.3)]), segment(22, 24)],
+        cuts=[
+            {"after_segment": 1, "type": "j", "duration_s": 0.3},
+            {"after_segment": 2, "type": "l", "duration_s": 0.3},
+        ],
+    ),
+    "camada_de_video_e_trilha_da_mesma_fonte": plan(
+        [segment(1, 4, [track(20, 23)], mode="replace"), segment(8, 9)],
+        layers=[AUDIO_VIDEO_LAYER],
+    ),
+}
+
+
+class WindowedAudioPcmTests(unittest.TestCase):
+    """O PCM renderizado com janelas coincide amostra a amostra com o renderizado sem janelas.
+
+    Causa do defeito: após o seek de entrada o decoder AAC descarta o primeiro quadro (1.024
+    amostras, medido com `ffprobe -show_frames`, sem o recorte do CLI) e o demuxer começa o áudio
+    no quadro do keyframe de vídeo; sem B-frames o keyframe cai no próprio corte e o início do
+    áudio some, e o `asetpts=PTS-STARTPTS` do grafo esconde a lacuna ao adiantar a trilha. A
+    janela precisa recuar o `-ss` antes do primeiro uso.
+    """
+
+    sources: dict[str, Path]
+    _cache: Path
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._cache = PROJECT_ROOT / f"tmp-decode-windows-pcm-{uuid4().hex}"
+        cls._cache.mkdir()
+        cls.sources = {}
+        for name, options in AUDIO_SOURCES.items():
+            cls.sources[name] = cls._cache / f"{name}.mp4"
+            create_gop_source(cls.sources[name], **options)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls._cache, ignore_errors=True)
+
+    def render_preview_outputs(self, workdir: Path, *, windowed: bool) -> dict[str, Any]:
+        """Renderiza a preview real, com ou sem janelas, e devolve envelope `decode`, PCM e `framemd5`."""
+
+        if windowed:
+            result = render_preview(workdir)
+        else:
+            with windows_disabled():
+                result = render_preview(workdir)
+        output = workdir / "preview.mp4"
+        return {
+            "decode": result["decode"],
+            "pcm": output_pcm(output),
+            "framemd5": output_framemd5(output),
+        }
+
+    def assert_same_pcm(self, windowed: bytes, plain: bytes) -> None:
+        """Compara os PCM e, na divergência, informa a contagem de amostras e a primeira que difere."""
+
+        self.assertEqual(len(windowed) // 4, len(plain) // 4, "amostras por canal com e sem janelas")
+        if windowed != plain:
+            first = next(index for index, pair in enumerate(zip(windowed, plain)) if pair[0] != pair[1])
+            self.fail(f"o PCM com janelas diverge do sem janelas a partir da amostra {first // 4}")
+
+    def test_pcm_and_frames_are_identical_with_and_without_windows(self) -> None:
+        with workspace_tempdir() as workdir:
+            for source_name, source in self.sources.items():
+                shutil.copy2(source, workdir / "sources" / "main.mp4")
+                for scenario, raw_document in AUDIO_SCENARIOS.items():
+                    with self.subTest(source=source_name, scenario=scenario):
+                        document, validation = write_plan(workdir, raw_document)
+                        options = {"canvas_width": 160, "canvas_height": 90}
+                        plain_graph = build_ffmpeg_graph(document, validation, **options)
+                        windowed_graph = build_ffmpeg_graph(document, validation, windows=True, **options)
+                        # O cenário só prova algo se a fonte ganhou janelas com leitura própria.
+                        self.assertTrue(any(window is not None for window in windowed_graph.input_windows))
+
+                        # Render real: o que a preview publica, comparado amostra a amostra.
+                        plain = self.render_preview_outputs(workdir, windowed=False)
+                        windowed = self.render_preview_outputs(workdir, windowed=True)
+                        self.assertFalse(plain["decode"]["windowed"])
+                        self.assertTrue(windowed["decode"]["windowed"])
+                        self.assertGreater(len(plain["pcm"]), 0)
+                        self.assert_same_pcm(windowed["pcm"], plain["pcm"])
+                        self.assertEqual(windowed["framemd5"], plain["framemd5"])
+
+                        # Grafo: vídeo e áudio decodificados antes do encoder, sem perdas.
+                        expected = decoded_framemd5(workdir, plain_graph, validation)
+                        self.assertIn("\n1,", expected)
+                        self.assertEqual(decoded_framemd5(workdir, windowed_graph, validation), expected)
+
+    def test_full_with_windows_keeps_the_pcm_of_a_cut_on_a_keyframe(self) -> None:
+        with workspace_tempdir() as workdir:
+            shutil.copy2(self.sources["gop25_sem_b_48khz"], workdir / "sources" / "main.mp4")
+            write_plan(workdir, AUDIO_SCENARIOS["cortes_em_1_0_e_8_0"])
+            render_preview(workdir)
+            approve_workdir(workdir)
+            with windows_disabled():
+                self.assertFalse(render_full(workdir)["decode"]["windowed"])
+            plain = output_pcm(workdir / "full.mp4")
+            self.assertTrue(render_full(workdir)["decode"]["windowed"])
+            windowed = output_pcm(workdir / "full.mp4")
+        # Seis segundos de áudio a 48 kHz: o defeito entregava 286.976 amostras em vez de 288.000.
+        self.assertEqual(len(plain) // 4, 6 * 48000)
+        self.assert_same_pcm(windowed, plain)
 
 
 # --- Render real com janelas por padrão (T2) ------------------------------------------------

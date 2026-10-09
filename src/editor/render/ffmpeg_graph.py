@@ -47,16 +47,22 @@ class _GraphInputs:
         self.windows: list[DecodeWindow | None] = []
         self._first_index: dict[str, int] = {}
         self._starts: dict[str, list[float]] = {}
+        self._seeks: dict[str, list[float]] = {}
         for source_id in source_order:
             self._first_index[source_id] = len(self.source_ids)
             source_windows = windows.get(source_id, ())
             self._starts[source_id] = [window.start_s for window in source_windows]
+            self._seeks[source_id] = [window.seek_s for window in source_windows]
             for window in source_windows or (None,):
                 self.source_ids.append(source_id)
                 self.windows.append(window)
 
     def locate(self, source_id: str, in_s: object) -> tuple[int, float]:
-        """Devolve o índice da entrada e o início da janela a subtrair dos tempos do recorte."""
+        """Devolve o índice da entrada e o instante de seek da janela a subtrair dos tempos do recorte.
+
+        A janela é escolhida pelo primeiro uso (`start_s`), mas o deslocamento é o `seek_s` do
+        `-ss` da entrada, que recua o pre-roll de áudio antes dele (ver `render/windows.py`).
+        """
 
         first = self._first_index[source_id]
         starts = self._starts[source_id]
@@ -65,7 +71,7 @@ class _GraphInputs:
         position = bisect_right(starts, float(in_s) + 0.000001) - 1
         if position < 0:
             raise ValueError("recorte fora das janelas de decode da fonte")
-        return first + position, starts[position]
+        return first + position, self._seeks[source_id][position]
 
 
 def _number(value: object) -> str:
@@ -426,7 +432,10 @@ def _audio_track_filter(
 ) -> str:
     """Corta, repete quando solicitado, aplica ganho e cobre a janela global do grupo.
 
-    O `atrim` usa os tempos do plano menos o início da janela de decode da entrada.
+    O `atrim` usa os tempos do plano menos o seek da janela de decode da entrada. O
+    `asetpts=PTS-STARTPTS` zera o primeiro quadro entregue, então só preserva o alinhamento
+    porque a janela recua o pre-roll de áudio (`render/windows.py`) e o áudio do recorte
+    sempre chega inteiro; se ele faltasse, a trilha sairia adiantada em vez de acusar a lacuna.
     """
 
     input_index, offset = inputs.locate(str(track["source_id"]), track["in_s"])

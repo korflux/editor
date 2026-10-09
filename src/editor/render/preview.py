@@ -334,7 +334,8 @@ def _build_ffmpeg_arguments(
     """Monta a lista estruturada de argumentos sem interpolar caminhos em shell.
 
     Entradas com janela de decode recebem `-ss`/`-t` antes do `-i` (seek preciso de
-    entrada); sem janela o comando é o mesmo de antes da decodificação seletiva.
+    entrada, recuado pelo pre-roll de áudio da janela); sem janela o comando é o mesmo de
+    antes da decodificação seletiva.
     """
 
     records = {str(record["id"]): record for record in source_records}
@@ -358,7 +359,11 @@ def _build_ffmpeg_arguments(
         elif gpu_decode and record["kind"] == "video":
             arguments.extend(["-hwaccel", dependencies.GPU_HWACCEL])
         if window is not None:
-            arguments.extend(["-ss", _number(window.start_s), "-t", _number(window.duration_s)])
+            # `seek_s` recua o pre-roll de áudio e vale 0 no início da fonte, onde a entrada
+            # não faz seek (um `-ss 0` perderia o primeiro quadro AAC em fontes sem B-frames).
+            if window.seek_s > 0:
+                arguments.extend(["-ss", _number(window.seek_s)])
+            arguments.extend(["-t", _number(window.read_duration_s)])
         arguments.extend(["-i", str(record["path"])])
 
     arguments.extend(
