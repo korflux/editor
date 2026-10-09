@@ -7,6 +7,7 @@ import re
 import unittest
 from pathlib import Path
 
+from editor import media
 from editor.plan import schema as plan_schema
 from editor.plan.validation import _validate_layers_structure, _validate_reframe
 
@@ -333,8 +334,53 @@ class VibeEditorSkillTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.channel_profile)
 
+    def test_documents_state_native_hevc_and_mov_and_keep_the_conversion_for_the_rest(self) -> None:
+        """A13 (T8): HEVC e MOV são lidos direto, e a preparação fica só para o que o editor ainda recusa."""
+
+        skill = " ".join(self.skill.split())
+        preparation = " ".join(self.source_preparation.split())
+        youtube = " ".join(self.youtube_reference.split())
+        channel = " ".join(self.channel_profile.split())
+        for name, document in (("SKILL.md", skill), ("source-preparation.md", preparation), ("youtube-editing.md", youtube)):
+            for marker in ("HEVC", "`.mov`", "Main 10", "tone mapping"):
+                self.assertIn(marker, document, f"{name}: {marker}")
+        # Perfis e formatos de pixel do HEVC lidos das mesmas constantes que a validação usa.
+        for value in (*media.HEVC_PROFILES, *media.HEVC_PIXEL_FORMATS):
+            self.assertIn(value, preparation)
+        for marker in (
+            "não precisam",
+            "`.mkv`",
+            "`tmcd`",
+            "miniatura anexada",
+            "ignoradas",
+            "4:2:2",
+            "12 bits",
+            "Sem bruto real de câmera",
+            "ponytail: fonte HDR",
+        ):
+            self.assertIn(marker, preparation)
+        self.assertIn("sem conversão", skill)
+        self.assertIn("sem conversão", channel)
+        # A conversão testada segue documentada para o que continua recusado.
+        self.assertIn("-map 0:v:0 -map 0:a:0", preparation)
+        # Afirmações anteriores à T8 que o contrato tornou falsas.
+        for name, document in (
+            ("SKILL.md", skill), ("source-preparation.md", preparation),
+            ("youtube-editing.md", youtube), ("canal-sonni-viaja.md", channel),
+        ):
+            for stale in (
+                "o editor só lê H.264 em MP4",
+                "O editor só aceita vídeo H.264 em MP4",
+                "`.mov` recebe `PLAN_INVALID`",
+                "comprovadamente faz o editor recusar a fonte",
+                "Original recusado; MP4 aceito",
+                "preparar as fontes com [source-preparation.md](source-preparation.md) antes de usar o editor",
+                "o que é comum em vídeos de câmera e de celular (HEVC, MOV, trilhas extras)",
+            ):
+                self.assertNotIn(stale, document, f"{name}: {stale}")
+
     def test_source_preparation_documents_the_tested_conversion(self) -> None:
-        """Garante que a conversão de fontes HEVC, MOV e com trilhas extras continue documentada."""
+        """Garante que a conversão do que o editor ainda recusa (MKV, vários áudios, vídeo extra) continue documentada."""
 
         for marker in (
             "MEDIA_UNSUPPORTED",

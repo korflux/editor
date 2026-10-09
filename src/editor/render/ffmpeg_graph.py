@@ -367,6 +367,14 @@ def _video_segment_filter(
     Com `reframe` (já normalizado pela validação, só existe com `crop`) o recorte central é
     trocado pelo recorte animado por keyframes sobre a fonte original (`_reframe_filter_graph`).
     O `trim` usa os tempos do plano menos o início da janela de decode da entrada.
+
+    `[i:v:0]` é o vídeo real da entrada (invariante em `media._validate_probe_payload`: a miniatura
+    anexada nunca é o primeiro stream de vídeo e as trilhas de dados não contam como vídeo). O
+    `scale`, o `pad` e o recorte rodam na profundidade da fonte, e o `format=yuv420p` que fecha todo
+    ramo converte uma fonte HEVC de 10 bits para os 8 bits da saída (numa fonte de 8 bits ele não
+    muda nada), então o grafo é o mesmo para qualquer fonte e não depende do codec.
+    ponytail: fonte HDR (HLG, PQ, BT.2020) sai sem tone mapping e aparece lavada, adicionar tone
+    mapping quando uma fonte HDR real precisar sair fiel.
     """
 
     video = segment["video"]
@@ -440,6 +448,8 @@ def _audio_track_filter(
     `asetpts=PTS-STARTPTS` zera o primeiro quadro entregue, então só preserva o alinhamento
     porque a janela recua o pre-roll de áudio (`render/windows.py`) e o áudio do recorte
     sempre chega inteiro; se ele faltasse, a trilha sairia adiantada em vez de acusar a lacuna.
+    `[i:a:0]` é o único áudio da fonte (invariante de `media._validate_probe_payload`: no máximo um
+    stream de áudio, e trilhas de dados e miniatura anexada não contam como áudio).
     """
 
     input_index, offset = inputs.locate(str(track["source_id"]), track["in_s"])
@@ -831,6 +841,8 @@ def _media_layer_filter(
     scale_mode = "decrease" if fit == "contain" else "increase"
     if layer["type"] == "video":
         input_index, offset = inputs.locate(str(layer["source_id"]), layer["in_s"])
+        # `[i:v:0]` abaixo é o vídeo real da fonte, pela mesma invariante de `_video_segment_filter`
+        # (a fonte HEVC de 10 bits vira RGBA de 8 bits em `format=rgba`).
         # O PTS global posiciona o primeiro frame do recorte na abertura da camada.
         source = (
             f"trim=start={_number(float(layer['in_s']) - offset)}:"

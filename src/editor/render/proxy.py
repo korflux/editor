@@ -27,6 +27,7 @@ from typing import Any, Sequence
 
 from .. import dependencies, process
 from ..contracts import EXIT_CODES, CliError, reject_duplicate_json_keys
+from ..media import OUTPUT_PIXEL_FORMAT
 from ..plan.validation import load_validated_plan
 from ..workdir import (
     ProxyLayout,
@@ -47,7 +48,8 @@ PROXY_CRF = 20
 PROXY_VIDEO_ENCODER = "libx264"
 # Preset do encoder; fonte única do encode e da exposição em `capabilities.render.proxy.parameters`.
 PROXY_PRESET = "veryfast"
-PROXY_PIXEL_FORMAT = "yuv420p"
+# 8 bits `yuv420p` mesmo para fonte HEVC 10 bits: a conversão acontece nesta codificação (`-pix_fmt`).
+PROXY_PIXEL_FORMAT = OUTPUT_PIXEL_FORMAT
 MAX_METADATA_BYTES = 4 * 1024
 METADATA_FIELDS = frozenset(
     {
@@ -201,6 +203,11 @@ def _ffmpeg_arguments(source: Path, staging: Path) -> list[str]:
 
     O filtro reduz para caber em 1280x720 mantendo a proporção e dimensões pares; não há upscale
     porque só fontes maiores que 1280x720 em alguma dimensão chegam aqui.
+
+    `0:v:0` e `0:a:0?` valem como os demais consumidores da fonte (invariante em
+    `media._validate_probe_payload`): o vídeo real é o primeiro stream de vídeo e há no máximo um
+    áudio. O proxy só leva esses dois streams, sem trilhas de dados nem miniatura. `-pix_fmt` é o que
+    converte uma fonte HEVC 10 bits para o `yuv420p` de 8 bits do proxy.
     """
 
     return [

@@ -27,6 +27,10 @@ from ..workdir import (
 
 MAX_FRAME_COUNT = 10_000
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+# Formato de pixel do PNG: RGB de 8 bits. Sem forçá-lo, o FFmpeg escolhe o mais próximo da fonte e uma
+# fonte de 10 bits (HEVC Main 10) sairia em `rgb48be`, um PNG de 16 bits; com fonte de 8 bits o
+# resultado é o mesmo da escolha automática (`rgb24`), então os frames das fontes H.264 não mudam.
+FRAME_PIXEL_FORMAT = "rgb24"
 
 
 def _argument_error(message: str) -> CliError:
@@ -266,7 +270,12 @@ def _extract_frame(
     destination: Path,
     timeout_seconds: float,
 ) -> None:
-    """Extrai um único PNG no frame efetivo escolhido pelo FFprobe, sem shell intermediário."""
+    """Extrai um único PNG no frame efetivo escolhido pelo FFprobe, sem shell intermediário.
+
+    O vídeo é o `v:0` da fonte: `media.inspect_source` só aceita fonte cujo primeiro stream de vídeo
+    é o real (a miniatura anexada nunca vem antes) e ignora trilhas de dados, então a posição
+    coincide com o stream validado. O PNG sai em 8 bits (`FRAME_PIXEL_FORMAT`) mesmo em fonte 10 bits.
+    """
 
     arguments = [
         "-hide_banner",
@@ -282,6 +291,8 @@ def _extract_frame(
         "0:v:0",
         "-frames:v",
         "1",
+        "-pix_fmt",
+        FRAME_PIXEL_FORMAT,
         "-f",
         "image2",
         "-update",

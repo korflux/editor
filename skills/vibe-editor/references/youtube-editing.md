@@ -42,7 +42,7 @@ Esse comando confirma quais ferramentas e modelos estão disponíveis. Depois, u
 
 O `init` é idempotente, não cria estado editorial e não substitui artefatos já publicados.
 
-**Formato das fontes.** O editor só aceita vídeo H.264 em MP4, com no máximo um stream de áudio AAC e nenhum stream extra. Celulares e câmeras modernas gravam HEVC, MOV ou MP4 com trilhas de dados, e esses arquivos recebem `MEDIA_UNSUPPORTED` ou `PLAN_INVALID`. Isso não impede a edição: leia [source-preparation.md](source-preparation.md), que traz o diagnóstico com `ffprobe` e a conversão testada para cópias H.264 limpas. As cópias ocupam disco e acrescentam uma geração de compressão, então só se criam com autorização do usuário.
+**Formato das fontes.** O editor lê direto `.mp4` e `.mov` com vídeo H.264 ou HEVC (Main e Main 10, 8 ou 10 bits) e no máximo um stream de áudio AAC; trilhas de dados (`tmcd`, telemetria) e miniatura anexada são ignoradas, então os brutos de câmera e de celular entram sem conversão. Fontes HDR saem lavadas (sem tone mapping): avisar o usuário. Contêineres como `.mkv`, mais de um áudio, vídeo extra, legenda, VP9, AV1 e HEVC em 4:2:2, 4:4:4 ou 12 bits recebem `MEDIA_UNSUPPORTED`. Isso não impede a edição: leia [source-preparation.md](source-preparation.md), que traz o diagnóstico com `ffprobe` e a conversão testada para cópias H.264 limpas. As cópias ocupam disco e acrescentam uma geração de compressão, então só se criam com autorização do usuário.
 
 ### 1.3 Analisar fala, áudio e imagem
 

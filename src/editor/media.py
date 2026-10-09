@@ -19,9 +19,37 @@ MAX_SOURCE_SIZE_BYTES = 4 * 1024**3
 MAX_SOURCE_DURATION_SECONDS = 3_600
 MAX_IMAGE_SIZE_BYTES = 100 * 1024**2
 MAX_IMAGE_DIMENSION = 8_192
-SUPPORTED_SOURCE_EXTENSIONS = {".mp4", ".mp3", ".wav"}
+# Extensões audiovisuais (vídeo com ou sem áudio). `.mp4` e `.mov` compartilham o demuxer `mov` do
+# FFmpeg: o `format_name` de ambos é `mov,mp4,m4a,3gp,3g2,mj2`, e `_validate_probe_payload` exige que
+# o nome da extensão conste nele, então `.mov` e `.mp4` aceitam o mesmo conteúdo.
+VIDEO_SOURCE_EXTENSIONS = (".mp4", ".mov")
+SUPPORTED_SOURCE_EXTENSIONS = {*VIDEO_SOURCE_EXTENSIONS, ".mp3", ".wav"}
 # O plano trata áudio como fonte somente de áudio, embora a análise genérica aceite MP4 audiovisual.
 PLAN_AUDIO_SOURCE_EXTENSIONS = frozenset({".mp3", ".wav"})
+# Codec de áudio aceito por extensão; fonte única da validação e de `capabilities.formats`.
+SOURCE_AUDIO_CODECS = {
+    ".mp4": frozenset({"aac"}),
+    ".mov": frozenset({"aac"}),
+    ".mp3": frozenset({"mp3"}),
+    ".wav": frozenset({"pcm_s16le"}),
+}
+# Codecs de vídeo das fontes audiovisuais. `h264` não tem restrição de perfil nem de formato de pixel
+# (contrato anterior à T8 da phase 5); `hevc` só aceita o que `HEVC_PROFILES` e `HEVC_PIXEL_FORMATS`
+# listam, o que deixa 4:2:2, 4:4:4, 12 bits e as extensões de alcance (rext) fora.
+# ponytail: fonte HDR (HLG ou PQ, primárias BT.2020) é convertida para 8 bits SDR sem tone mapping e
+# aparece lavada; adicionar tone mapping (`zscale`/`tonemap`) quando uma fonte HDR real precisar sair
+# fiel, e até lá a skill manda avisar o usuário.
+SOURCE_VIDEO_CODECS = ("h264", "hevc")
+HEVC_PROFILES = ("Main", "Main 10")
+HEVC_PIXEL_FORMATS = ("yuv420p", "yuv420p10le")
+# Toda saída renderizada, proxy e PNG de frame é de 8 bits `yuv420p`/`rgb24`, qualquer que seja a fonte.
+OUTPUT_PIXEL_FORMAT = "yuv420p"
+# Streams que a validação ignora quando não são o de vídeo ou o de áudio selecionado: trilhas de dados
+# (`codec_type: data`, como o timecode `tmcd` e a telemetria das câmeras) e miniatura anexada
+# (`disposition.attached_pic`). Legenda, `attachment` e qualquer outro tipo continuam recusados.
+IGNORED_STREAM_CODEC_TYPES = ("data",)
+ATTACHED_PICTURE_DISPOSITION = "attached_pic"
+IGNORED_STREAM_DISPOSITIONS = (ATTACHED_PICTURE_DISPOSITION,)
 IMAGE_FORMATS = {
     ".png": ("png_pipe", "png"),
     ".jpg": ("jpeg_pipe", "mjpeg"),
@@ -90,6 +118,28 @@ def _parse_frame_rate(value: Any) -> float | None:
     return rate if math.isfinite(rate) and rate > 0 else None
 
 
+def _is_attached_picture(stream: dict[str, Any]) -> bool:
+    """Indica se o stream é miniatura anexada (`disposition.attached_pic == 1`), que o FFmpeg conta como vídeo."""
+
+    disposition = stream.get("disposition")
+    return isinstance(disposition, dict) and disposition.get(ATTACHED_PICTURE_DISPOSITION) == 1
+
+
+def _hevc_is_supported(stream: dict[str, Any]) -> bool:
+    """Confere perfil (Main, Main 10) e formato de pixel (`yuv420p`, `yuv420p10le`) do HEVC.
+
+    Allowlist fechada: perfil ausente ou desconhecido, 4:2:2, 4:4:4, 12 bits e rext não passam.
+    Os valores vêm só do FFprobe e a mensagem pública do chamador nunca os repete.
+    """
+
+    profile = str(stream.get("profile", "")).strip().lower()
+    pixel_format = str(stream.get("pix_fmt", "")).strip().lower()
+    return (
+        profile in {item.lower() for item in HEVC_PROFILES}
+        and pixel_format in HEVC_PIXEL_FORMATS
+    )
+
+
 def _map_process_error(error: process.ProcessExecutionError) -> CliError:
     """Converte falha interna de processo em erro seguro da borda de mídia."""
 
@@ -137,13 +187,25 @@ def _validate_probe_payload(
     unsupported_streams = {
         str(stream.get("codec_type", "")).lower()
         for stream in typed_streams
-        if stream.get("codec_type") not in {"audio", "video"}
+        if stream.get("codec_type") not in {"audio", "video", *IGNORED_STREAM_CODEC_TYPES}
     }
     if unsupported_streams:
         raise _error("MEDIA_UNSUPPORTED", "A fonte contém streams não suportados.")
 
     audio_streams = [stream for stream in typed_streams if stream.get("codec_type") == "audio"]
-    video_streams = [stream for stream in typed_streams if stream.get("codec_type") == "video"]
+    video_typed_streams = [stream for stream in typed_streams if stream.get("codec_type") == "video"]
+    # Invariante de seleção de streams (T8 da phase 5): todo consumidor (`analysis/audio.py`,
+    # `analysis/frames.py`, `render/ffmpeg_graph.py`, `render/proxy.py`, `process.stream_pcm`) escolhe
+    # o vídeo por `v:0` e o áudio por `a:0`, a posição entre streams do MESMO tipo. Isso só é correto
+    # porque (1) trilhas de dados não contam como vídeo nem como áudio, (2) há no máximo um stream de
+    # áudio e um de vídeo real e (3) a miniatura anexada, que o FFmpeg conta como vídeo, nunca é o
+    # primeiro stream de vídeo. A regra 3 é a recusa abaixo: sem ela `v:0` mapearia a miniatura.
+    if video_typed_streams and _is_attached_picture(video_typed_streams[0]):
+        raise _error(
+            "MEDIA_UNSUPPORTED",
+            "O primeiro stream de vídeo da fonte é uma miniatura anexada.",
+        )
+    video_streams = [stream for stream in video_typed_streams if not _is_attached_picture(stream)]
     if not audio_streams and not video_streams:
         raise _error("MEDIA_UNSUPPORTED", "A fonte não contém streams de mídia suportados.")
     if require_audio and len(audio_streams) != 1:
@@ -154,23 +216,23 @@ def _validate_probe_payload(
         raise _error("MEDIA_UNSUPPORTED", "A fonte deve conter exatamente um stream de vídeo.")
 
     audio_codec: str | None = None
-    allowed_audio_codecs = {
-        ".mp4": {"aac"},
-        ".mp3": {"mp3"},
-        ".wav": {"pcm_s16le"},
-    }
     if audio_streams:
         audio_codec = str(audio_streams[0].get("codec_name", "")).lower()
-        if audio_codec not in allowed_audio_codecs[extension]:
+        if audio_codec not in SOURCE_AUDIO_CODECS[extension]:
             raise _error("MEDIA_UNSUPPORTED", "O codec de áudio da fonte não é aceito.")
 
     video_codec: str | None = None
     if video_streams:
-        if extension != ".mp4" or len(video_streams) != 1:
+        if extension not in VIDEO_SOURCE_EXTENSIONS or len(video_streams) != 1:
             raise _error("MEDIA_UNSUPPORTED", "A fonte contém vídeo incompatível com o contrato.")
         video_codec = str(video_streams[0].get("codec_name", "")).lower()
-        if video_codec != "h264":
+        if video_codec not in SOURCE_VIDEO_CODECS:
             raise _error("MEDIA_UNSUPPORTED", "O codec de vídeo da fonte não é aceito.")
+        if video_codec == "hevc" and not _hevc_is_supported(video_streams[0]):
+            raise _error(
+                "MEDIA_UNSUPPORTED",
+                "O perfil ou o formato de pixel do vídeo HEVC não é aceito.",
+            )
 
     duration = _parse_duration(format_data.get("duration"))
     if duration is None:

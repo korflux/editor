@@ -59,9 +59,17 @@ viagem de Marco Kormoczi), leia também
 do canal pronto. Não imponha o estilo, os arquivos nem o fecho desse canal a vídeos de
 outras pessoas.
 
+O editor lê direto fontes `.mp4` e `.mov` com vídeo H.264 ou HEVC (Main e Main 10, 8
+ou 10 bits) e áudio AAC. Os brutos de câmera (DJI) e os vídeos de celular (HEVC, MOV)
+entram sem conversão: trilhas de dados (`tmcd`, telemetria) e miniatura anexada são
+ignoradas, e toda saída é H.264/AAC `yuv420p` de 8 bits. Uma fonte HDR (HLG ou PQ,
+`color_transfer` `arib-std-b67` ou `smpte2084`) é convertida para 8 bits sem tone mapping e
+aparece lavada: avise o usuário antes de seguir com ela.
+
 Se o editor recusar uma fonte (`MEDIA_UNSUPPORTED` ou "formato ou metadados
-compatíveis"), o que é comum em vídeos de câmera e de celular (HEVC, MOV, trilhas
-extras), leia [references/source-preparation.md](references/source-preparation.md)
+compatíveis"), o que acontece com `.mkv` e outros contêineres, mais de uma faixa de
+áudio, vídeo extra, legenda, codecs fora da lista (VP9, AV1) e HEVC em 4:2:2, 4:4:4 ou
+12 bits, leia [references/source-preparation.md](references/source-preparation.md)
 antes de orientar o usuário. A conversão para cópias H.264 é testada e resolve, mas
 só se faz depois de avisar o custo e obter o aceite.
 

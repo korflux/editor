@@ -14,6 +14,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from editor import dependencies as editor_dependencies
+from editor import media
+from editor.analysis.frames import FRAME_PIXEL_FORMAT
 from editor.capabilities import choose_recommendation, collect_capabilities
 from editor.plan import schema as plan_schema
 from editor.render.preview import MAX_PREVIEW_DIMENSION
@@ -331,6 +333,83 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertTrue({"shadow", "outline"} <= plan_schema.TEXT_LAYER_FIELDS)
         self.assertFalse({"shadow", "outline"} & plan_schema.IMAGE_LAYER_FIELDS)
         self.assertFalse({"shadow", "outline"} & plan_schema.VIDEO_LAYER_FIELDS)
+
+    def test_formats_expose_the_source_contract_from_the_media_constants(self) -> None:
+        """Prova (A13) que contêineres, codecs, perfis e formato de pixel das fontes são os das constantes de `media.py`."""
+
+        with workspace_tempdir() as root:
+            data = collect_capabilities(root)
+        formats = data["formats"]
+
+        # Lido das constantes que `_validate_probe_payload` consulta, sem lista paralela em `capabilities`.
+        self.assertEqual(formats["video"], [suffix.removeprefix(".") for suffix in media.VIDEO_SOURCE_EXTENSIONS])
+        self.assertEqual(formats["codecs"]["video"], list(media.SOURCE_VIDEO_CODECS))
+        self.assertEqual(
+            formats["hevc"],
+            {"profiles": list(media.HEVC_PROFILES), "pixel_formats": list(media.HEVC_PIXEL_FORMATS)},
+        )
+        self.assertEqual(formats["output_pixel_format"], media.OUTPUT_PIXEL_FORMAT)
+        self.assertEqual(
+            formats["ignored_streams"],
+            {
+                "codec_types": list(media.IGNORED_STREAM_CODEC_TYPES),
+                "dispositions": list(media.IGNORED_STREAM_DISPOSITIONS),
+            },
+        )
+        self.assertEqual(
+            formats["audio"], sorted(suffix.removeprefix(".") for suffix in media.PLAN_AUDIO_SOURCE_EXTENSIONS)
+        )
+        self.assertEqual(
+            formats["codecs"]["audio"],
+            sorted({codec for codecs in media.SOURCE_AUDIO_CODECS.values() for codec in codecs}),
+        )
+        # Os valores da decisão 19, escritos à parte para uma troca de constante não passar calada.
+        self.assertEqual(formats["video"], ["mp4", "mov"])
+        self.assertEqual(formats["codecs"]["video"], ["h264", "hevc"])
+        self.assertEqual(formats["codecs"]["audio"], ["aac", "mp3", "pcm_s16le"])
+        self.assertEqual(formats["hevc"]["profiles"], ["Main", "Main 10"])
+        self.assertEqual(formats["hevc"]["pixel_formats"], ["yuv420p", "yuv420p10le"])
+        self.assertEqual(formats["output_pixel_format"], "yuv420p")
+        self.assertEqual(formats["ignored_streams"], {"codec_types": ["data"], "dispositions": ["attached_pic"]})
+        # Todo contêiner anunciado é aceito pela validação, com seu codec de áudio, e `.mkv` não é.
+        for suffix in media.VIDEO_SOURCE_EXTENSIONS:
+            self.assertIn(suffix, media.SUPPORTED_SOURCE_EXTENSIONS)
+            self.assertEqual(media.SOURCE_AUDIO_CODECS[suffix], frozenset({"aac"}))
+        self.assertNotIn(".mkv", media.SUPPORTED_SOURCE_EXTENSIONS)
+        # Render, proxy e PNG de frame entregam o mesmo formato de 8 bits que o inventário anuncia.
+        self.assertEqual(data["render"]["proxy"]["parameters"]["pixel_format"], media.OUTPUT_PIXEL_FORMAT)
+        self.assertEqual(FRAME_PIXEL_FORMAT, "rgb24")
+
+    def test_documentation_covers_native_hevc_and_mov_sources(self) -> None:
+        """Prova (A13) que a documentação descreve a leitura nativa de HEVC e MOV e não diz mais que eles são recusados."""
+
+        contents = {path: " ".join(path.read_text(encoding="utf-8").split()) for path in DOCUMENTATION_PATHS}
+        combined = "\n".join(contents.values())
+
+        for marker in (
+            "HEVC",
+            "`.mov`",
+            "`tmcd`",
+            "miniatura anexada",
+            "tone mapping",
+            "Fontes HEVC e MOV, Phase 5",
+            "tests/test_hevc_sources.py",
+            "`formats`",
+            "`output_pixel_format`",
+            *media.HEVC_PROFILES,
+            *media.HEVC_PIXEL_FORMATS,
+        ):
+            self.assertIn(marker, combined)
+        # Frases anteriores à T8 que o contrato tornou falsas.
+        for stale in (
+            "o editor só lê H.264 em MP4",
+            "O editor só aceita vídeo H.264 em MP4",
+            "`.mov` recebe `PLAN_INVALID`",
+            "fontes HEVC ou MOV exigem a conversão",
+            "comprovadamente faz o editor recusar a fonte",
+            "formats.codecs.video: [\"h264\"]",
+        ):
+            self.assertNotIn(stale, combined)
 
     def test_documentation_describes_only_the_v2_contract(self) -> None:
         """Impede que a descoberta e o fluxo do agente voltem a documentar o contrato antigo."""

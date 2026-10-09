@@ -10,11 +10,20 @@ from . import dependencies
 from .analysis.audio import MAX_AUDIO_WINDOW_SECONDS, MAX_AUDIO_WINDOWS
 from .contracts import CLI_VERSION
 from .media import (
+    HEVC_PIXEL_FORMATS,
+    HEVC_PROFILES,
+    IGNORED_STREAM_CODEC_TYPES,
+    IGNORED_STREAM_DISPOSITIONS,
     IMAGE_FORMATS,
     MAX_IMAGE_DIMENSION,
     MAX_IMAGE_SIZE_BYTES,
     MAX_SOURCE_DURATION_SECONDS,
     MAX_SOURCE_SIZE_BYTES,
+    OUTPUT_PIXEL_FORMAT,
+    PLAN_AUDIO_SOURCE_EXTENSIONS,
+    SOURCE_AUDIO_CODECS,
+    SOURCE_VIDEO_CODECS,
+    VIDEO_SOURCE_EXTENSIONS,
 )
 from .plan.schema import (
     ASPECT_RATIOS,
@@ -349,15 +358,28 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
                 "reason": metal["reason"],
             },
         },
+        # Contêineres e codecs aceitos nas fontes, lidos das constantes de `media.py` que a validação
+        # usa (fonte única). Fontes audiovisuais: `.mp4` e `.mov`, vídeo H.264 ou HEVC (Main e Main 10,
+        # `yuv420p` ou `yuv420p10le`) com um stream de vídeo real e no máximo um de áudio AAC. Trilhas
+        # de dados (`tmcd`) e miniatura anexada são ignoradas; toda saída é `yuv420p` de 8 bits.
         "formats": {
             "status": "available",
-            "video": ["mp4"],
-            "audio": ["mp3", "wav"],
+            "video": [suffix.removeprefix(".") for suffix in VIDEO_SOURCE_EXTENSIONS],
+            "audio": sorted(suffix.removeprefix(".") for suffix in PLAN_AUDIO_SOURCE_EXTENSIONS),
             "image": [suffix.removeprefix(".") for suffix in IMAGE_FORMATS],
             "codecs": {
-                "video": ["h264"],
-                "audio": ["aac", "mp3", "pcm_s16le"],
+                "video": list(SOURCE_VIDEO_CODECS),
+                "audio": sorted({codec for codecs in SOURCE_AUDIO_CODECS.values() for codec in codecs}),
                 "image": ["png", "mjpeg", "webp"],
+            },
+            "hevc": {
+                "profiles": list(HEVC_PROFILES),
+                "pixel_formats": list(HEVC_PIXEL_FORMATS),
+            },
+            "output_pixel_format": OUTPUT_PIXEL_FORMAT,
+            "ignored_streams": {
+                "codec_types": list(IGNORED_STREAM_CODEC_TYPES),
+                "dispositions": list(IGNORED_STREAM_DISPOSITIONS),
             },
         },
         "plan": {

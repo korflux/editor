@@ -344,7 +344,9 @@ def _build_ffmpeg_arguments(
     video_inputs = _video_input_count(graph, source_records)
     # Decode CUDA só nas entradas de vídeo e só até o teto de VRAM (decisão 7: conta entradas,
     # pois cada janela abre seu próprio decoder); o FFmpeg cai para decode em software sozinho
-    # quando o formato não é suportado, e os quadros voltam à RAM para o grafo.
+    # quando o formato não é suportado, e os quadros voltam à RAM para o grafo. O NVDEC decodifica
+    # HEVC Main e Main 10 (o que a allowlist aceita) e devolve `nv12` ou `p010le`; o `format=yuv420p`
+    # do grafo converte para 8 bits como na leitura por CPU.
     gpu_decode = accel == "gpu" and 0 < video_inputs <= GPU_MAX_VIDEO_INPUTS
     for source_id, window in zip(graph.input_source_ids, windows, strict=True):
         record = records.get(source_id)

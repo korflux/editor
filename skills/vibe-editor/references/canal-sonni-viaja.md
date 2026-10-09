@@ -17,7 +17,7 @@ Os números abaixo (cortes por minuto, durações, níveis) descrevem episódios
 - Os arquivos `gptSxxEyy.docx` da pasta do episódio são pedidos de título e descrição, não de montagem, mas descrevem o que foi gravado.
 - Prints, mapas mentais e comprovantes de custos que o apresentador cita são a fonte dos valores (não só a fala).
 - Se a fala cita mídia que não está na pasta (foto de mapa, vídeo gravado por terceiros), listar como pendência.
-- As câmeras do canal (DJI) gravam HEVC de 10 bits: preparar as fontes com [source-preparation.md](source-preparation.md) antes de usar o editor.
+- As câmeras do canal (DJI) gravam HEVC de 10 bits em MP4, com trilhas de dados e miniatura: o editor lê esses brutos direto, sem conversão, e entrega em 8 bits `yuv420p` (os brutos são Rec.709, sem HDR). Só o que ele recusa (por exemplo gravação de tela em `.mkv`) passa por [source-preparation.md](source-preparation.md).
 
 ## 2. O estilo em uma página
 

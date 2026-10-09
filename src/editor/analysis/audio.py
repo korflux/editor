@@ -95,7 +95,12 @@ def _map_process_error(error: process.ProcessExecutionError) -> CliError:
 
 
 def _run_loudness(source: media.MediaMetadata, timeout_seconds: float) -> dict[str, float]:
-    """Executa ebur128 em saída descartável, sem criar artefato intermediário publicável."""
+    """Executa ebur128 em saída descartável, sem criar artefato intermediário publicável.
+
+    O áudio é o `a:0` da fonte: `media.inspect_source` aceita no máximo um stream de áudio e não
+    conta trilhas de dados nem a miniatura anexada como áudio, então a posição coincide com o
+    stream validado (invariante documentada em `media._validate_probe_payload`).
+    """
 
     arguments = [
         "-hide_banner",
