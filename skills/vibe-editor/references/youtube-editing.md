@@ -133,17 +133,41 @@ O exemplo abaixo é uma edição básica: dois trechos da mesma fonte com um jum
 
 Como o padrão de qualidade vira campos do plano:
 
-- **Resolução:** `profile.max_full_width` deve ser a largura da fonte arredondada **para cima** a um múltiplo de 32, no máximo 3840. Sem isso a full sai limitada a 1920: um bruto de 2560 de largura saiu em 1920 e um de 2688 só sai inteiro com `max_full_width` em 2688. O editor não faz upscale.
+- **Resolução (16:9):** `profile.max_full_width` deve ser a largura da fonte arredondada **para cima** a um múltiplo de 32, no máximo 3840. Sem isso a full sai limitada a 1920: um bruto de 2560 de largura saiu em 1920 e um de 2688 só sai inteiro com `max_full_width` em 2688. O editor não faz upscale.
 - **Cortes:** cada jump cut é um segmento novo da mesma fonte, com `in_s` e `out_s` na grade de quadros da fonte (a 29,97 quadros/s, múltiplos de 1001/30000 s).
 - **Áudio:** `mode: keep` com a faixa da própria fonte e `gain_db: 0`. O nivelamento fica em `audio_processing`, uma vez para o vídeo inteiro.
-- **Fontes fora de 16:9** (4:3, 21:9, vertical, 1366 × 768) só passam com `fit: contain` ou `fit: crop` no segmento, e a saída é sempre 16:9 com a largura da primeira fonte. Uma fonte vertical vira um quadro 16:9 de largura pequena, com barras ou recorte pesado: **não existe entregável 9:16**. Avisar o usuário antes de seguir.
+- **Proporção do perfil e fontes de outra proporção:** `fit: preserve` só passa quando a proporção da fonte é a do perfil. Uma fonte de outra proporção (4:3, 21:9, 1366 × 768, vertical, ou uma fonte 16:9 num perfil vertical) só passa com `fit: contain` (imagem inteira, com barras) ou `fit: crop` (recorte, que `reframe` conduz). Um vídeo vertical se faz com um perfil `9:16` (seção 1.4, "Proporção de saída"). Uma fonte vertical num perfil 16:9 vira um quadro 16:9 de largura pequena, com barras ou recorte pesado: avisar o usuário antes de seguir.
 - **Fonte sem áudio** (clipe de jogo, gravação de tela sem som): não passa por `analyze audio`, que exige exatamente um stream de áudio. Entra no plano com `"audio": {"mode": "mute", "tracks": []}`; com `mode: keep` e uma faixa de uma fonte sem áudio o plano é recusado.
-- **Texto:** uma camada `type: "text"` por letreiro. O tamanho padrão de um rótulo é cerca de 3,7% da largura da full (70 px a 1920 de largura, 100 px a 2688).
+- **Texto:** uma camada `type: "text"` por letreiro. O tamanho padrão de um rótulo é cerca de 3,7% da largura da full (70 px a 1920 de largura, 100 px a 2688, 40 px a 1080). Em vertical o rótulo costuma pedir corpo maior; conferir na preview.
+- **Tamanho do texto na preview:** `size_px` vale na largura da full e a preview o escala pela razão das larguras (arredondado, mínimo 1), com a mesma quebra de linha. O texto da preview ocupa a mesma fração do quadro que na full, então o tamanho pode ser avaliado na preview. Os tamanhos desta referência valem para a full.
 
-Duas limitações do editor que afetam o texto e que o agente deve avisar ao usuário:
+Uma limitação do editor que afeta o texto e que o agente deve avisar ao usuário: **o texto não tem sombra, contorno nem fundo.** Texto claro sobre céu ou janela estourada, e texto escuro sobre fundo escuro, perdem leitura. Na auditoria da seção 1.6, tratar legibilidade como risco explícito e decidir com o usuário o que fazer. Não inventar campos fora do schema.
 
-1. **`size_px` não é escalado entre preview e full.** O valor vale em pixels do canvas renderizado: na preview (até 720 px de largura) o mesmo texto aparece quase 4 vezes maior em proporção do que na full, e pode estourar a caixa. Os tamanhos desta referência valem para a full. Para avaliar o tamanho real antes da aprovação, calcular `size_px × largura da preview ÷ largura da full` ou conferir um quadro de uma full curta de teste.
-2. **O texto não tem sombra, contorno nem fundo.** Texto claro sobre céu ou janela estourada, e texto escuro sobre fundo escuro, perdem leitura. Na auditoria da seção 1.6, tratar legibilidade como risco explícito e decidir com o usuário o que fazer. Não inventar campos fora do schema.
+#### Proporção de saída, vertical e reenquadramento
+
+`profile.aspect_ratio` aceita `16:9`, `9:16`, `1:1` e `4:5`, uma por plano. Cada proporção é um trabalho próprio (pasta, plano, preview, aprovação e full), porque o contrato é de uma preview, uma aprovação e uma full. O destino decide:
+
+| Destino | Proporção | Full | Preview |
+|---|---|---|---|
+| YouTube | `16:9` | largura da primeira fonte, até `max_full_width`, sem upscale | até 720 px |
+| Shorts, Reels, TikTok | `9:16` | 1080x1920 | 404x720 |
+| Feed quadrado | `1:1` | 1080x1080 | 720x720 |
+| Feed vertical | `4:5` | 1080x1350 | 576x720 |
+
+Fora do 16:9 o tamanho é fixo de plataforma, independente da fonte, e `max_full_width` é recusado (`PLAN_INVALID`). Uma gravação horizontal vira vertical por `fit: crop` (o canvas recorta a fonte, com a faixa visível definida por `reframe`) ou por `fit: contain` (imagem inteira com barras pretas). Para o vertical de Shorts e Reels, `crop` com `reframe` é o caminho: o sujeito ocupa o quadro e a câmera o acompanha.
+
+**Marcar os keyframes.** `video.reframe.keyframes` tem de 1 a 32 itens por segmento, só com `fit: crop`, e não convive com `motion` no mesmo segmento (em trabalhos novos, usar `reframe`, inclusive para punch-in em 16:9). Cada keyframe leva:
+
+- `t_s`: segundos desde o início do segmento (não da fonte), estritamente crescente, de 0 até `out_s - in_s`;
+- `x` e `y`: onde o sujeito está sobre a fonte original, de 0 a 1 (origem no canto superior esquerdo), que passa a ser o centro do recorte;
+- `zoom` (1.0 a 4.0, padrão 1.0): 1.0 é o maior recorte da proporção que cabe na fonte e 2.0 mostra metade da largura e da altura dele;
+- `interpolation` (`ease` ou `linear`, padrão `ease`): a curva até o keyframe seguinte. `ease` parte e chega com velocidade zero, o movimento natural de uma câmera conduzida; `linear` mantém velocidade constante, para um acompanhamento mecânico. No último keyframe não tem efeito.
+
+O processo, a partir dos frames extraídos (seção 1.3, `extract frames` da fonte original, em intervalo curto): olhar cada frame e anotar onde está o sujeito como fração da largura e da altura; converter o tempo do frame na fonte para `t_s = tempo na fonte - in_s`; criar um keyframe onde o sujeito muda de lugar e repetir a posição (dois keyframes iguais) para segurar o enquadramento. Um keyframe só é um foco estático. Antes do primeiro keyframe e depois do último vale o estado do primeiro e do último, e quando o centro levaria o recorte para fora da fonte ele encosta na borda e nunca mostra preto, então não é preciso calcular deslocamentos.
+
+**Aviso de ampliação.** `plan validate` devolve `data.profile.upscale`, uma lista de `{"segment", "factor"}` com a posição do segmento na timeline (de 1 em diante) e a razão, em 2 casas, entre a largura do canvas da full e a largura do menor recorte usado. Uma fonte 1920x1080 em 9:16 com `zoom` 1.0 informa 1.78; uma 3840x2160 em 9:16 informa lista vazia (nenhum segmento ampliado). O aviso não bloqueia: o agente informa ao usuário que esses trechos perdem nitidez (mais com `zoom` alto) e segue se ele aceitar.
+
+**Zonas seguras do Shorts e do Reels.** Orientação editorial, sem validação no código. A interface dessas plataformas cobre a faixa inferior (título, legenda, botões) e o lado direito. Manter rosto e texto fora dessas faixas, com margens conservadoras sugeridas: cerca de 20% da altura livres embaixo, 10% no topo e 10% nas laterais, um pouco mais à direita. Esses valores são uma sugestão prudente, não medidas oficiais, e a interface das plataformas muda. Posicionar `y` e `height` das camadas de texto e os keyframes de `reframe` dentro dessa área e conferir nos quadros da preview (seção 1.6).
 
 Validar o plano antes de gerar qualquer vídeo:
 
@@ -186,7 +210,7 @@ Para cada fronteira de fala, compare os tempos de `words[]` em `analysis\transcr
 .venv\Scripts\python.exe -B -m editor extract frames --workdir "<workdir>" --source-id "preview" --input "<workdir>\preview.mp4" --timestamps "<corte-0.5>,<corte>,<corte+0.5>,<movimento-inicio>,<movimento-fim>,<fim-1>,<fim>" --json
 ```
 
-Assista à preview inteira e confirme continuidade de ação, olhar, enquadramento e áudio. Confira que movimentos não cortam o assunto nem iniciam ou terminam de forma abrupta, e que o último plano não congela, fica preto ou termina o áudio antes da imagem. Para cada lettering, confirme fonte real, caixa, safe area, quebra de linha, contraste, tamanho e legibilidade. `plan validate` não substitui essa inspeção.
+Com `reframe`, extrair também um frame da preview em cada keyframe (tempo da timeline = início do segmento na timeline + `t_s`) e conferir sujeito e zonas seguras. Assista à preview inteira e confirme continuidade de ação, olhar, enquadramento e áudio. Confira que movimentos não cortam o assunto nem iniciam ou terminam de forma abrupta, e que o último plano não congela, fica preto ou termina o áudio antes da imagem. Para cada lettering, confirme fonte real, caixa, safe area, quebra de linha, contraste, tamanho e legibilidade. `plan validate` não substitui essa inspeção.
 
 #### Registro das decisões humanas
 
@@ -312,7 +336,7 @@ O produto da varredura é uma tabela com tempo, texto e **fonte do dado**, que o
 
 ### 2.7 Imagem
 
-- Resolução e taxa de quadros da fonte (seção 1.4, `max_full_width`). `fit: preserve` quando a fonte é 16:9.
+- Resolução e taxa de quadros da fonte (seção 1.4, `max_full_width`). `fit: preserve` quando a fonte tem a proporção do perfil. Em vertical o recorte é o próprio formato, conduzido por `reframe` (seção 1.4).
 - Sem escala, recorte, zoom, mudança de velocidade ou correção de cor sem motivo perceptível. Quando o estilo pedir uma técnica (cobertura de imagem, zoom em ênfase, corte em J ou L, música), o editor suporta (ver `SKILL.md`, seção do plano) e a regra é uma só: ela precisa explicar ou reforçar a fala, não competir com ela, e é conferida na preview.
 - Câmera na mão, tremida e variações de exposição ficam como gravadas, salvo pedido contrário.
 - Pessoas que aparecem na cena (acompanhantes, equipe) ficam nas reações e falas; o plano não as esconde.
@@ -342,10 +366,11 @@ O estilo é decisão de cada vídeo. O agente confirma com o usuário só o que 
 | Cortes | Jump cuts pela regra de pausas (seção 2.3) | Segmentos da mesma fonte |
 | Transições | Nenhuma, corte seco | Não há transições no schema |
 | Cobertura de imagem (b-roll) | Nenhuma | Segmento de outra fonte, ou camada de vídeo sem áudio |
-| Zoom e movimento | Nenhum | `video.motion`, interpolação linear, zoom de 0,5 a 4,0 |
+| Proporção de saída | `16:9` | `profile.aspect_ratio` `16:9`, `9:16`, `1:1` ou `4:5`, uma por plano (seção 1.4) |
+| Enquadramento, zoom e movimento | Nenhum (`crop` central se o formato exigir recorte) | `video.reframe` (foco ou keyframes, `ease` ou `linear`, zoom de 1,0 a 4,0, só com `crop`) ou `video.motion` (interpolação linear, zoom de 0,5 a 4,0); o mesmo segmento não aceita os dois |
 | Cortes em J e L | Nenhum, áudio sempre junto da imagem | `cuts[]`, até 30 s |
 | Música e efeitos | Nenhum | Fonte `kind: audio` com `mode: mix` |
-| Texto na tela | Só informativo (seção 2.5); fonte e posição escolhidas com o usuário | Camada `text`, sem sombra |
+| Texto na tela | Só informativo (seção 2.5); fonte e posição escolhidas com o usuário | Camada `text`, sem sombra nem contorno |
 | Abertura | Cena copiada do próprio vídeo (seção 2.4) | Segmentos |
 | Fecho | Término natural; convite e tela final só se pedir | Camadas de imagem e de vídeo |
 | Idioma dos textos | O do público | |
@@ -358,9 +383,11 @@ O estilo é decisão de cada vídeo. O agente confirma com o usuário só o que 
 
 Para um vídeo horizontal para o YouTube, o ponto de partida é MP4, vídeo H.264, áudio AAC em 48 kHz, proporção 16:9 e a mesma resolução e taxa de quadros da gravação. Evitar barras pretas incorporadas quando for possível preservar ou recortar a imagem corretamente. Essas escolhas seguem as [recomendações oficiais de codificação do YouTube](https://support.google.com/youtube/answer/1722171?hl=pt-BR) e as [orientações oficiais de proporção e resolução](https://support.google.com/youtube/answer/6375112?co=GENIE.Platform%3DDesktop&hl=en), mas ainda é necessário conferir as exigências específicas da publicação.
 
-No editor, o perfil é `16:9` com `max_full_width` conforme a seção 1.4. A full usa H.264 com preset `veryfast`, ou NVENC `p3` com `cq 31` quando se passa `--accel gpu`, que usa decode CUDA e alivia a CPU mas não é mais rápido. **Esses encoders não têm perfil de qualidade configurável e podem entregar bitrate bem abaixo do ideal para filmagem de câmera em 2,7K ou 4K.** Depois da full, medir o bitrate com `ffprobe` e avisar o usuário se ficar muito abaixo do que a fonte tinha.
+Para Shorts, Reels e TikTok o ponto de partida é o mesmo formato (MP4, H.264, AAC em 48 kHz) em 9:16, 1080x1920, e para feed em 1:1 (1080x1080) ou 4:5 (1080x1350); conferir as exigências e a duração máxima da plataforma na hora de publicar.
 
-A preview (até 720 px) é a referência de enquadramento, ritmo e cortes, mas **não** do tamanho do texto (seção 1.4). O arquivo final só é entregue depois da validação e da aprovação explícita.
+No editor, o perfil escolhe a proporção (seção 1.4): no `16:9` a full segue `max_full_width`, e nas demais proporções ela sai no tamanho fixo de plataforma. A full usa H.264 com preset `veryfast`, ou NVENC `p3` com `cq 31` quando se passa `--accel gpu`, que usa decode CUDA e alivia a CPU mas não é mais rápido. **Esses encoders não têm perfil de qualidade configurável e podem entregar bitrate bem abaixo do ideal para filmagem de câmera em 2,7K ou 4K.** Depois da full, medir o bitrate com `ffprobe` e avisar o usuário se ficar muito abaixo do que a fonte tinha.
+
+A preview (até 720 px, na mesma proporção da full) é a referência de enquadramento, ritmo, cortes e proporção do texto (seção 1.4); nitidez e bitrate só valem na full. O arquivo final só é entregue depois da validação e da aprovação explícita.
 
 ## 5. Comandos por finalidade
 

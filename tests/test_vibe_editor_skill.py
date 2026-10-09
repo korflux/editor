@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import re
 import unittest
 from pathlib import Path
+
+from editor.plan import schema as plan_schema
+from editor.plan.validation import _validate_reframe
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -119,7 +124,7 @@ class VibeEditorSkillTests(unittest.TestCase):
             "qualquer vídeo, de qualquer pessoa",
             "0,5 s ou mais",
             "-17 LUFS",
-            "`size_px` não é escalado entre preview e full",
+            "`size_px` vale na largura da full",
             "## 3. Estilo: decisões do briefing",
             "source-preparation.md",
             "canal-sonni-viaja.md",
@@ -128,6 +133,101 @@ class VibeEditorSkillTests(unittest.TestCase):
         # arquivos e estilo do canal vivem no perfil; técnicas genéricas antigas foram descartadas
         for absent in ("QRtiger.png", "Ending.mp4", "Tahoma", "Pattern interrupt", "### 2.3 B-roll e inserções"):
             self.assertNotIn(absent, self.youtube_reference)
+
+    def test_documents_drop_the_claims_the_phase_5_contract_replaced(self) -> None:
+        """Garante que nenhum documento da skill ainda diga que a saída é só 16:9 ou que `size_px` não escala."""
+
+        for name, document in (
+            ("SKILL.md", self.skill),
+            ("youtube-editing.md", self.youtube_reference),
+            ("source-preparation.md", self.source_preparation),
+        ):
+            for stale in (
+                "saída sempre 16:9",
+                "saída é sempre 16:9",
+                "O perfil é horizontal 16:9",
+                "não existe entregável 9:16",
+                "não é escalado entre preview e full",
+                "não escala entre preview e full",
+            ):
+                self.assertNotIn(stale, document, f"{name}: {stale}")
+
+    def test_skill_teaches_aspect_ratio_vertical_and_reframe_keyframes(self) -> None:
+        """Confirma que a skill cobre a escolha da proporção, o vertical, os keyframes e o aviso de ampliação."""
+
+        # Quebras de linha do Markdown não podem esconder uma frase: compara com espaços normalizados.
+        skill = " ".join(self.skill.split())
+        youtube = " ".join(self.youtube_reference.split())
+        # Proporções e tamanhos vêm das mesmas constantes que a validação e `capabilities` leem.
+        for aspect_ratio in plan_schema.ASPECT_RATIOS:
+            self.assertIn(aspect_ratio, skill)
+        for sizes in plan_schema.FIXED_CANVAS_DIMENSIONS.values():
+            for width, height in (sizes["full"], sizes["preview"]):
+                self.assertIn(f"{width}x{height}", skill)
+                self.assertIn(f"{width}x{height}", youtube)
+        for marker in (
+            "Shorts, Reels e TikTok",
+            "um trabalho",
+            "outro trabalho",
+            "`fit: crop`",
+            "`fit: contain`",
+            "`video.reframe`",
+            "`extract frames`",
+            "`t_s`",
+            "`x` e `y`",
+            "`ease`",
+            "`linear`",
+            f"{plan_schema.REFRAME_ZOOM_MIN} a {plan_schema.REFRAME_ZOOM_MAX}",
+            f"1 a {plan_schema.MAX_REFRAME_KEYFRAMES} keyframes",
+            "foco estático",
+            "nunca mostra preto",
+            "prefira `reframe` a `motion`",
+            "não aceita os dois",
+            "`upscale`",
+            "Ampliar não bloqueia",
+            "`size_px` do texto vale",
+        ):
+            self.assertIn(marker, skill)
+        for marker in (
+            "| Shorts, Reels, TikTok | `9:16` |",
+            "`t_s = tempo na fonte - in_s`",
+            "`data.profile.upscale`",
+            "`max_full_width` é recusado",
+            f"{plan_schema.MAX_REFRAME_KEYFRAMES} itens por segmento",
+        ):
+            self.assertIn(marker, youtube)
+
+    def test_skill_gives_safe_zones_as_editorial_guidance_not_validation(self) -> None:
+        """Garante as zonas seguras do Shorts e do Reels, rotuladas como sugestão e não como regra do editor."""
+
+        for name, document in (("SKILL.md", self.skill), ("youtube-editing.md", self.youtube_reference)):
+            # Quebras de linha do Markdown não podem esconder uma frase: compara com espaços normalizados.
+            flat = " ".join(document.lower().split())
+            self.assertIn("zonas seguras", flat, name)
+            self.assertIn("orientação editorial", flat, name)
+            self.assertIn("margens conservadoras sugeridas", flat, name)
+            self.assertIn("não medidas oficiais", flat, name)
+            self.assertIn("faixa inferior", flat, name)
+            self.assertIn("lado direito", flat, name)
+        self.assertIn("o editor não as valida", " ".join(self.skill.split()))
+        self.assertIn("sem validação no código", self.youtube_reference)
+
+    def test_skill_reframe_example_is_accepted_by_the_plan_validator(self) -> None:
+        """O JSON de `reframe` mostrado na skill passa pela mesma validação do `plan validate`."""
+
+        example = next(
+            block
+            for block in re.findall(r"```json\n(.*?)```", self.skill, flags=re.DOTALL)
+            if '"reframe"' in block
+        )
+        video = json.loads("{" + example + "}")["video"]
+        normalized = _validate_reframe(video, "segments[].video")
+        keyframes = normalized["keyframes"]
+
+        self.assertEqual(video["fit"], "crop")
+        self.assertEqual([item["t_s"] for item in keyframes], [0.0, 2.5, 6.0])
+        self.assertEqual([item["interpolation"] for item in keyframes], ["ease", "linear", "ease"])
+        self.assertEqual([item["zoom"] for item in keyframes], [1.0, 1.5, 1.5])
 
     def test_channel_profile_carries_the_channel_style(self) -> None:
         """Garante que o estilo do canal fique em um perfil próprio, separado do padrão de qualidade."""

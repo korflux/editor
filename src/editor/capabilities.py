@@ -17,17 +17,29 @@ from .media import (
     MAX_SOURCE_SIZE_BYTES,
 )
 from .plan.schema import (
+    ASPECT_RATIOS,
     CUT_TYPES,
     DEFAULT_MAX_FULL_WIDTH,
+    DEFAULT_REFRAME_INTERPOLATION,
+    DEFAULT_REFRAME_ZOOM,
+    FIXED_CANVAS_DIMENSIONS,
+    FULL_WIDTH_ALIGNMENT,
+    KEYFRAME_FIELDS,
+    LANDSCAPE_ASPECT_RATIO,
     LAYER_FIT_MODES,
     LAYER_TYPES,
     MAX_CUT_DURATION_SECONDS,
     MAX_FULL_WIDTH_STEP,
     MAX_MAX_FULL_WIDTH,
+    MAX_REFRAME_KEYFRAMES,
     MIN_MAX_FULL_WIDTH,
     MOTION_ZOOM_MAX,
     MOTION_ZOOM_MIN,
     PLAN_SCHEMA_VERSION,
+    PREVIEW_WIDTH_ALIGNMENT,
+    REFRAME_INTERPOLATIONS,
+    REFRAME_ZOOM_MAX,
+    REFRAME_ZOOM_MIN,
     SOURCE_KINDS,
 )
 from .plan.validation import (
@@ -156,6 +168,42 @@ def _operation(status: str, requires: list[str], reason: str) -> dict[str, Any]:
     """Cria o registro uniforme de uma operação e suas dependências observadas."""
 
     return {"status": status, "requires": requires, "reason": reason}
+
+
+def _canvas_capabilities() -> dict[str, Any]:
+    """Descreve o canvas de full e preview de cada proporção aceita (phase 5, F3).
+
+    As proporções fixas (9:16, 1:1, 4:5) saem de `schema.FIXED_CANVAS_DIMENSIONS` e o 16:9 é
+    descrito pela regra vigente (largura da primeira fonte de vídeo, sem upscale, limitada por
+    `profile.max_full_width` na full e por `MAX_PREVIEW_DIMENSION` na preview). Nada é copiado
+    como literal: o inventário e a validação leem as mesmas constantes, na ordem de `ASPECT_RATIOS`.
+    """
+
+    canvas: dict[str, Any] = {}
+    for aspect_ratio in ASPECT_RATIOS:
+        if aspect_ratio == LANDSCAPE_ASPECT_RATIO:
+            canvas[aspect_ratio] = {
+                "kind": "source_width",
+                "reference": "first_video_source",
+                "upscale": False,
+                "full": {
+                    "max_width": "profile.max_full_width",
+                    "max_width_default": DEFAULT_MAX_FULL_WIDTH,
+                    "width_alignment": FULL_WIDTH_ALIGNMENT,
+                },
+                "preview": {
+                    "max_width": MAX_PREVIEW_DIMENSION,
+                    "width_alignment": PREVIEW_WIDTH_ALIGNMENT,
+                },
+            }
+            continue
+        fixed = FIXED_CANVAS_DIMENSIONS[aspect_ratio]
+        canvas[aspect_ratio] = {
+            "kind": "fixed",
+            "full": {"width": fixed["full"][0], "height": fixed["full"][1]},
+            "preview": {"width": fixed["preview"][0], "height": fixed["preview"][1]},
+        }
+    return canvas
 
 
 def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
@@ -297,17 +345,56 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "schema_version": PLAN_SCHEMA_VERSION,
             "source_kinds": sorted(SOURCE_KINDS),
             "profile": {
-                "aspect_ratio": "16:9",
+                # Mantido por compatibilidade: é a proporção horizontal, a única com `max_full_width`.
+                # A allowlist completa de `profile.aspect_ratio` é `aspect_ratios`; um plano usa uma só.
+                "aspect_ratio": LANDSCAPE_ASPECT_RATIO,
+                "aspect_ratios": list(ASPECT_RATIOS),
+                "max_full_width_applies_to": [LANDSCAPE_ASPECT_RATIO],
+                "canvas": _canvas_capabilities(),
                 "max_full_width_default": DEFAULT_MAX_FULL_WIDTH,
                 "max_full_width_min": MIN_MAX_FULL_WIDTH,
                 "max_full_width_max": MAX_MAX_FULL_WIDTH,
                 "max_full_width_step": MAX_FULL_WIDTH_STEP,
+                # Campos de `data.profile` em `plan validate` e nos renders; os da segunda lista só
+                # existem no 16:9. `upscale` avisa, não bloqueia: lista os segmentos cuja fonte é
+                # ampliada no canvas da full, `segment` com base 1 (o `index` da timeline) e `factor`
+                # com 2 casas, só acima de 1.0; lista vazia significa que nenhum segmento é ampliado.
+                "envelope_fields": ["aspect_ratio", "full_width", "full_height", "upscale"],
+                "envelope_fields_landscape_only": ["max_full_width", "effective_full_width"],
+                "upscale": {
+                    "envelope": "profile.upscale",
+                    "item_fields": ["segment", "factor"],
+                    "segment_base": 1,
+                    "factor_decimals": 2,
+                    "factor_greater_than": 1.0,
+                    "blocks_render": False,
+                },
             },
             "motion": {
                 "status": "available",
                 "interpolation": "linear",
                 "zoom_min": MOTION_ZOOM_MIN,
                 "zoom_max": MOTION_ZOOM_MAX,
+            },
+            # Reenquadramento (phase 5): foco estático (1 keyframe) ou deslizante entre pontos marcados
+            # no tempo, sobre a fonte original. Limites e padrões lidos de `plan/schema.py`; `t_s` é
+            # relativo ao início do segmento, `x`/`y` são normalizados sobre a fonte e o recorte é
+            # encostado na borda (nunca mostra preto). Só com `fit: crop` e nunca junto de `motion`.
+            "reframe": {
+                "status": "available",
+                "field": "segments[].video.reframe",
+                "keyframe_fields": sorted(KEYFRAME_FIELDS),
+                "max_keyframes": MAX_REFRAME_KEYFRAMES,
+                "zoom_min": REFRAME_ZOOM_MIN,
+                "zoom_max": REFRAME_ZOOM_MAX,
+                "zoom_default": DEFAULT_REFRAME_ZOOM,
+                "interpolations": list(REFRAME_INTERPOLATIONS),
+                "interpolation_default": DEFAULT_REFRAME_INTERPOLATION,
+                "requires_fit": "crop",
+                "excludes": ["motion"],
+                "time_reference": "segment_start",
+                "coordinates": "normalized_source",
+                "edge": "clamp",
             },
             "cuts": {
                 "types": sorted(CUT_TYPES),
@@ -329,6 +416,9 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "max_command_characters": dependencies.max_command_characters(),
             "preview_max_dimension": MAX_PREVIEW_DIMENSION,
             "full_default_max_width": DEFAULT_MAX_FULL_WIDTH,
+            # `size_px` de uma camada de texto vale na largura da full; a preview o escala pela razão
+            # das larguras (arredondado, mínimo 1) e a full renderiza o valor declarado.
+            "text_size": {"size_px_reference": "full_width", "preview_scaling": "proportional_to_width"},
             # `--accel gpu` é opt-in: "available" significa que o FFmpeg expõe NVENC e decode CUDA;
             # a GPU só é confirmada ao renderizar, e a falha cai para CPU (campo video.accel do envelope).
             "gpu_acceleration": {
@@ -429,6 +519,9 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             "max_cut_duration_seconds": MAX_CUT_DURATION_SECONDS,
             "motion_zoom_min": MOTION_ZOOM_MIN,
             "motion_zoom_max": MOTION_ZOOM_MAX,
+            "reframe_max_keyframes": MAX_REFRAME_KEYFRAMES,
+            "reframe_zoom_min": REFRAME_ZOOM_MIN,
+            "reframe_zoom_max": REFRAME_ZOOM_MAX,
             "max_image_size_bytes": MAX_IMAGE_SIZE_BYTES,
             "max_image_dimension": MAX_IMAGE_DIMENSION,
             "max_timeline_duration_seconds": MAX_TIMELINE_DURATION_SECONDS,

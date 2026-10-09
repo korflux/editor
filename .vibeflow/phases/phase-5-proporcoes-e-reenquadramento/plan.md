@@ -81,22 +81,26 @@ Esta entrega faz o editor renderizar planos em 9:16, 1:1 e 4:5, além de 16:9, e
 
 ### T4: Provar a jornada vertical completa e publicar o contrato
 
-- [ ] T4 concluída
+- [x] T4 concluída
 - **Spec:** A7, A8, C1, C3, C4
 - **O quê:** um plano 9:16 com `reframe` e texto percorre validação, preview com e sem proxy, aprovação, bloqueio por mutação e full com janelas de decode; `capabilities` expõe proporções, dimensões de preview e full e limites do `reframe` lidos das constantes da T1 e T2; a skill `vibe-editor` documenta a escolha da proporção, a marcação de keyframes pelos frames extraídos, a preferência por `reframe` sobre `motion` e as zonas seguras do Shorts e do Reels; `REGRAS.md` registra a ferramenta, as limitações (`ponytail`) e o mapa de testes; o registro em `.erros-encontrados/2026-10-08-size-px-nao-escala-entre-preview-e-full.md` marca o Problema 1 como resolvido e mantém o Problema 2 aberto.
 - **Aceite:**
-  - [ ] Na jornada 9:16, `data.decode.windowed` e `data.proxy` são os esperados, a preview com proxy sai em 404x720, a aprovação vincula os originais e uma mutação do `reframe` bloqueia a full.
-  - [ ] `capabilities --json` contém as quatro proporções, as dimensões e os limites do `reframe`, com os mesmos valores das constantes.
-  - [ ] A validação da skill passa e o texto cobre vertical, keyframes e zonas seguras.
-  - [ ] A suíte inteira, o E2E, `gitleaks` e `pip_audit` passam.
+  - [x] Na jornada 9:16, `data.decode.windowed` e `data.proxy` são os esperados, a preview com proxy sai em 404x720, a aprovação vincula os originais e uma mutação do `reframe` bloqueia a full.
+  - [x] `capabilities --json` contém as quatro proporções, as dimensões e os limites do `reframe`, com os mesmos valores das constantes.
+  - [x] A validação da skill passa e o texto cobre vertical, keyframes e zonas seguras.
+  - [x] A suíte inteira, o E2E, `gitleaks` e `pip_audit` passam.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_5_flow tests.test_capabilities tests.test_vibe_editor_skill -v`
-  - [ ] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
-  - [ ] `gitleaks detect --source . --no-banner`
-  - [ ] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.e2e.test_phase_5_flow tests.test_capabilities tests.test_vibe_editor_skill -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
+  - [x] `gitleaks detect --source . --no-banner`
+  - [x] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
 - **Deps:** T2, T3
 - **Arquivos:** `tests/e2e/test_phase_5_flow.py`, `src/editor/capabilities.py`, `tests/test_capabilities.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `tests/test_vibe_editor_skill.py`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-08-size-px-nao-escala-entre-preview-e-full.md`
 - **Risco:** a skill, `test_capabilities.py`, `test_vibe_editor_skill.py` e `REGRAS.md` têm alterações não commitadas anteriores a esta phase; a task edita sobre o estado atual sem descartá-las e o commit da T4 deve separar ou declarar o que é anterior.
+- **Prova:** `tests.e2e.test_phase_5_flow tests.test_capabilities tests.test_vibe_editor_skill` -> 30 testes OK; suíte completa (`discover -s tests`, com E2E e as provas das T1 a T3) -> 236 testes OK em 224 s; `gitleaks detect --source . --no-banner` -> 61 commits, no leaks found (e `--no-git` sobre tests, skills, src, .vibeflow e .erros-encontrados, repetido pelo coordenador, sem achados); `pip_audit -r requirements.lock --no-deps --disable-pip` -> No known vulnerabilities found; `quick_validate.py skillsibe-editor` -> Skill is valid. E2E 9:16 (fonte sintética 1920x1080 de 12 s, 2 trechos `crop` com keyframes `ease` e `linear` e foco estático, 1 texto): `plan validate` com perfil 1080x1920, `upscale` [2.67, 1.78] e `reframe` normalizado; preview sem proxy; `proxy build` 1280x720; preview com proxy em 404x720 com `data.proxy` = auto, 1 fonte, sem `stale`, `data.decode.windowed` verdadeiro; `approve` vincula o SHA-256 do original e não o do proxy; mutação de um `x` do `reframe` muda o hash e a full é bloqueada com `APPROVAL_STALE` (sem `full.mp4` e com `approval.json` intacto); full 1080x1920 H.264/AAC com janelas (`windowed` verdadeiro, 2 entradas, sem `data.proxy`) feita com o proxy deliberadamente corrompido, o que prova que a full não lê proxy.
+- **Arquivos (efetivos):** `tests/e2e/test_phase_5_flow.py` (novo), `src/editor/capabilities.py`, `tests/test_capabilities.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `skills/vibe-editor/references/source-preparation.md` (fora da lista planejada: três frases que ficariam falsas com o novo contrato), `tests/test_vibe_editor_skill.py`, `.vibeflow/REGRAS.md`, `.erros-encontrados/2026-10-08-size-px-nao-escala-entre-preview-e-full.md`. O diff anterior à phase nesses arquivos foi commitado à parte (`d89573d`), então o commit da T4 contém só o diff da task.
+- **Decisões de implementação:** `capabilities` expõe `plan.profile.aspect_ratios`, `max_full_width_applies_to`, `canvas` (full e preview de cada proporção), `envelope_fields`, `envelope_fields_landscape_only` e `upscale`, `plan.reframe` (campos, limites, padrões, `requires_fit: crop`, `excludes: [motion]`), `limits.reframe_*` e `render.text_size`, tudo das constantes de `plan/schema.py` e `MAX_PREVIEW_DIMENSION`; `plan.profile.aspect_ratio` permanece `"16:9"` por compatibilidade (nada removido nem renomeado). Duas asserções existentes mudaram com justificativa no A8: a igualdade exata de `plan.profile` em `tests/test_capabilities.py` virou igualdade sobre as cinco chaves legadas, e a de `size_px não é escalado` em `tests/test_vibe_editor_skill.py` virou `size_px vale na largura da full`. A tabela "Decisões vigentes" do `REGRAS.md` não foi alterada: é sincronizada na finalização aprovada, depois da review.
+- **Limitação registrada:** os literais `segment_base: 1`, `factor_decimals: 2` e `factor_greater_than: 1.0` de `upscale` em `capabilities.py` não vêm de constante compartilhada com `validation.py` e são provados pelo E2E, e não por constante; `installation.md` não cita proporções nem `reframe` (opcional).
 
 ## Paralelização
 

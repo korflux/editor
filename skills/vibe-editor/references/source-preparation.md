@@ -11,7 +11,7 @@ Esta referência é lida quando o editor rejeita uma fonte (`MEDIA_UNSUPPORTED` 
 | Áudio | **Exatamente um** stream AAC para `analyze audio`: nenhum ou mais de um recebe `MEDIA_UNSUPPORTED` ("deve conter exatamente um stream de áudio"). Fonte sem áudio funciona em `extract frames` e no plano com `mode: mute` e `tracks: []`. Fontes só de áudio: MP3 ou WAV PCM de 16 bits |
 | Streams extras | Nenhum. A trilha de timecode (`tmcd`) comprovadamente faz o editor recusar a fonte; trilhas de dados e miniaturas MJPEG anexadas também são descartadas pela conversão, por segurança |
 | Tamanho | Até 4 GiB e 1 hora por arquivo |
-| Proporção | 16:9 direto; outras proporções só com `fit: contain` ou `fit: crop` no segmento (ver `youtube-editing.md`, seção 1.4) |
+| Proporção | A do perfil direto (`fit: preserve`); outras proporções só com `fit: contain` ou `fit: crop` no segmento (ver `youtube-editing.md`, seção 1.4) |
 
 As câmeras DJI são o caso típico: HEVC de 10 bits, mais três streams de dados e uma miniatura MJPEG. Celulares gravam HEVC (iPhone e muitos Android), em MOV ou MP4, às vezes com taxa de quadros variável.
 
@@ -111,12 +111,12 @@ Materiais reais passados pelo editor, com o resultado de cada tratamento:
 | Gravação de tela, 1920 × 1080 a 60 quadros/s, 1 h (3621 s), 10 GB | MKV com H.264 e 3 faixas de áudio AAC | Remux `-c copy` escolhendo uma faixa; divisão em partes sem recodificar | Original recusado pela extensão; MP4 de qualquer das faixas e as 3 partes aceitos; MP4 com as 3 faixas recusado |
 | Clipe curto de jogo, 1920 × 1072 | H.264 em MP4, sem áudio, taxa variável | Nenhuma conversão | Aceito em `extract frames`; `analyze audio` recusa (sem áudio); plano só passa com `fit: contain` ou `crop` e `mode: mute` |
 | Fonte sintética 1366 × 768 | H.264 em MP4 | Nenhuma | Aceita com `fit: contain` e `max_full_width` 1376; a full sai em 1366 |
-| Fontes sintéticas 4:3, 21:9 e vertical | H.264 em MP4 | Nenhuma | Aceitas só com `fit: contain` ou `crop`; saída sempre 16:9 com a largura da fonte (o vertical vira um quadro 16:9 pequeno) |
+| Fontes sintéticas 4:3, 21:9 e vertical | H.264 em MP4 | Nenhuma | Aceitas só com `fit: contain` ou `crop`; num perfil 16:9 a saída tem a largura da fonte (o vertical vira um quadro 16:9 pequeno) |
 | `.mov` com H.264 e AAC | MOV | Remux `-c copy` da seção 4 | Original recusado; MP4 aceito |
 
 ## 8. Depois da preparação
 
 - O plano usa as cópias em `sources\`. A aprovação por hash fica vinculada às cópias, então não as renomear nem recriá-las depois de aprovar o plano.
 - Guardar os originais. Registrar no resumo do briefing quais cópias foram criadas, a partir de qual original e com qual comando.
-- A preparação não resolve a proporção: uma fonte vertical (9:16) continua gerando uma saída 16:9 com barras ou recorte pesado. Avisar o usuário antes de seguir.
+- A preparação não resolve a proporção: o perfil do plano decide (`youtube-editing.md`, seção 1.4). Uma fonte vertical num perfil 16:9 gera um quadro 16:9 com barras ou recorte pesado; para entregar vertical, usar um perfil `9:16`. Avisar o usuário antes de seguir.
 - A preparação não substitui a aprovação humana da preview.

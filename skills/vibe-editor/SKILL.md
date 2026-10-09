@@ -49,8 +49,9 @@ Para qualquer vídeo, de qualquer pessoa, leia
 [references/youtube-editing.md](references/youtube-editing.md) antes de fechar o
 briefing. Ele define o padrão de qualidade da skill (processo com prova, cortes que
 não comem palavras, texto na tela com fonte, áudio nivelado, imagem íntegra, entrega),
-como esse padrão vira campos do plano e as limitações do editor (tamanho do texto na
-preview, texto sem sombra, saída sempre 16:9). O estilo do vídeo (ritmo, b-roll,
+como esse padrão vira campos do plano (inclusive proporção vertical e reenquadramento) e
+as limitações do editor (texto sem sombra nem contorno, uma proporção por plano). O
+estilo do vídeo (ritmo, b-roll,
 zoom, música, aparência do texto, gancho e fecho) é decisão do briefing: pergunte só
 o que o usuário ainda não definiu. Se o vídeo for do canal Sonni Viaja (vlog de
 viagem de Marco Kormoczi), leia também
@@ -74,6 +75,8 @@ Entenda, em linguagem simples:
 - quais arquivos são vídeo principal, apoio, voz e música;
 - quais trechos devem entrar ou sair;
 - quais textos devem aparecer;
+- onde o vídeo será publicado, que define a proporção (YouTube horizontal, Shorts,
+  Reels e TikTok vertical, feed quadrado ou 4:5);
 - duração, formato e restrições relevantes.
 
 Se os arquivos não estiverem acessíveis localmente, peça ao usuário que os coloque
@@ -178,12 +181,68 @@ música, normalização, limiter e letterings. Use `video.motion` opcional com e
 `from` e `to`, cada um com `x`, `y` e `zoom` entre `0.5` e `4.0`, interpolados
 linearmente. Declare cortes J/L em `cuts[]`, com `type` `j` ou `l` e sua duração.
 
-O perfil é horizontal 16:9. `layers[]` é a composição visual ordenada sobre o
-vídeo-base e aceita `type: "text"`, `type: "image"` e `type: "video"`, sempre com
-`start_s`, `end_s`, `x`, `y`, `width` e `height` normalizados. Imagens aceitas são
-PNG, JPEG/JPG e WebP estáticos, até 100 MiB e 8.192 pixels por dimensão. Use
-`fit: contain` ou `fit: crop` nas camadas e nas fontes quando necessário. Não use
-campos fora do contrato.
+`layers[]` é a composição visual ordenada sobre o vídeo-base e aceita
+`type: "text"`, `type: "image"` e `type: "video"`, sempre com `start_s`, `end_s`, `x`,
+`y`, `width` e `height` normalizados sobre o canvas do perfil. O `size_px` do texto vale
+na largura da full e a preview o escala na mesma proporção, então o texto da preview
+representa o da full. Imagens aceitas são PNG, JPEG/JPG e WebP estáticos, até 100 MiB
+e 8.192 pixels por dimensão. Use `fit: contain` ou `fit: crop` nas camadas e nas
+fontes quando necessário. Não use campos fora do contrato.
+
+#### Proporção de saída e reenquadramento
+
+`profile.aspect_ratio` aceita `16:9`, `9:16`, `1:1` e `4:5`. Um plano tem uma única
+proporção, com uma preview, uma aprovação e uma full; para entregar em outra
+proporção, abra outro trabalho (outra pasta) com outro plano. Escolha pelo destino:
+`16:9` para YouTube, `9:16` para Shorts, Reels e TikTok, `1:1` e `4:5` para feed.
+Fora do 16:9 o tamanho é fixo de plataforma, qualquer que seja a fonte: a full sai em
+1080x1920 (9:16), 1080x1080 (1:1) ou 1080x1350 (4:5) e a preview em até 720 pixels
+(404x720, 720x720 e 576x720). `max_full_width` só vale no 16:9; em outra proporção o
+plano é recusado.
+
+Uma fonte horizontal vira vertical por `fit: crop`, que recorta a fonte na proporção
+do canvas, ou por `fit: contain`, que mantém a imagem inteira com barras. Para seguir
+o sujeito use `video.reframe` (só com `fit: crop`):
+
+```json
+"video": {"source_id": "main", "in_s": 12.0, "out_s": 18.0, "fit": "crop",
+  "reframe": {"keyframes": [
+    {"t_s": 0, "x": 0.3, "y": 0.5},
+    {"t_s": 2.5, "x": 0.7, "y": 0.45, "zoom": 1.5, "interpolation": "linear"},
+    {"t_s": 6.0, "x": 0.7, "y": 0.45, "zoom": 1.5}
+  ]}}
+```
+
+- Cada keyframe tem `t_s` (segundos desde o início do segmento, estritamente
+  crescente, de 0 até `out_s - in_s`), `x` e `y` (0 a 1), `zoom` opcional (1.0 a 4.0,
+  padrão 1.0) e `interpolation` opcional (`ease`, o padrão, parte e chega suave;
+  `linear`, velocidade constante). A interpolação do keyframe vale até o seguinte.
+  São de 1 a 32 keyframes por segmento; um só é um foco estático.
+- `x` e `y` são a posição do sujeito sobre a largura e a altura da fonte original, com
+  origem no canto superior esquerdo, e ficam no centro do recorte. Quando o centro
+  levaria o recorte para fora da fonte, ele encosta na borda e nunca mostra preto.
+  Antes do primeiro keyframe e depois do último vale o estado do primeiro e do último.
+- Para marcar, extraia frames da fonte original com `extract frames`, abra cada frame,
+  leia onde está o sujeito como fração do quadro inteiro e converta o tempo do frame
+  para `t_s = tempo na fonte - video.in_s`. Crie um keyframe quando o sujeito muda de
+  lugar; use `zoom` acima de 1.0 só para aproximar de propósito.
+- Em trabalhos novos prefira `reframe` a `motion`, inclusive para um punch-in em 16:9.
+  O mesmo segmento não aceita os dois. `motion` continua válido nos planos que o usam.
+
+`plan validate` informa `data.profile.full_width`, `full_height` e `upscale`: a lista
+de segmentos (`segment`, a posição de 1 em diante na timeline) em que a fonte é
+ampliada no canvas da full, com o `factor` arredondado em 2 casas (uma fonte 1080p em
+9:16 amplia cerca de 1.78 vezes; uma 4K em 9:16 não amplia). Lista vazia significa que
+nenhum segmento é ampliado. Ampliar não bloqueia o render: informe o usuário que a
+imagem perde nitidez nesses trechos (mais com `zoom` alto) e siga se ele aceitar.
+
+Zonas seguras do Shorts, Reels e TikTok são orientação editorial; o editor não as valida.
+Essas plataformas cobrem a faixa inferior (título, legenda e botões) e o lado direito
+com a interface. Mantenha rosto e texto longe delas, com margens conservadoras
+sugeridas, por exemplo cerca de 20% da altura livre embaixo, 10% no topo e 10% nas
+laterais, com um pouco mais à direita. São valores sugeridos, não medidas oficiais, e as
+plataformas mudam a interface: confira os quadros da preview e ajuste `y` e `height`
+do texto e os keyframes.
 
 Valide antes de renderizar:
 
@@ -271,10 +330,13 @@ valores inventados:
 ```
 
 Repita a extração para o início e fim de cada movimento e para o último segundo
-do vídeo. Na auditoria, confirme continuidade de ação, olhar, enquadramento e
-áudio; confirme que o movimento não corta o assunto nem começa ou termina de
-forma abrupta; e confirme que o último plano e o áudio encerram naturalmente,
-sem frame preto, congelamento ou corte prematuro.
+do vídeo. Com `reframe`, extraia também um frame da preview em cada keyframe (tempo
+da timeline = início do segmento na timeline + `t_s`) e confira se o sujeito está no
+enquadramento esperado e dentro das zonas seguras. Na auditoria, confirme
+continuidade de ação, olhar, enquadramento e áudio; confirme que o movimento não
+corta o assunto nem começa ou termina de forma abrupta; e confirme que o último
+plano e o áudio encerram naturalmente, sem frame preto, congelamento ou corte
+prematuro.
 
 #### 7.3 Auditoria visual do lettering
 

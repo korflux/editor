@@ -105,21 +105,21 @@ O operador (agente ou humano) monta, a partir de gravações 16:9, vídeos 9:16,
 
 ### Aceite
 
-- [ ] A1: um plano com cada uma das quatro proporções valida e informa as dimensões da full e da preview; outra proporção, ou `max_full_width` fora do 16:9, é recusada com `PLAN_INVALID`.
+- [x] A1: um plano com cada uma das quatro proporções valida e informa as dimensões da full e da preview; outra proporção, ou `max_full_width` fora do 16:9, é recusada com `PLAN_INVALID`.
 - [x] A2: `reframe` válido é normalizado no envelope e entra no hash canônico; cada violação da decisão 4, 6, 8 ou 10 (sem `crop`, com `motion`, `t_s` fora de ordem ou da duração, faixa de `x`, `y` ou `zoom`, mais de 32 keyframes, campo desconhecido) é recusada com `PLAN_INVALID` e mensagem segura.
 - [x] A3: `data.profile.upscale` lista os segmentos ampliados com o fator correto e fica vazio quando nenhum é ampliado.
 - [x] A4: preview e full de um plano 9:16 sobre fonte 16:9 saem em 404x720 e 1080x1920; as de 1:1 e 4:5 saem nas dimensões da decisão 3 e 2.
 - [x] A5: com keyframes, o recorte segue as posições declaradas nos instantes dos keyframes, desliza entre eles conforme `ease` ou `linear`, encosta na borda sem preto e mantém o estado fora do intervalo dos keyframes.
 - [x] A6: um plano 16:9 existente, sem `reframe`, gera full idêntica à de antes da phase, e a preview mostra o texto na mesma proporção da full.
-- [ ] A7: aprovação, bloqueio da full por mutação, janelas de decode, fallback e preview com proxy funcionam num plano 9:16 com `reframe`.
-- [ ] A8: `capabilities` expõe proporções, dimensões e limites do `reframe`, e a skill documenta o fluxo vertical, os keyframes e as zonas seguras.
+- [x] A7: aprovação, bloqueio da full por mutação, janelas de decode, fallback e preview com proxy funcionam num plano 9:16 com `reframe`.
+- [x] A8: `capabilities` expõe proporções, dimensões e limites do `reframe`, e a skill documenta o fluxo vertical, os keyframes e as zonas seguras.
 
 ### Critérios de sucesso
 
-- [ ] C1: todas as provas de A1 a A8 passam junto com a suíte vigente, sem regressão.
+- [x] C1: todas as provas de A1 a A8 passam junto com a suíte vigente, sem regressão.
 - [x] C2: a posição do recorte nos instantes dos keyframes coincide com a esperada com tolerância de até 2 pixels na full, e nenhum quadro com `crop` contém barras pretas.
-- [ ] C3: nenhum plano v2 válido antes da phase passa a ser recusado (mudança minor).
-- [ ] C4: `REGRAS.md`, `capabilities` e a skill descrevem o mesmo contrato, com as limitações registradas como `ponytail`.
+- [x] C3: nenhum plano v2 válido antes da phase passa a ser recusado (mudança minor).
+- [x] C4: `REGRAS.md`, `capabilities` e a skill descrevem o mesmo contrato, com as limitações registradas como `ponytail`.
 
 ## Contratos e restrições necessárias
 

@@ -15,6 +15,8 @@ from uuid import uuid4
 
 from editor import dependencies as editor_dependencies
 from editor.capabilities import choose_recommendation, collect_capabilities
+from editor.plan import schema as plan_schema
+from editor.render.preview import MAX_PREVIEW_DIMENSION
 from editor.whisper_backend import resolve_config
 
 
@@ -83,8 +85,17 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(data["operations"]["capabilities"]["status"], "available")
         self.assertEqual(data["operations"]["init"]["status"], "available")
         self.assertEqual(data["plan"]["schema_version"], 2)
+        # Phase 5 acrescentou campos ao perfil (proporções, canvas, upscale); a igualdade exata do
+        # contrato anterior vale sobre as chaves que já existiam, que não foram removidas nem renomeadas.
+        legacy_profile_keys = (
+            "aspect_ratio",
+            "max_full_width_default",
+            "max_full_width_min",
+            "max_full_width_max",
+            "max_full_width_step",
+        )
         self.assertEqual(
-            data["plan"]["profile"],
+            {key: data["plan"]["profile"][key] for key in legacy_profile_keys},
             {
                 "aspect_ratio": "16:9",
                 "max_full_width_default": 1_920,
@@ -163,6 +174,104 @@ class CapabilitiesTests(unittest.TestCase):
             },
         )
 
+    def test_plan_exposes_aspect_ratios_canvas_and_reframe_from_the_constants(self) -> None:
+        """Prova (A8) que proporções, dimensões e limites do `reframe` são os das constantes da validação."""
+
+        with workspace_tempdir() as root:
+            data = collect_capabilities(root)
+        profile = data["plan"]["profile"]
+        reframe = data["plan"]["reframe"]
+
+        # As quatro proporções e, para cada uma, as dimensões de full e preview das mesmas constantes.
+        self.assertEqual(profile["aspect_ratios"], ["16:9", "9:16", "1:1", "4:5"])
+        self.assertEqual(profile["aspect_ratios"], list(plan_schema.ASPECT_RATIOS))
+        self.assertEqual(profile["max_full_width_applies_to"], ["16:9"])
+        self.assertEqual(list(profile["canvas"]), list(plan_schema.ASPECT_RATIOS))
+        for aspect_ratio, fixed in plan_schema.FIXED_CANVAS_DIMENSIONS.items():
+            canvas = profile["canvas"][aspect_ratio]
+            self.assertEqual(canvas["kind"], "fixed")
+            self.assertEqual((canvas["full"]["width"], canvas["full"]["height"]), fixed["full"])
+            self.assertEqual((canvas["preview"]["width"], canvas["preview"]["height"]), fixed["preview"])
+            # O lado maior da preview é o teto exposto em `render`, e a full é a de plataforma do plano.
+            self.assertEqual(max(fixed["preview"]), MAX_PREVIEW_DIMENSION)
+            self.assertEqual(
+                plan_schema.canvas_dimensions(aspect_ratio, 3_840, None, final=True), fixed["full"]
+            )
+            self.assertEqual(
+                plan_schema.canvas_dimensions(aspect_ratio, 3_840, None, final=False), fixed["preview"]
+            )
+        self.assertEqual(
+            {
+                ratio: (canvas["full"]["width"], canvas["full"]["height"])
+                for ratio, canvas in profile["canvas"].items()
+                if ratio != "16:9"
+            },
+            {"9:16": (1_080, 1_920), "1:1": (1_080, 1_080), "4:5": (1_080, 1_350)},
+        )
+
+        # O 16:9 é uma regra, e a regra exposta vale na função que o render e a validação usam.
+        landscape = profile["canvas"]["16:9"]
+        self.assertEqual(landscape["kind"], "source_width")
+        self.assertIs(landscape["upscale"], False)
+        self.assertEqual(landscape["full"]["max_width"], "profile.max_full_width")
+        self.assertEqual(landscape["full"]["max_width_default"], plan_schema.DEFAULT_MAX_FULL_WIDTH)
+        self.assertEqual(landscape["preview"]["max_width"], MAX_PREVIEW_DIMENSION)
+        full_width, full_height = plan_schema.canvas_dimensions("16:9", 10_000, 1_920, final=True)
+        self.assertEqual((full_width, full_height), (1_920, 1_080))
+        self.assertEqual(full_width % landscape["full"]["width_alignment"], 0)
+        preview_width, preview_height = plan_schema.canvas_dimensions(
+            "16:9", 10_000, landscape["preview"]["max_width"], final=False
+        )
+        self.assertLessEqual(preview_width, MAX_PREVIEW_DIMENSION)
+        self.assertEqual(preview_width % landscape["preview"]["width_alignment"], 0)
+        self.assertEqual(preview_height, preview_width * 9 // 16)
+        # Sem upscale: uma fonte menor que o teto mantém a própria largura.
+        self.assertEqual(plan_schema.canvas_dimensions("16:9", 640, 1_920, final=True), (640, 360))
+
+        # Campos novos de `data.profile` e o item de `upscale`.
+        self.assertEqual(
+            profile["envelope_fields"], ["aspect_ratio", "full_width", "full_height", "upscale"]
+        )
+        self.assertEqual(
+            profile["envelope_fields_landscape_only"], ["max_full_width", "effective_full_width"]
+        )
+        self.assertEqual(
+            profile["upscale"],
+            {
+                "envelope": "profile.upscale",
+                "item_fields": ["segment", "factor"],
+                "segment_base": 1,
+                "factor_decimals": 2,
+                "factor_greater_than": 1.0,
+                "blocks_render": False,
+            },
+        )
+
+        # `reframe`: limites, padrões e regras de convivência, todos das constantes do schema.
+        self.assertEqual(reframe["status"], "available")
+        self.assertEqual(reframe["field"], "segments[].video.reframe")
+        self.assertEqual(reframe["keyframe_fields"], sorted(plan_schema.KEYFRAME_FIELDS))
+        self.assertEqual(reframe["max_keyframes"], plan_schema.MAX_REFRAME_KEYFRAMES)
+        self.assertEqual(reframe["zoom_min"], plan_schema.REFRAME_ZOOM_MIN)
+        self.assertEqual(reframe["zoom_max"], plan_schema.REFRAME_ZOOM_MAX)
+        self.assertEqual(reframe["zoom_default"], plan_schema.DEFAULT_REFRAME_ZOOM)
+        self.assertEqual(reframe["interpolations"], list(plan_schema.REFRAME_INTERPOLATIONS))
+        self.assertEqual(reframe["interpolations"], ["ease", "linear"])
+        self.assertEqual(reframe["interpolation_default"], plan_schema.DEFAULT_REFRAME_INTERPOLATION)
+        self.assertEqual(reframe["requires_fit"], "crop")
+        self.assertEqual(reframe["excludes"], ["motion"])
+        self.assertEqual(
+            (reframe["max_keyframes"], reframe["zoom_min"], reframe["zoom_max"]), (32, 1.0, 4.0)
+        )
+        self.assertEqual(data["limits"]["reframe_max_keyframes"], plan_schema.MAX_REFRAME_KEYFRAMES)
+        self.assertEqual(data["limits"]["reframe_zoom_min"], plan_schema.REFRAME_ZOOM_MIN)
+        self.assertEqual(data["limits"]["reframe_zoom_max"], plan_schema.REFRAME_ZOOM_MAX)
+
+        # `motion` segue como estava e o texto informa onde `size_px` é definido.
+        self.assertEqual(data["plan"]["motion"]["zoom_min"], plan_schema.MOTION_ZOOM_MIN)
+        self.assertEqual(data["plan"]["motion"]["zoom_max"], plan_schema.MOTION_ZOOM_MAX)
+        self.assertEqual(data["render"]["text_size"]["size_px_reference"], "full_width")
+
     def test_documentation_describes_only_the_v2_contract(self) -> None:
         """Impede que a descoberta e o fluxo do agente voltem a documentar o contrato antigo."""
 
@@ -181,8 +290,22 @@ class CapabilitiesTests(unittest.TestCase):
             "WebP",
             "100 MiB",
             "8.192",
+            "9:16",
+            "1:1",
+            "4:5",
+            "reframe",
+            "keyframes",
+            "upscale",
+            "linha de comando",
         ):
             self.assertIn(marker, combined)
+
+        # Phase 5: as dimensões de full e preview de cada proporção fixa aparecem na documentação,
+        # lidas das mesmas constantes que o inventário expõe.
+        for sizes in plan_schema.FIXED_CANVAS_DIMENSIONS.values():
+            for width, height in (sizes["full"], sizes["preview"]):
+                self.assertIn(f"{width}x{height}", combined)
+        self.assertIn(f"{plan_schema.MAX_REFRAME_KEYFRAMES} keyframes", combined)
 
         for path, content in contents.items():
             self.assertNotIn('"schema_version": 1', content, str(path))
@@ -192,6 +315,16 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertNotIn("`editor init` ainda não existe", combined)
         self.assertNotIn("subcomandos de mídia ainda não existem", combined)
         self.assertNotIn("zoom/movimento, inserções em camada e cortes J/L", combined)
+        # Afirmações anteriores à phase 5 que o contrato atual tornou falsas.
+        for stale in (
+            "saída sempre 16:9",
+            "saída é sempre 16:9",
+            "não existe entregável 9:16",
+            "`size_px` não é escalado entre preview e full",
+            "não escala entre preview e full",
+            "`-/filter_complex`, teto de 32.767 caracteres",
+        ):
+            self.assertNotIn(stale, combined)
 
     def test_root_json_flag_is_preserved_before_subcommand(self) -> None:
         """Confirma as duas posições aceitas para `--json` sem alterar o envelope."""
