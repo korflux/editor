@@ -281,6 +281,57 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(data["plan"]["motion"]["zoom_max"], plan_schema.MOTION_ZOOM_MAX)
         self.assertEqual(data["render"]["text_size"]["size_px_reference"], "full_width")
 
+    def test_plan_exposes_text_shadow_and_outline_from_the_constants(self) -> None:
+        """Prova (A12) que as faixas, os campos e os padrões de `shadow` e `outline` são os das constantes da validação."""
+
+        with workspace_tempdir() as root:
+            data = collect_capabilities(root)
+        style = data["plan"]["layers"]["text_style"]
+        shadow, outline = style["shadow"], style["outline"]
+
+        self.assertEqual(style["status"], "available")
+        self.assertEqual(style["applies_to"], ["text"])
+        self.assertEqual(style["pixel_reference"], "full_width")
+        self.assertEqual(style["preview_scaling"], "proportional_to_width")
+        self.assertEqual(style["clipped_by"], "layer_box")
+        self.assertEqual(style["background_box"], "unsupported")
+
+        self.assertEqual(shadow["field"], "layers[].shadow")
+        self.assertEqual(shadow["fields"], sorted(plan_schema.SHADOW_FIELDS))
+        self.assertEqual(shadow["required"], sorted(plan_schema.SHADOW_REQUIRED_FIELDS))
+        self.assertEqual(shadow["offset_px_min"], plan_schema.SHADOW_OFFSET_MIN)
+        self.assertEqual(shadow["offset_px_max"], plan_schema.SHADOW_OFFSET_MAX)
+        self.assertEqual(shadow["blur_px_min"], plan_schema.SHADOW_BLUR_MIN)
+        self.assertEqual(shadow["blur_px_max"], plan_schema.SHADOW_BLUR_MAX)
+        self.assertEqual(shadow["color_default"], plan_schema.DEFAULT_SHADOW_COLOR)
+        self.assertEqual(shadow["opacity_min"], plan_schema.SHADOW_OPACITY_MIN)
+        self.assertEqual(shadow["opacity_max"], plan_schema.SHADOW_OPACITY_MAX)
+        self.assertEqual(shadow["opacity_default"], plan_schema.DEFAULT_SHADOW_OPACITY)
+
+        self.assertEqual(outline["field"], "layers[].outline")
+        self.assertEqual(outline["fields"], sorted(plan_schema.OUTLINE_FIELDS))
+        self.assertEqual(outline["required"], sorted(plan_schema.OUTLINE_REQUIRED_FIELDS))
+        self.assertEqual(outline["width_px_min"], plan_schema.OUTLINE_WIDTH_MIN)
+        self.assertEqual(outline["width_px_max"], plan_schema.OUTLINE_WIDTH_MAX)
+        self.assertEqual(outline["color_default"], plan_schema.DEFAULT_OUTLINE_COLOR)
+
+        # Os valores da decisão 18 da spec, escritos à parte para uma troca de constante não passar calada.
+        self.assertEqual(
+            (shadow["offset_px_min"], shadow["offset_px_max"], shadow["blur_px_min"], shadow["blur_px_max"]),
+            (-100, 100, 0, 50),
+        )
+        self.assertEqual((shadow["opacity_min"], shadow["opacity_max"], shadow["opacity_default"]), (0.0, 1.0, 0.5))
+        self.assertEqual((outline["width_px_min"], outline["width_px_max"]), (1, 30))
+        self.assertEqual(shadow["fields"], ["blur_px", "color", "offset_x_px", "offset_y_px", "opacity"])
+        self.assertEqual(outline["fields"], ["color", "width_px"])
+        self.assertEqual(shadow["required"], ["blur_px", "offset_x_px", "offset_y_px"])
+        self.assertEqual(outline["required"], ["width_px"])
+        self.assertEqual((shadow["color_default"], outline["color_default"]), ("#000000", "#000000"))
+        # Só a camada `text` os aceita: a allowlist das demais não os lista.
+        self.assertTrue({"shadow", "outline"} <= plan_schema.TEXT_LAYER_FIELDS)
+        self.assertFalse({"shadow", "outline"} & plan_schema.IMAGE_LAYER_FIELDS)
+        self.assertFalse({"shadow", "outline"} & plan_schema.VIDEO_LAYER_FIELDS)
+
     def test_documentation_describes_only_the_v2_contract(self) -> None:
         """Impede que a descoberta e o fluxo do agente voltem a documentar o contrato antigo."""
 
@@ -315,6 +366,20 @@ class CapabilitiesTests(unittest.TestCase):
             for width, height in (sizes["full"], sizes["preview"]):
                 self.assertIn(f"{width}x{height}", combined)
         self.assertIn(f"{plan_schema.MAX_REFRAME_KEYFRAMES} keyframes", combined)
+        # Phase 5, A12: sombra e contorno do texto (campos, faixas lidas das constantes e a limitação que resta).
+        for marker in (
+            "layers[].shadow",
+            "layers[].outline",
+            "offset_x_px",
+            "offset_y_px",
+            "blur_px",
+            "width_px",
+            f"de {plan_schema.SHADOW_OFFSET_MIN} a {plan_schema.SHADOW_OFFSET_MAX}",
+            f"de {plan_schema.SHADOW_BLUR_MIN} a {plan_schema.SHADOW_BLUR_MAX}",
+            f"de {plan_schema.OUTLINE_WIDTH_MIN} a {plan_schema.OUTLINE_WIDTH_MAX}",
+            "caixa de fundo",
+        ):
+            self.assertIn(marker, combined)
 
         for path, content in contents.items():
             self.assertNotIn('"schema_version": 1', content, str(path))
@@ -332,6 +397,14 @@ class CapabilitiesTests(unittest.TestCase):
             "`size_px` não é escalado entre preview e full",
             "não escala entre preview e full",
             "`-/filter_complex`, teto de 32.767 caracteres",
+            # A12 (T7): a camada de texto ganhou `shadow` e `outline`; só a caixa de fundo continua ausente.
+            "a camada de texto não tem sombra",
+            "texto sem sombra nem contorno",
+            "o texto não tem sombra",
+            "O editor não tem sombra",
+            "sem sombra nem contorno",
+            "não tem sombra, contorno nem fundo",
+            "Fora do contrato: sombra e contorno de texto",
         ):
             self.assertNotIn(stale, combined)
 

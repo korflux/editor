@@ -109,12 +109,45 @@ LAYER_COMMON_FIELDS = frozenset(
     {"type", "start_s", "end_s", "x", "y", "width", "height"}
 )
 TEXT_LAYER_FIELDS = LAYER_COMMON_FIELDS | frozenset(
-    {"text", "font", "size_px", "color", "align", "wrap"}
+    {"text", "font", "size_px", "color", "align", "wrap", "shadow", "outline"}
 )
 IMAGE_LAYER_FIELDS = LAYER_COMMON_FIELDS | frozenset({"source_id", "fit"})
 VIDEO_LAYER_FIELDS = LAYER_COMMON_FIELDS | frozenset(
     {"source_id", "in_s", "out_s", "fit"}
 )
+
+# --- Estilo da camada de texto: sombra e contorno (`layers[].shadow` e `layers[].outline`, phase 5) ---
+# Fonte única da allowlist, das faixas e dos padrões, lida pela validação, pelo grafo e por
+# `capabilities`. Só a camada `text` aceita os dois campos (em `image` e `video` valem as allowlists
+# acima, que não os listam). Todos os valores em pixels são definidos na largura da full e a
+# preview os escala pela mesma razão do `size_px` (ver `render/ffmpeg_graph.py`).
+SHADOW_FIELDS = frozenset({"offset_x_px", "offset_y_px", "blur_px", "color", "opacity"})
+"""Campos aceitos em `shadow`; qualquer outro é campo não permitido."""
+
+SHADOW_REQUIRED_FIELDS = frozenset({"offset_x_px", "offset_y_px", "blur_px"})
+"""Campos obrigatórios de `shadow`; `color` e `opacity` têm padrão."""
+
+SHADOW_OFFSET_MIN = -100
+SHADOW_OFFSET_MAX = 100
+"""Faixa inteira de `offset_x_px` e `offset_y_px`; positivo desloca para a direita e para baixo."""
+
+SHADOW_BLUR_MIN = 0
+SHADOW_BLUR_MAX = 50
+"""Faixa inteira de `blur_px`; 0 é uma sombra nítida e o valor é o raio de desfoque no sentido do CSS."""
+
+SHADOW_OPACITY_MIN = 0.0
+SHADOW_OPACITY_MAX = 1.0
+DEFAULT_SHADOW_OPACITY = 0.5
+DEFAULT_SHADOW_COLOR = "#000000"
+
+OUTLINE_FIELDS = frozenset({"width_px", "color"})
+"""Campos aceitos em `outline`."""
+
+OUTLINE_REQUIRED_FIELDS = frozenset({"width_px"})
+OUTLINE_WIDTH_MIN = 1
+OUTLINE_WIDTH_MAX = 30
+DEFAULT_OUTLINE_COLOR = "#000000"
+
 AUDIO_PROCESSING_FIELDS = frozenset({"normalize_loudness", "target_lufs", "limiter", "ducking"})
 LIMITER_FIELDS = frozenset({"enabled", "ceiling_dbfs"})
 

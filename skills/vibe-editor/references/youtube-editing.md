@@ -140,8 +140,9 @@ Como o padrão de qualidade vira campos do plano:
 - **Fonte sem áudio** (clipe de jogo, gravação de tela sem som): não passa por `analyze audio`, que exige exatamente um stream de áudio. Entra no plano com `"audio": {"mode": "mute", "tracks": []}`; com `mode: keep` e uma faixa de uma fonte sem áudio o plano é recusado.
 - **Texto:** uma camada `type: "text"` por letreiro. O tamanho padrão de um rótulo é cerca de 3,7% da largura da full (70 px a 1920 de largura, 100 px a 2688, 40 px a 1080). Em vertical o rótulo costuma pedir corpo maior; conferir na preview.
 - **Tamanho do texto na preview:** `size_px` vale na largura da full e a preview o escala pela razão das larguras (arredondado, mínimo 1), com a mesma quebra de linha. O texto da preview ocupa a mesma fração do quadro que na full, então o tamanho pode ser avaliado na preview. Os tamanhos desta referência valem para a full.
+- **Sombra e contorno do texto:** `layers[].shadow` e `layers[].outline`, opcionais e só na camada `text` (campos e exemplo em `SKILL.md`, seção 5). `shadow` leva `offset_x_px` e `offset_y_px` (inteiros de -100 a 100, positivo para a direita e para baixo) e `blur_px` (inteiro de 0 a 50), obrigatórios, mais `color` (padrão `#000000`) e `opacity` (0 a 1, padrão 0.5). `outline` leva `width_px` (inteiro de 1 a 30), obrigatório, e `color` (padrão `#000000`). Os valores em pixels valem na largura da full, como `size_px`, e a preview os escala na mesma proporção. Texto claro sobre céu ou janela estourada, e texto escuro sobre fundo escuro, perdem leitura sem eles: usar sombra suave ou contorno fino e conferir os momentos de fundo claro na preview.
 
-Uma limitação do editor que afeta o texto e que o agente deve avisar ao usuário: **o texto não tem sombra, contorno nem fundo.** Texto claro sobre céu ou janela estourada, e texto escuro sobre fundo escuro, perdem leitura. Na auditoria da seção 1.6, tratar legibilidade como risco explícito e decidir com o usuário o que fazer. Não inventar campos fora do schema.
+Duas limitações do editor que afetam o texto e que o agente deve avisar ao usuário: **sombra e contorno são recortados pela caixa da camada** (o texto parte do topo dela, então dar folga à caixa) e **não há caixa de fundo**. Na auditoria da seção 1.6, tratar legibilidade como risco explícito e decidir com o usuário o que fazer. Não inventar campos fora do schema.
 
 #### Proporção de saída, vertical e reenquadramento
 
@@ -311,7 +312,7 @@ Nome de lugar sai da placa visível no próprio vídeo e do site oficial; tradu�
 - Texto curto, que se lê no tempo em que fica na tela: durações de cerca de 2 a 4 s para rótulos, mais tempo para cartões de preço e legendas que seguem a fala.
 - O letreiro não cobre rosto, o objeto que a pessoa aponta, comprovante ou prato. Manter na faixa inferior ou em um canto, fora da safe area das bordas.
 - O texto entra **quando o assunto é dito**, não quando o plano corta.
-- Contraste suficiente sobre o fundo real daquele instante. O editor não tem sombra (seção 1.4); confira os momentos de fundo claro.
+- Contraste suficiente sobre o fundo real daquele instante. Em fundo claro, usar `shadow` ou `outline` (seção 1.4) e conferir esses momentos na preview.
 - Quebra de linha em ponto natural, no máximo duas linhas.
 
 #### 2.5.4 Varredura (fazer depois do corte, antes de criar os letreiros)
@@ -370,7 +371,7 @@ O estilo é decisão de cada vídeo. O agente confirma com o usuário só o que 
 | Enquadramento, zoom e movimento | Nenhum (`crop` central se o formato exigir recorte) | `video.reframe` (foco ou keyframes, `ease` ou `linear`, zoom de 1,0 a 4,0, só com `crop`) ou `video.motion` (interpolação linear, zoom de 0,5 a 4,0); o mesmo segmento não aceita os dois |
 | Cortes em J e L | Nenhum, áudio sempre junto da imagem | `cuts[]`, até 30 s |
 | Música e efeitos | Nenhum | Fonte `kind: audio` com `mode: mix` |
-| Texto na tela | Só informativo (seção 2.5); fonte e posição escolhidas com o usuário | Camada `text`, sem sombra nem contorno |
+| Texto na tela | Só informativo (seção 2.5); fonte e posição escolhidas com o usuário | Camada `text`, com `shadow` e `outline` opcionais (seção 1.4), sem caixa de fundo |
 | Abertura | Cena copiada do próprio vídeo (seção 2.4) | Segmentos |
 | Fecho | Término natural; convite e tela final só se pedir | Camadas de imagem e de vídeo |
 | Idioma dos textos | O do público | |

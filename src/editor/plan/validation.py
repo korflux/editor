@@ -29,8 +29,11 @@ from .schema import (
     CUT_FIELDS,
     CUT_TYPES,
     DEFAULT_MAX_FULL_WIDTH,
+    DEFAULT_OUTLINE_COLOR,
     DEFAULT_REFRAME_INTERPOLATION,
     DEFAULT_REFRAME_ZOOM,
+    DEFAULT_SHADOW_COLOR,
+    DEFAULT_SHADOW_OPACITY,
     FIT_MODES,
     IMAGE_LAYER_FIELDS,
     KEYFRAME_FIELDS,
@@ -47,6 +50,10 @@ from .schema import (
     MOTION_STATE_FIELDS,
     MOTION_ZOOM_MAX,
     MOTION_ZOOM_MIN,
+    OUTLINE_FIELDS,
+    OUTLINE_REQUIRED_FIELDS,
+    OUTLINE_WIDTH_MAX,
+    OUTLINE_WIDTH_MIN,
     PLAN_SCHEMA_VERSION,
     PROFILE_FIELDS,
     REFRAME_FIELDS,
@@ -55,6 +62,14 @@ from .schema import (
     REFRAME_ZOOM_MIN,
     ROOT_FIELDS,
     SEGMENT_FIELDS,
+    SHADOW_BLUR_MAX,
+    SHADOW_BLUR_MIN,
+    SHADOW_FIELDS,
+    SHADOW_OFFSET_MAX,
+    SHADOW_OFFSET_MIN,
+    SHADOW_OPACITY_MAX,
+    SHADOW_OPACITY_MIN,
+    SHADOW_REQUIRED_FIELDS,
     SOURCE_FIELDS,
     SOURCE_KINDS,
     TEXT_ALIGNS,
@@ -685,8 +700,91 @@ def _validate_layer_geometry(layer: dict[str, Any], location: str) -> None:
         raise plan_error("A caixa da camada deve permanecer dentro do canvas normalizado.")
 
 
-def _validate_layers_structure(value: Any) -> list[dict[str, Any]]:
-    """Valida camadas v2, inclusive texto em coordenadas livres, sem consultar mídia."""
+def _validate_style_object(
+    value: Any, location: str, allowed: frozenset[str], required: frozenset[str]
+) -> dict[str, Any]:
+    """Abre um objeto de estilo (`shadow` ou `outline`): tipo, allowlist e campos obrigatórios.
+
+    `null` e qualquer valor fora de objeto são recusados (não existe "ausente" por `null`); a
+    ausência do campo inteiro é tratada por quem chama. A ordem dos obrigatórios é alfabética para
+    a mensagem ser determinística.
+    """
+
+    style = require_object(value, location)
+    reject_unknown_fields(style, allowed, location)
+    for name in sorted(required):
+        if name not in style:
+            raise plan_error(f"O campo {location}.{name} é obrigatório.")
+    return style
+
+
+def _style_integer(style: dict[str, Any], name: str, location: str, minimum: int, maximum: int) -> int:
+    """Lê um inteiro de estilo em pixels; booleano, decimal e texto não valem como inteiro."""
+
+    value = style[name]
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise plan_error(
+            f"O campo {location}.{name} deve ser um inteiro entre {minimum} e {maximum}."
+        )
+    return value
+
+
+def _style_color(style: dict[str, Any], location: str, default: str) -> str:
+    """Lê a cor `#RRGGBB` de um estilo (ou o padrão); só cores que casam o padrão chegam ao grafo."""
+
+    color = style.get("color", default)
+    if not isinstance(color, str) or not HEX_COLOR_PATTERN.fullmatch(color):
+        raise plan_error(f"O campo {location}.color deve estar no formato hexadecimal #RRGGBB.")
+    return color
+
+
+def _validate_text_style(layer: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Valida e normaliza `shadow` e `outline` de uma camada de texto, sem tocar em mídia.
+
+    Devolve só os estilos declarados, já com os padrões aplicados (`color` preto e `opacity` 0.5 na
+    sombra, `color` preto no contorno) e a opacidade arredondada como os demais números do plano.
+    Os valores em pixels são os da largura da full; o grafo os escala na preview. O plano canônico
+    e o hash continuam sendo os do documento escrito pelo operador, como no `reframe`.
+    """
+
+    normalized: dict[str, dict[str, Any]] = {}
+    if "shadow" in layer:
+        location = "layers[].shadow"
+        shadow = _validate_style_object(layer["shadow"], location, SHADOW_FIELDS, SHADOW_REQUIRED_FIELDS)
+        offset_x = _style_integer(shadow, "offset_x_px", location, SHADOW_OFFSET_MIN, SHADOW_OFFSET_MAX)
+        offset_y = _style_integer(shadow, "offset_y_px", location, SHADOW_OFFSET_MIN, SHADOW_OFFSET_MAX)
+        blur = _style_integer(shadow, "blur_px", location, SHADOW_BLUR_MIN, SHADOW_BLUR_MAX)
+        color = _style_color(shadow, location, DEFAULT_SHADOW_COLOR)
+        opacity = _finite_number(shadow.get("opacity", DEFAULT_SHADOW_OPACITY), f"{location}.opacity")
+        if not SHADOW_OPACITY_MIN <= opacity <= SHADOW_OPACITY_MAX:
+            raise plan_error(
+                f"O campo {location}.opacity deve estar entre "
+                f"{SHADOW_OPACITY_MIN:g} e {SHADOW_OPACITY_MAX:g}."
+            )
+        normalized["shadow"] = {
+            "offset_x_px": offset_x,
+            "offset_y_px": offset_y,
+            "blur_px": blur,
+            "color": color,
+            "opacity": _rounded(opacity),
+        }
+    if "outline" in layer:
+        location = "layers[].outline"
+        outline = _validate_style_object(layer["outline"], location, OUTLINE_FIELDS, OUTLINE_REQUIRED_FIELDS)
+        normalized["outline"] = {
+            "width_px": _style_integer(outline, "width_px", location, OUTLINE_WIDTH_MIN, OUTLINE_WIDTH_MAX),
+            "color": _style_color(outline, location, DEFAULT_OUTLINE_COLOR),
+        }
+    return normalized
+
+
+def _validate_layers_structure(value: Any) -> tuple[list[dict[str, Any]], dict[int, dict[str, dict[str, Any]]]]:
+    """Valida camadas v2, inclusive texto em coordenadas livres, sem consultar mídia.
+
+    Devolve as camadas como escritas e, por índice de `layers[]`, o estilo normalizado
+    (`shadow`/`outline`) das camadas de texto que o declaram; o grafo lê esse mapa em vez de
+    reaplicar os padrões.
+    """
 
     layers = require_array(value, "layers")
     if len(layers) > MAX_LAYERS:
@@ -696,7 +794,8 @@ def _validate_layers_structure(value: Any) -> list[dict[str, Any]]:
         "image": IMAGE_LAYER_FIELDS,
         "video": VIDEO_LAYER_FIELDS,
     }
-    for layer_value in layers:
+    text_styles: dict[int, dict[str, dict[str, Any]]] = {}
+    for layer_index, layer_value in enumerate(layers):
         layer = require_object(layer_value, "layers[]")
         layer_type = layer.get("type")
         if not isinstance(layer_type, str) or layer_type not in LAYER_TYPES:
@@ -730,6 +829,9 @@ def _validate_layers_structure(value: Any) -> list[dict[str, Any]]:
                 raise plan_error("O alinhamento da camada de texto é inválido.")
             if not isinstance(layer.get("wrap"), bool):
                 raise plan_error("A opção wrap da camada de texto deve ser booleana.")
+            text_style = _validate_text_style(layer)
+            if text_style:
+                text_styles[layer_index] = text_style
         elif layer_type == "image":
             source_id = layer.get("source_id")
             if not isinstance(source_id, str) or not re.fullmatch(
@@ -748,20 +850,25 @@ def _validate_layers_structure(value: Any) -> list[dict[str, Any]]:
             _finite_number(layer.get("out_s"), "layers[].out_s")
             if layer.get("fit") not in LAYER_FIT_MODES:
                 raise plan_error("A camada de vídeo deve declarar fit contain ou crop.")
-    return layers
+    return layers, text_styles
 
 
 def _validate_plan_structure(
     document: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[int, dict[str, dict[str, Any]]],
+    dict[str, Any],
+]:
     """Fecha a fronteira estrutural v2 antes de qualquer chamada ao FFprobe."""
 
     _validate_source_structure(document.get("sources"))
     _validate_segment_structure(document.get("segments"))
     cuts = _validate_cuts_structure(document.get("cuts"))
-    layers = _validate_layers_structure(document.get("layers"))
+    layers, text_styles = _validate_layers_structure(document.get("layers"))
     audio_processing = _validate_audio_processing(document.get("audio_processing"))
-    return cuts, layers, audio_processing
+    return cuts, layers, text_styles, audio_processing
 
 
 def _inspect_sources(root: Path, value: Any) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
@@ -1129,7 +1236,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
     ):
         raise plan_error(f"O plano deve usar schema_version {PLAN_SCHEMA_VERSION}.")
     aspect_ratio, max_full_width = _validate_profile(document.get("profile"))
-    cut_definitions, layer_definitions, audio_processing = _validate_plan_structure(document)
+    cut_definitions, layer_definitions, text_styles, audio_processing = _validate_plan_structure(document)
     resolved_font_files = _resolve_layer_fonts(layer_definitions)
     source_map, source_records = _inspect_sources(root, document.get("sources"))
     timeline_segments, timeline_duration = _validate_segments(
@@ -1154,6 +1261,9 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         "sources": source_records,
         "audio_processing": audio_processing,
         "_resolved_font_files": resolved_font_files,
+        # Estilo normalizado (`shadow`/`outline`) por índice de `layers[]`, lido pelo grafo; privado
+        # como o caminho de fonte: o envelope público lista só `layer_count`.
+        "_text_styles": text_styles,
         "timeline": {
             "duration_seconds": timeline_duration,
             "segments": timeline_segments,

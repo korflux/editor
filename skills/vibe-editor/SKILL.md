@@ -50,7 +50,7 @@ Para qualquer vídeo, de qualquer pessoa, leia
 briefing. Ele define o padrão de qualidade da skill (processo com prova, cortes que
 não comem palavras, texto na tela com fonte, áudio nivelado, imagem íntegra, entrega),
 como esse padrão vira campos do plano (inclusive proporção vertical e reenquadramento) e
-as limitações do editor (texto sem sombra nem contorno, uma proporção por plano). O
+as limitações do editor (texto sem caixa de fundo, uma proporção por plano). O
 estilo do vídeo (ritmo, b-roll,
 zoom, música, aparência do texto, gancho e fecho) é decisão do briefing: pergunte só
 o que o usuário ainda não definiu. Se o vídeo for do canal Sonni Viaja (vlog de
@@ -188,6 +188,30 @@ na largura da full e a preview o escala na mesma proporção, então o texto da 
 representa o da full. Imagens aceitas são PNG, JPEG/JPG e WebP estáticos, até 100 MiB
 e 8.192 pixels por dimensão. Use `fit: contain` ou `fit: crop` nas camadas e nas
 fontes quando necessário. Não use campos fora do contrato.
+
+#### Sombra e contorno do texto
+
+A camada `text` aceita `shadow` e `outline` opcionais, para texto claro ler sobre fundo
+claro. Em camada `image` ou `video` o plano é recusado.
+
+```json
+{"type": "text", "start_s": 3.0, "end_s": 6.5, "x": 0.04, "y": 0.78, "width": 0.92, "height": 0.14,
+ "text": "Nome do lugar", "font": "Arial", "size_px": 70, "color": "#FFFFFF", "align": "center", "wrap": true,
+ "shadow": {"offset_x_px": 4, "offset_y_px": 4, "blur_px": 6, "color": "#000000", "opacity": 0.5},
+ "outline": {"width_px": 2, "color": "#000000"}}
+```
+
+- `shadow` é uma cópia do texto (com o mesmo contorno) atrás dele. `offset_x_px` e
+  `offset_y_px` são inteiros de -100 a 100 (positivo desloca para a direita e para
+  baixo) e `blur_px` é um inteiro de 0 a 50 (0 é sombra nítida); os três são
+  obrigatórios. `color` (`#RRGGBB`, padrão `#000000`) e `opacity` (0 a 1, padrão 0.5)
+  são opcionais.
+- `outline` contorna as letras: `width_px` é um inteiro de 1 a 30, obrigatório, e
+  `color` (`#RRGGBB`, padrão `#000000`) é opcional.
+- Os valores em pixels valem na largura da full, como o `size_px`, e a preview os
+  escala na mesma proporção; o efeito da preview representa o da full.
+- Sombra e contorno são recortados pela caixa da camada, e o texto parte do topo dela:
+  dê folga à caixa. Não há caixa de fundo; o editor não a oferece.
 
 #### Proporção de saída e reenquadramento
 
@@ -348,8 +372,8 @@ Assista à preview em tamanho normal e confira cada camada de texto. A validaç�
 estrutural só prova que a fonte e a geometria são aceitas pelo schema. A inspeção
 visual deve confirmar a fonte real, a caixa, a safe area, a quebra de linha, o
 contraste, o tamanho e a leitura, sem texto cortado ou sobreposto a informação
-essencial. Se houver dúvida de leitura, ajuste o plano, valide e gere outra
-preview.
+essencial. Se houver dúvida de leitura, ajuste o plano (por exemplo com `shadow` ou
+`outline`), valide e gere outra preview.
 
 #### 7.4 Decisões humanas e resumo de exclusões
 

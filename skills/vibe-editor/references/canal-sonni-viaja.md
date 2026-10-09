@@ -84,7 +84,7 @@ Posições relativas ao quadro (0 a 1, origem no canto superior esquerdo). Os ta
 | Caixa de destaque | sobre o objeto apontado | Retângulo vermelho fino, sem preenchimento | | cerca de 2 s |
 
 - **Fonte e cor:** Tahoma em todos os textos; branco, exceto o título (vermelho).
-- **Sombra:** projetada suave, deslocada para baixo e para a direita, sem contorno, sem caixa de fundo e sem barra. No S04E34-35 a sombra ficou com o dobro da opacidade da sombra simples, para ler sobre fundo claro. O editor não tem sombra no texto (ver `youtube-editing.md`, seção 1.4).
+- **Sombra:** projetada suave, deslocada para baixo e para a direita, sem contorno, sem caixa de fundo e sem barra. No S04E34-35 a sombra ficou com o dobro da opacidade da sombra simples, para ler sobre fundo claro. No editor é `layers[].shadow` (campos e faixas em `SKILL.md`, seção 5), sem `outline`, como o canal faz; a caixa de fundo o editor não tem. Valores de partida **sugeridos** para a full de 2688 de largura, a ajustar olhando a preview, não uma medida oficial do canal: `offset_x_px` 4, `offset_y_px` 4, `blur_px` 6, `color` `#000000` e `opacity` 0.5 (1.0 em fundo claro). Em outra largura de full, escalar os pixels na mesma proporção.
 - **Sem animação:** nenhum parâmetro de texto muda no tempo e os letreiros entram e saem de uma vez.
 - **Caixa no editor:** como a caixa da camada de texto é alinhada pelo topo, para centralizar um rótulo em y 0,83 usar `y` cerca de 0,80 (uma linha) ou 0,76 (duas linhas), com `x 0.04` e `width 0.92`. Valores medidos num teste a 2688 px; conferir na full.
 - **Safe area:** rótulos na faixa inferior (y de 0,80 a 0,91); o letreiro não cobre rosto, objeto apontado, comprovante ou prato.

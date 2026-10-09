@@ -15,6 +15,10 @@ from .windows import DecodeWindow, plan_decode_windows
 MIN_LIMITER_DBFS = 20 * math.log10(0.0625)
 """Menor teto representável diretamente pelo filtro `alimiter` do FFmpeg."""
 
+SHADOW_SIGMA_PER_BLUR_PX = 0.5
+"""Sigma do `gblur` por pixel de `blur_px`: `blur_px` é o raio de desfoque no sentido do CSS
+(`box-shadow`), cujo desvio padrão gaussiano é metade dele."""
+
 
 @dataclass(frozen=True)
 class FfmpegGraph:
@@ -626,6 +630,52 @@ def _scaled_font_size(size_px: int, canvas_width: int, reference_width: int) -> 
     return max(1, (2 * size_px * canvas_width + reference_width) // (2 * reference_width))
 
 
+def _scaled_style_pixels(value: int, canvas_width: int, reference_width: int) -> int:
+    """Escala um valor de estilo em pixels (`shadow`, `outline`) da largura da full para o canvas.
+
+    Mesma regra do corpo da fonte (`_scaled_font_size`, decisão 18 da phase 5): na full devolve o
+    valor declarado; na preview, o valor × razão das larguras arredondado, com magnitude mínima de 1
+    para qualquer valor diferente de zero. O sinal é preservado (deslocamentos podem ser negativos)
+    e o zero continua zero (deslocamento nulo num eixo).
+    """
+
+    if value == 0:
+        return 0
+    scaled = _scaled_font_size(abs(value), canvas_width, reference_width)
+    return scaled if value > 0 else -scaled
+
+
+def _signed_offset(base: str, delta: int) -> str:
+    """Soma um deslocamento inteiro a uma expressão de posição do `drawtext`, omitindo o zero."""
+
+    return base if delta == 0 else f"{base}{delta:+d}"
+
+
+def _drawtext_filter(
+    font_file: str,
+    font_size: int,
+    color: str,
+    text: str,
+    align: str,
+    x: str,
+    y: str,
+    outline: tuple[int, str] | None,
+) -> str:
+    """Monta um `drawtext` do texto da camada, com contorno (`borderw`/`bordercolor`) opcional.
+
+    Serve ao texto nítido e à cópia da sombra, que diferem só na cor, na posição e no contorno.
+    Sem contorno o resultado é o `drawtext` de antes do estilo, byte a byte. As cores só chegam aqui
+    depois de casar `HEX_COLOR_PATTERN` e `outline` traz a largura já escalada, inteira e validada.
+    """
+
+    border = f"borderw={outline[0]}:bordercolor={outline[1]}:" if outline else ""
+    return (
+        f"drawtext=fontfile='{_escape_filter_value(font_file)}':fontsize={font_size}:"
+        f"fontcolor={color}:{border}text='{_escape_filter_value(text)}':expansion=none:"
+        f"text_align={align}:x={x}:y={y}"
+    )
+
+
 def _text_layer_filter(
     input_label: str,
     layer: Mapping[str, Any],
@@ -634,6 +684,7 @@ def _text_layer_filter(
     canvas_height: int,
     font_file: str,
     reference_width: int,
+    style: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     """Desenha texto com o arquivo de fonte validado e o sobrepõe no intervalo declarado.
 
@@ -642,6 +693,20 @@ def _text_layer_filter(
     (`wrap`) é calculada com o `size_px` e a largura de caixa da full. Assim preview e full quebram
     nos mesmos pontos e o texto ocupa a mesma fração do quadro; com `reference_width` igual ao
     canvas (full) o filtro é idêntico ao anterior a esta escala.
+
+    `style` é o `shadow`/`outline` já validado e normalizado da camada (`validation["_text_styles"]`).
+    O contorno é o `borderw` do `drawtext`. A sombra é uma segunda superfície RGBA da caixa com a
+    cópia do texto (e do contorno) na cor da sombra, deslocada, desfocada por `gblur` e com o alfa
+    multiplicado pela opacidade, composta por `overlay` atrás do texto nítido. O rótulo de saída da
+    superfície (`textlayerN`) é o mesmo com ou sem estilo, então o resto do grafo não muda; sem
+    `style` o filtro é idêntico ao anterior ao estilo. Os valores em pixels do estilo são os da
+    largura da full e a preview os escala como o `size_px` (`_scaled_style_pixels`).
+
+    ponytail: sombra e contorno são recortados pela caixa da camada (a superfície tem o tamanho da
+    caixa e o texto parte do canto superior esquerdo), então o contorno da primeira linha encosta
+    no topo da caixa; dar folga à caixa, ou compor numa superfície maior que a caixa se isso
+    incomodar. A sombra é desfocada a cada quadro do intervalo da camada (cerca de 30 ms de CPU por
+    quadro numa caixa de 2473x212), congelar um quadro se muitas camadas sombreadas e longas pesarem.
     """
 
     left, right = _layer_span(layer["x"], layer["width"], canvas_width)
@@ -656,21 +721,60 @@ def _text_layer_filter(
         box_width=max(1, reference_right - reference_left),
     )
     font_size = _scaled_font_size(int(layer["size_px"]), canvas_width, reference_width)
-    escaped_font_file = _escape_filter_value(font_file)
-    escaped_text = _escape_filter_value(text)
     start = _number(layer["start_s"])
     end = _number(layer["end_s"])
-    align_x = {"left": "0", "center": "(w-text_w)/2", "right": "w-text_w"}[
-        str(layer["align"])
-    ]
+    align = str(layer["align"])
+    align_x = {"left": "0", "center": "(w-text_w)/2", "right": "w-text_w"}[align]
     layer_label = f"textlayer{layer_index}"
     output_label = f"vtext{layer_index}"
-    surface = (
+    style = style or {}
+
+    def scaled(value: int) -> int:
+        """Valor de estilo em pixels da full convertido para o canvas renderizado."""
+
+        return _scaled_style_pixels(value, canvas_width, reference_width)
+
+    outline = None
+    if "outline" in style:
+        outline = (scaled(int(style["outline"]["width_px"])), str(style["outline"]["color"]))
+    # Superfície do texto nítido: `color` transparente do tamanho da caixa e o `drawtext` do topo.
+    face = (
         f"color=c=black@0:s={box_width}x{box_height}:r=25:d={end},format=rgba,"
-        f"drawtext=fontfile='{escaped_font_file}':fontsize={font_size}:"
-        f"fontcolor={layer['color']}:text='{escaped_text}':expansion=none:"
-        f"text_align={layer['align']}:x={align_x}:y=0[{layer_label}]"
+        + _drawtext_filter(font_file, font_size, str(layer["color"]), text, align, align_x, "0", outline)
     )
+    if "shadow" in style:
+        shadow = style["shadow"]
+        shadow_color = str(shadow["color"])
+        shadow_outline = (outline[0], shadow_color) if outline else None
+        # A superfície nasce na cor da sombra (alfa 0) para o desfoque não escurecer a cor nas
+        # bordas, e o texto é desenhado opaco: a opacidade entra uma única vez, no alfa, depois do
+        # desfoque (com alfa no `drawtext` o miolo da letra e o contorno se somariam).
+        shadow_surface = (
+            f"color=c={shadow_color}@0:s={box_width}x{box_height}:r=25:d={end},format=rgba,"
+            + _drawtext_filter(
+                font_file, font_size, shadow_color, text, align,
+                _signed_offset(align_x, scaled(int(shadow["offset_x_px"]))),
+                _signed_offset("0", scaled(int(shadow["offset_y_px"]))),
+                shadow_outline,
+            )
+        )
+        # A superfície nasce em t = 0 e o desfoque é o passo caro (~30 ms de CPU por quadro numa caixa
+        # de 2473x212): `trim` antes do `gblur` o limita ao intervalo da camada. O `trim` mantém o
+        # quadro que contém `start_s`, então um início fora da grade de 25 fps não perde o primeiro
+        # quadro visível (provado em `tests/test_text_style.py`).
+        shadow_surface += f",trim=start={start}"
+        blur = scaled(int(shadow["blur_px"]))
+        if blur > 0:
+            shadow_surface += f",gblur=sigma={_number(blur * SHADOW_SIGMA_PER_BLUR_PX)}"
+        shadow_surface += f",colorchannelmixer=aa={_number(shadow['opacity'])}"
+        shadow_label = f"textshadow{layer_index}"
+        face_label = f"textface{layer_index}"
+        surface = (
+            f"{shadow_surface}[{shadow_label}];{face}[{face_label}];"
+            f"[{shadow_label}][{face_label}]overlay=format=auto[{layer_label}]"
+        )
+    else:
+        surface = f"{face}[{layer_label}]"
     composite = (
         f"[{input_label}][{layer_label}]overlay=x={left}:y={top}:eof_action=pass:"
         f"enable='gte(t\\,{start})*lt(t\\,{end})'[{output_label}]"
@@ -771,7 +875,8 @@ def build_ffmpeg_graph(
     O `size_px` do texto é definido na largura da full (decisão 11 da phase 5), lida de
     `validation["profile"]["full_width"]`, a mesma fonte do canvas que `render/full.py` usa. A
     full tem `canvas_width` igual a ela e renderiza o valor declarado; a preview, de canvas
-    menor, escala o corpo da fonte pela razão das larguras.
+    menor, escala o corpo da fonte pela razão das larguras. O mesmo vale para os pixels de
+    `shadow` e `outline` das camadas de texto, lidos já normalizados de `validation["_text_styles"]`.
     """
 
     text_reference_width = int(validation["profile"]["full_width"])
@@ -831,6 +936,7 @@ def build_ffmpeg_graph(
 
     video_label = concat_video_label
     resolved_font_files = validation.get("_resolved_font_files", {})
+    text_styles = validation.get("_text_styles", {})
     for layer_index, layer in enumerate(document["layers"]):
         if layer["type"] == "text":
             font_file = resolved_font_files.get(str(layer["font"]))
@@ -844,6 +950,7 @@ def build_ffmpeg_graph(
                 canvas_height,
                 font_file,
                 text_reference_width,
+                text_styles.get(layer_index),
             )
             parts.append(filter_part)
         elif layer["type"] in {"image", "video"}:

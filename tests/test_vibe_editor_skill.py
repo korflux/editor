@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from editor.plan import schema as plan_schema
-from editor.plan.validation import _validate_reframe
+from editor.plan.validation import _validate_layers_structure, _validate_reframe
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -228,6 +228,96 @@ class VibeEditorSkillTests(unittest.TestCase):
         self.assertEqual([item["t_s"] for item in keyframes], [0.0, 2.5, 6.0])
         self.assertEqual([item["interpolation"] for item in keyframes], ["ease", "linear", "ease"])
         self.assertEqual([item["zoom"] for item in keyframes], [1.0, 1.5, 1.5])
+
+    def test_documents_drop_the_claim_that_text_has_no_shadow_or_outline(self) -> None:
+        """A12 tornou falsas as frases que diziam que o texto não tem sombra nem contorno; a caixa de fundo segue ausente."""
+
+        for name, document in (
+            ("SKILL.md", self.skill),
+            ("youtube-editing.md", self.youtube_reference),
+            ("canal-sonni-viaja.md", self.channel_profile),
+        ):
+            flat = " ".join(document.split())
+            for stale in (
+                "texto sem sombra nem contorno",
+                "o texto não tem sombra",
+                "O editor não tem sombra",
+                "sem sombra nem contorno",
+                "não tem sombra, contorno nem fundo",
+            ):
+                self.assertNotIn(stale, flat, f"{name}: {stale}")
+        # A limitação que continua valendo: não existe caixa de fundo no texto.
+        for name, document in (("SKILL.md", self.skill), ("youtube-editing.md", self.youtube_reference)):
+            self.assertIn("caixa de fundo", " ".join(document.split()), name)
+
+    def test_skill_teaches_text_shadow_and_outline(self) -> None:
+        """A skill e a referência ensinam os campos, as faixas, a escala em pixels da full e o recorte pela caixa."""
+
+        skill = " ".join(self.skill.split())
+        youtube = " ".join(self.youtube_reference.split())
+        # Faixas lidas das mesmas constantes que a validação e `capabilities` usam.
+        offsets = f"de {plan_schema.SHADOW_OFFSET_MIN} a {plan_schema.SHADOW_OFFSET_MAX}"
+        blur = f"de {plan_schema.SHADOW_BLUR_MIN} a {plan_schema.SHADOW_BLUR_MAX}"
+        width = f"de {plan_schema.OUTLINE_WIDTH_MIN} a {plan_schema.OUTLINE_WIDTH_MAX}"
+        for name, document in (("SKILL.md", skill), ("youtube-editing.md", youtube)):
+            for marker in (
+                "`shadow`",
+                "`outline`",
+                "`offset_x_px`",
+                "`offset_y_px`",
+                "`blur_px`",
+                "`width_px`",
+                offsets,
+                blur,
+                width,
+                "padrão `#000000`",
+                f"padrão {plan_schema.DEFAULT_SHADOW_OPACITY}",
+                "largura da full",
+                "recortados pela caixa da camada",
+                "caixa de fundo",
+            ):
+                self.assertIn(marker, document, f"{name}: {marker}")
+        self.assertIn("a preview os escala", skill)
+        self.assertIn("recusado", skill)  # em camada `image` ou `video` o plano é recusado
+        self.assertIn("Sombra e contorno do texto", youtube)
+
+    def test_skill_shadow_and_outline_example_is_accepted_by_the_plan_validator(self) -> None:
+        """O JSON de `shadow` e `outline` mostrado na skill passa pela mesma validação do `plan validate`."""
+
+        example = next(
+            block
+            for block in re.findall(r"```json\n(.*?)```", self.skill, flags=re.DOTALL)
+            if '"shadow"' in block
+        )
+        layer = json.loads(example)
+        layers, styles = _validate_layers_structure([layer])
+
+        self.assertEqual(layers, [layer])
+        self.assertEqual(layer["type"], "text")
+        self.assertEqual(
+            styles,
+            {0: {
+                "shadow": {"offset_x_px": 4, "offset_y_px": 4, "blur_px": 6, "color": "#000000", "opacity": 0.5},
+                "outline": {"width_px": 2, "color": "#000000"},
+            }},
+        )
+
+    def test_channel_profile_gives_shadow_starting_values_as_a_suggestion(self) -> None:
+        """O perfil do canal traz valores de partida da sombra, rotulados como sugestão e não como medida oficial."""
+
+        profile = " ".join(self.channel_profile.split())
+        for marker in (
+            "`layers[].shadow`",
+            "sugeridos",
+            "full de 2688 de largura",
+            "a ajustar olhando a preview",
+            "não uma medida oficial do canal",
+            "`offset_x_px` 4",
+            "`blur_px` 6",
+            "`opacity` 0.5 (1.0 em fundo claro)",
+            "sem `outline`",
+        ):
+            self.assertIn(marker, profile)
 
     def test_channel_profile_carries_the_channel_style(self) -> None:
         """Garante que o estilo do canal fique em um perfil próprio, separado do padrão de qualidade."""
