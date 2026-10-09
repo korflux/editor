@@ -527,6 +527,37 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(size_error.exception.exit_code, EXIT_CODES["MEDIA"])
 
 
+    def test_video_dimension_ceiling_applies_per_side_to_h264_and_hevc(self) -> None:
+        """O teto de `MAX_VIDEO_DIMENSION` vale por lado, nas duas orientações e nos dois codecs.
+
+        8192x4320 (8K DCI) e o mesmo quadro em pé passam; um pixel a mais em qualquer lado e o
+        cabeçalho forjado 16384x16384 são recusados com `MEDIA_LIMIT_EXCEEDED`, sem repetir as
+        dimensões recebidas na mensagem.
+        """
+
+        ceiling = media.MAX_VIDEO_DIMENSION
+        self.assertEqual(ceiling, 8_192)
+        codecs = (("hevc", "Main 10", "yuv420p10le"), ("h264", "High", "yuv420p"))
+
+        def sized(codec: tuple[str, str, str], width: int, height: int) -> dict[str, Any]:
+            stream = video_stream(*codec)
+            stream.update(width=width, height=height)
+            return stream
+
+        for codec in codecs:
+            for width, height in ((ceiling, 4_320), (4_320, ceiling)):
+                with self.subTest(codec=codec[0], accepted=(width, height)):
+                    metadata = self.inspect(".mov", probe_payload(sized(codec, width, height), audio_stream()))
+                    self.assertEqual((metadata.video_width, metadata.video_height), (width, height))
+            for width, height in ((ceiling + 1, 4_320), (4_320, ceiling + 1), (16_384, 16_384)):
+                with self.subTest(codec=codec[0], refused=(width, height)):
+                    with self.assertRaises(CliError) as context:
+                        self.inspect(".mp4", probe_payload(sized(codec, width, height), audio_stream()))
+                    self.assertEqual(context.exception.code, "MEDIA_LIMIT_EXCEEDED")
+                    self.assertEqual(context.exception.exit_code, EXIT_CODES["MEDIA"])
+                    for token in (str(width), str(height)):
+                        self.assertNotIn(token, context.exception.message)
+
 # --- Recusas com arquivos reais ---------------------------------------------------------------
 
 

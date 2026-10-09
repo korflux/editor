@@ -12,7 +12,7 @@ Esta referência é lida quando o editor rejeita uma fonte (`MEDIA_UNSUPPORTED` 
 | Streams extras | Trilhas de dados (`data`, como o timecode `tmcd` e a telemetria das câmeras) e miniatura anexada (`attached_pic`) são **ignoradas**. Legenda, anexo (`attachment`), segundo stream de vídeo real e miniatura anexada como primeiro stream de vídeo são recusados |
 | Saída | Sempre H.264/AAC `yuv420p` de 8 bits: o HEVC de 10 bits é convertido para 8 bits no render, no proxy e no PNG de frame |
 | HDR | HLG e PQ (BT.2020) **não** recebem tone mapping: a conversão para 8 bits sem ele deixa a imagem lavada. Avisar o usuário antes de usar essa fonte |
-| Tamanho | Até 4 GiB e 1 hora por arquivo |
+| Tamanho | Até 4 GiB e 1 hora por arquivo, e vídeo de até 8.192 pixels por lado (`MEDIA_LIMIT_EXCEEDED` acima disso) |
 | Proporção | A do perfil direto (`fit: preserve`); outras proporções só com `fit: contain` ou `fit: crop` no segmento (ver `youtube-editing.md`, seção 1.4) |
 
 As câmeras DJI (HEVC de 10 bits, três streams de dados e uma miniatura MJPEG), os iPhone e muitos Android (HEVC em MOV ou MP4, às vezes com taxa de quadros variável) entram direto. Os testes de aceite usam fontes sintéticas (`.mp4` e `.mov`, 2688 × 1512 e 1920 × 1080, 8 e 10 bits, com `tmcd` e miniatura); a leitura de um bruto real de câmera sem conversão ainda precisa de confirmação com um arquivo real.

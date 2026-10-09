@@ -19,10 +19,12 @@ MAX_SOURCE_SIZE_BYTES = 4 * 1024**3
 MAX_SOURCE_DURATION_SECONDS = 3_600
 MAX_IMAGE_SIZE_BYTES = 100 * 1024**2
 MAX_IMAGE_DIMENSION = 8_192
-# Os tetos acima valem assim: tamanho e duração para as fontes audiovisuais; tamanho e dimensão só para
-# imagens. Não existe teto de dimensão de vídeo (`_validate_probe_payload` lê `width` e `height` sem limitar).
-# ponytail: sem teto de dimensão de vídeo (um payload HEVC 16384x16384 seria aceito), criar um teto único em
-# `media.py`, em `capabilities` e em teste se o humano decidir endurecer a entrada.
+# Teto por lado do vídeo de uma fonte audiovisual (largura e altura, em qualquer orientação). Cobre o 8K
+# DCI (8192x4320), o maior quadro de câmera que H.264 e HEVC entregam na prática, e recusa na borda um
+# cabeçalho forjado (16384x16384, por exemplo) antes de qualquer decode, escala ou proxy alocar quadros.
+MAX_VIDEO_DIMENSION = 8_192
+# Os tetos acima valem assim: tamanho, duração e dimensão do vídeo para as fontes audiovisuais; tamanho e
+# dimensão para imagens. Artefatos renderizados (preview e full) não herdam os tetos de fonte.
 # Extensões audiovisuais (vídeo com ou sem áudio). `.mp4` e `.mov` compartilham o demuxer `mov` do
 # FFmpeg: o `format_name` de ambos é `mov,mp4,m4a,3gp,3g2,mj2`, e `_validate_probe_payload` exige que
 # o nome da extensão conste nele, então `.mov` e `.mp4` aceitam o mesmo conteúdo.
@@ -275,6 +277,13 @@ def _validate_probe_payload(
             video_streams[0].get("avg_frame_rate")
             or video_streams[0].get("r_frame_rate")
         )
+        # Teto de dimensão do vídeo da fonte: mesmo código e família dos tetos de tamanho e duração, com
+        # mensagem fixa que não repete as dimensões recebidas.
+        if enforce_source_limits and max(video_width or 0, video_height or 0) > MAX_VIDEO_DIMENSION:
+            raise _error(
+                "MEDIA_LIMIT_EXCEEDED",
+                "O vídeo da fonte excede o limite de dimensão permitido.",
+            )
     return MediaMetadata(
         path=path,
         container=expected_format,

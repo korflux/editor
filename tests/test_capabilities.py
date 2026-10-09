@@ -81,7 +81,7 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(payload["ok"], True)
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["command"], "capabilities")
-        self.assertEqual(data["cli_version"], "1.1.0")
+        self.assertEqual(data["cli_version"], "1.2.0")
         for key in (
             "system",
             "dependencies",
@@ -135,6 +135,7 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(data["limits"]["motion_zoom_max"], 4.0)
         self.assertEqual(data["limits"]["max_image_size_bytes"], 100 * 1024**2)
         self.assertEqual(data["limits"]["max_image_dimension"], 8_192)
+        self.assertEqual(data["limits"]["max_video_dimension"], 8_192)
         self.assertNotIn("max_overlays", data["limits"])
         self.assertIn(data["recommendation"]["status"], {"recommended", "missing"})
 
