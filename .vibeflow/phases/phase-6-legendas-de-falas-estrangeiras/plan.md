@@ -78,18 +78,22 @@ Esta entrega permite legendar trechos de fala com o texto escrito pelo agente, p
 
 ### T4: Publicar o contrato das legendas e fechar a versão 1.3.0
 
-- [ ] T4 concluída
+- [x] T4 concluída
 - **Spec:** A6, C1, C2, C3 (F4)
 - **O quê:** `capabilities` expõe `operations.captions_suggest` e `plan.captions` (campos, obrigatórios, padrões, caixas por proporção, limites, regra de mapeamento, `ponytail` de uma transcrição por fonte) lidos das constantes da T1 e da T2; a skill `vibe-editor` (`SKILL.md`, `youtube-editing.md`, `canal-sonni-viaja.md`) ensina a jornada da spec (F4 passo 2) e `AGENTS.md` ganha a seção "Legendas, Phase 6" no formato das demais e o mapa de estrutura atualizado; versão 1.3.0 em `pyproject.toml`, `contracts.py` e testes de versão.
 - **Aceite:**
-  - [ ] `tests.test_capabilities` confere `operations.captions_suggest` e `plan.captions` contra as constantes e a versão 1.3.0; `tests.test_vibe_editor_skill` passa com a skill atualizada.
-  - [ ] Suíte completa verde; gitleaks e pip-audit sem achados.
+  - [x] `tests.test_capabilities` confere `operations.captions_suggest` e `plan.captions` contra as constantes e a versão 1.3.0; `tests.test_vibe_editor_skill` passa com a skill atualizada.
+  - [x] Suíte completa verde; gitleaks e pip-audit sem achados.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities tests.test_vibe_editor_skill tests.test_cli_contract -v`
-  - [ ] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
-  - [ ] `gitleaks detect --source . --no-banner` e `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities tests.test_vibe_editor_skill tests.test_cli_contract -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
+  - [x] `gitleaks detect --source . --no-banner` e `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
 - **Deps:** T1, T2, T3
 - **Arquivos:** `src/editor/capabilities.py`, `pyproject.toml`, `src/editor/contracts.py`, `tests/test_capabilities.py`, `tests/test_cli_contract.py`, `skills/vibe-editor/SKILL.md`, `skills/vibe-editor/references/youtube-editing.md`, `skills/vibe-editor/references/canal-sonni-viaja.md`, `AGENTS.md`
+
+- **Prova:** focada prevista -> 59 testes, 33,977 s, OK; suíte completa -> 351 testes, 619,091 s, OK, sem skips. `gitleaks detect --source . --no-banner` e `pip_audit -r requirements.lock --no-deps --disable-pip` com exit 0, sem achados. Logs em `tmp-phase6-proof/` (ignorado).
+- **Arquivos adicionais provados:** `tests/test_vibe_editor_skill.py`; mapa e seção de contrato em `AGENTS.md` atualizados pelo coordenador, sem sincronizar decisões vigentes antes da review.
+- **Visual:** dispensada nesta fatia de inventário/documentação; evidência da T3 preservada.
 
 ## Paralelização (opcional, omitir quando não aplicável)
 

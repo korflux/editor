@@ -13,6 +13,7 @@ from typing import Iterator
 from unittest.mock import patch
 from uuid import uuid4
 
+from editor.analysis import captions as caption_suggestions
 from editor import dependencies as editor_dependencies
 from editor import media
 from editor.analysis.frames import FRAME_PIXEL_FORMAT
@@ -38,7 +39,7 @@ DOCUMENTATION_PATHS = (
     PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "youtube-editing.md",
     PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "canal-sonni-viaja.md",
     PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "source-preparation.md",
-    PROJECT_ROOT / ".vibeflow" / "REGRAS.md",
+    PROJECT_ROOT / "AGENTS.md",
 )
 
 
@@ -49,7 +50,8 @@ def run_module(*arguments: str) -> subprocess.CompletedProcess[str]:
         [sys.executable, "-m", "editor", *arguments],
         cwd=PROJECT_ROOT,
         capture_output=True,
-        text=True,
+        # A borda emite UTF-8; o decoder do teste não deve depender da code page do Windows.
+        encoding="utf-8",
         check=False,
     )
 
@@ -81,7 +83,7 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(payload["ok"], True)
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["command"], "capabilities")
-        self.assertEqual(data["cli_version"], "1.2.0")
+        self.assertEqual(data["cli_version"], "1.3.0")
         for key in (
             "system",
             "dependencies",
@@ -96,6 +98,26 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(data["operations"]["capabilities"]["status"], "available")
         self.assertEqual(data["operations"]["init"]["status"], "available")
         self.assertEqual(data["plan"]["schema_version"], 2)
+        # Phase 6: descoberta usa as mesmas fontes de contrato da sugestão e validação.
+        suggest = data["operations"]["captions_suggest"]
+        self.assertEqual(suggest["status"], "available")
+        self.assertFalse(suggest["writes_files"])
+        self.assertFalse(suggest["translates"])
+        self.assertEqual(suggest["max_chars"], {"default": caption_suggestions.SUGGEST_MAX_CHARS_DEFAULT, "min": caption_suggestions.SUGGEST_MAX_CHARS_MIN, "max": caption_suggestions.SUGGEST_MAX_CHARS_MAX})
+        self.assertEqual(suggest["max_duration_s"], {"default": caption_suggestions.SUGGEST_MAX_DURATION_DEFAULT_S, "min": caption_suggestions.SUGGEST_MAX_DURATION_MIN_S, "max": caption_suggestions.SUGGEST_MAX_DURATION_MAX_S})
+        self.assertEqual(suggest["pause_break_s"], caption_suggestions.SUGGEST_PAUSE_BREAK_S)
+        self.assertEqual(suggest["sentence_end_chars"], list(caption_suggestions.SUGGEST_SENTENCE_END_CHARS))
+        self.assertEqual(suggest["max_transcription_bytes"], caption_suggestions.MAX_TRANSCRIPTION_BYTES)
+        captions = data["plan"]["captions"]
+        for key, constant in (("fields", "CAPTIONS_FIELDS"), ("required", "CAPTIONS_FIELDS"), ("item_fields", "CAPTION_ITEM_FIELDS"), ("item_required", "CAPTION_ITEM_FIELDS"), ("style_fields", "CAPTION_STYLE_FIELDS")):
+            self.assertEqual(captions[key], sorted(getattr(plan_schema, constant)))
+        for key, constant in (("align_default", "DEFAULT_CAPTION_ALIGN"), ("default_boxes", "DEFAULT_CAPTION_BOXES"), ("min_items", "MIN_CAPTION_ITEMS"), ("max_items", "MAX_CAPTION_ITEMS"), ("max_text_chars", "MAX_CAPTION_TEXT_CHARS"), ("max_duration_s", "MAX_CAPTION_DURATION_SECONDS"), ("min_occurrence_s", "MIN_CAPTION_OCCURRENCE_SECONDS"), ("overlap_tolerance_s", "CAPTION_OVERLAP_TOLERANCE_SECONDS")):
+            self.assertEqual(captions[key], getattr(plan_schema, constant))
+        self.assertEqual(captions["time_reference"], "source")
+        self.assertEqual(captions["style_required"], ["font", "size_px", "color"])
+        self.assertEqual(captions["mapping"]["loop_tracks"], "ignored")
+        self.assertEqual(captions["mapping"]["envelope_fields"], ["items", "occurrences", "unplaced"])
+
         # Phase 5 acrescentou campos ao perfil (proporções, canvas, upscale); a igualdade exata do
         # contrato anterior vale sobre as chaves que já existiam, que não foram removidas nem renomeadas.
         legacy_profile_keys = (

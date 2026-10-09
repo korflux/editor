@@ -177,6 +177,37 @@ Se a fonte de voz for um arquivo separado, use outro `source-id` e analise esse
 arquivo separadamente. O agente deve relacionar os tempos entre as fontes antes de
 escrever o plano.
 
+#### Legendar falas estrangeiras com tempos da fonte
+
+Localize a troca no áudio e transcreva no idioma da fala com `analyze transcribe --language <idioma>`. Confira as palavras ouvindo o trecho: baixa confiança e silêncio podem gerar alucinações. O agente traduz conforme o briefing confirmado; a CLI não traduz nem consulta serviços externos.
+
+```text
+.venv\Scripts\python.exe -B -m editor captions suggest --workdir "<workdir>" --source-id "<id>" --start-s 12 --end-s 18 --max-chars 84 --max-duration-s 6 --json
+```
+
+`captions suggest` lê `analysis/transcription/<source-id>.json`, sem escrever arquivos. Retorna `source_id`, `language`, `source_sha256` e `chunks[]` com `in_s`, `out_s`, `text`, `words[]` e `min_probability` (null se nenhuma palavra tiver probabilidade). Os padrões são 84 caracteres (faixa 20 a 200) e 6 s (faixa 1 a 10); a quebra fecha também por pausa de pelo menos 0,6 s, pontuação `.`, `?`, `!`, `…` e troca de segmento. Uma palavra indivisível pode ultrapassar os limites sozinha. A janela seleciona pelo início da palavra: `start_s <= início < end_s`; a cauda pode passar de `end_s`. Confira os limites antes de escrever o plano. Transcrição ausente retorna `ANALYSIS_REQUIRED`; formato inválido, `ANALYSIS_INVALID`.
+
+ponytail: uma transcrição por fonte, preservar uma cópia da análise anterior antes de transcrever outro idioma; ampliar o armazenamento somente quando houver demanda real. O comando lê apenas a transcrição publicada para aquele source ID.
+
+Depois de traduzir e conferir a fala, escreva `captions` opcional na raiz do schema v2:
+
+```json
+{
+  "captions": {
+    "style": {"font": "Arial", "size_px": 70, "color": "#FFFFFF"},
+    "items": [{"source_id": "main", "in_s": 12, "out_s": 14, "text": "Olá, sejam bem-vindos!"}]
+  }
+}
+```
+
+O exemplo é um bloco para incorporar ao plano, não um plano completo. `style` e `items` são obrigatórios; o estilo único exige `font`, `size_px` e `color`, e aceita `align` (padrão `center`), `shadow`, `outline` e a caixa `x`, `y`, `width`, `height`. Reutiliza as faixas de estilo dos textos abaixo. `size_px` e os pixels dos efeitos valem na full e escalam na preview. A quebra é obrigatória e aproximada; o texto fica ancorado na base da caixa, acima das camadas. Caixa padrão (x, y, width, height): 16:9 (0.05, 0.80, 0.90, 0.14), 9:16 (0.05, 0.62, 0.90, 0.14), 1:1 e 4:5 (0.05, 0.78, 0.90, 0.14).
+
+Cada item exige `source_id`, `in_s`, `out_s`, `text`: sempre tempos da fonte, não da timeline. Limites: 1 a 2.000 itens, texto não vazio até 200 caracteres sem NUL e intervalo positivo até 30 s dentro da fonte com áudio. Sobreposição na mesma fonte ou entre itens na timeline acima da tolerância de 1 ms retorna `PLAN_INVALID`.
+
+Execute `plan validate` e confira `data.captions.occurrences` e `unplaced`. O mapeamento segue as faixas de áudio e suas janelas nos cortes J/L, inclui cada repetição do trecho, une ocorrências contíguas do mesmo item e ignora faixas `loop`. Fragmentos menores que 0,3 s são omitidos; `unplaced` contém índices dos itens (base 1) sem ocorrência. Um b-roll com áudio `replace` só recebe a legenda da fonte realmente ouvida. Não grave tempos de timeline no plano.
+
+Renderize a preview e confira quadros dentro e fora de cada ocorrência, sincronismo com a fala, tradução, leitura, caixa, contraste e safe area antes de pedir aprovação. Alterar `captions` muda o hash e exige nova preview/aprovação antes da full. Não há tradução automática, SRT/VTT, trilha de legenda no MP4, estilo por item, animação, fundo ou karaokê. Use `layers` para letreiros com tempos da timeline; use `captions` para falas ancoradas na fonte.
+
 ### 5. Escrever e validar o plano
 
 Escreva `<workdir>\plan.json` apenas com decisões confirmadas. O contrato vigente

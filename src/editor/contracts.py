@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 
-CLI_VERSION = "1.2.0"
+CLI_VERSION = "1.3.0"
 SCHEMA_VERSION = 1
 
 EXIT_CODES = {

@@ -75,6 +75,14 @@ Os artefatos ficam em:
 
 Se houver uma fonte separada, como uma gravação de voz, analisá-la com outro `source-id`. Nunca presumir que o segundo arquivo começa no mesmo instante do primeiro sem conferir os tempos.
 
+#### 1.3.1 Legendas de falas estrangeiras
+
+Localize a fala estrangeira, transcreva no idioma dela, execute `captions suggest` para a janela e confira o áudio antes de traduzir. O agente traduz e escreve `captions.items` com `source_id`, `in_s`, `out_s` e `text`, sempre em tempos da fonte. O estilo único e as caixas por proporção estão em `SKILL.md`, seção "Legendar falas estrangeiras com tempos da fonte". Não converta esses tempos para a timeline manualmente.
+
+O comando é somente leitura e não traduz. Padrões: 84 caracteres (20 a 200), 6 s (1 a 10), pausa de 0,6 s, pontuação e troca de segmento. Uma palavra indivisível pode exceder o limite; a janela seleciona pelo início e a cauda pode passar de `end_s`. Existe uma transcrição por fonte: preserve a análise anterior antes de publicar outra em idioma diferente.
+
+Depois de `plan validate`, confira `data.captions.occurrences` e `unplaced`: o áudio efetivo, incluindo cortes J/L e repetições, determina as ocorrências; faixas `loop` são ignoradas e fragmentos menores que 0,3 s são omitidos. Confira quadros da preview dentro e fora das ocorrências, tradução, sincronismo, base da caixa, contraste e safe area. O texto é queimado acima das camadas e escala com a preview; a quebra é aproximada. Mudanças exigem nova preview e aprovação. Não há tradução automática, SRT/VTT, estilo por item, animação ou caixa de fundo. Letreiros de contexto continuam em `layers`.
+
 ### 1.4 Montar o plano
 
 O `plan.json` registra as decisões da edição. Ele deve dizer, de forma explícita:
@@ -405,6 +413,7 @@ A preview (até 720 px, na mesma proporção da full) é a referência de enquad
 | Objetivo | Comando |
 |---|---|
 | Verificar o ambiente local | `editor capabilities --json` |
+| Sugerir frases para o agente traduzir | `editor captions suggest ... --json` |
 | Saber o que foi falado e quando | `editor analyze transcribe ... --json` |
 | Encontrar níveis e possíveis silêncios | `editor analyze audio ... --json` |
 | Conferir a imagem em momentos específicos | `editor extract frames ... --json` |

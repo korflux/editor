@@ -89,7 +89,15 @@ Posições relativas ao quadro (0 a 1, origem no canto superior esquerdo). Os ta
 - **Caixa no editor:** como a caixa da camada de texto é alinhada pelo topo, para centralizar um rótulo em y 0,83 usar `y` cerca de 0,80 (uma linha) ou 0,76 (duas linhas), com `x 0.04` e `width 0.92`. Valores medidos num teste a 2688 px; conferir na full.
 - **Safe area:** rótulos na faixa inferior (y de 0,80 a 0,91); o letreiro não cobre rosto, objeto apontado, comprovante ou prato.
 
-### 6.2 Convenções de escrita
+### 6.2 Legendas de falas estrangeiras
+
+Legendar toda troca em outro idioma, inclusive cortesia curta. Localize a fala, transcreva no idioma dela, execute `captions suggest`, ouça e confira as palavras, traduza para português e escreva `captions.items` com tempos da fonte. O agente traduz; a CLI é somente leitura e não traduz. Há uma transcrição por fonte: preserve a análise anterior antes de publicar outra. Uma palavra indivisível pode exceder os limites da sugestão; a janela seleciona pelo início e a cauda pode passar de `end_s`.
+
+Use o estilo único em `captions.style`: Tahoma, branco e sombra suave com os parâmetros sugeridos na seção 6.1; `align: left` quando reproduzir a fala de interlocutor. Para a full de 2688 px, partir de `size_px: 100`. A caixa de captions é ancorada na base, enquanto a camada de letreiro é ancorada no topo. O padrão 16:9 é x 0.05, y 0.80, width 0.90, height 0.14; ajuste no estilo se necessário, olhando a preview para respeitar a faixa inferior do canal. Em 9:16 a caixa padrão sobe para y 0.62; 1:1 e 4:5 usam y 0.78. Não copie a posição do letreiro como se fosse a mesma âncora.
+
+Confira `data.captions.occurrences` e `unplaced` em `plan validate`: cortes J/L, jump cuts e gancho repetido seguem o áudio efetivo; faixas `loop` não geram ocorrências, fragmentos menores que 0,3 s são omitidos. Confira tradução, pontuação, sincronismo, legibilidade e quadros da preview dentro e fora das ocorrências antes da aprovação. O bloco aceita até 2.000 itens, 200 caracteres e 30 s por item; o contrato completo está em `SKILL.md`. O editor não exporta SRT/VTT e não tem estilo por item, animação ou fundo. Texto de contexto e fala do grupo posicionada perto de pessoas continuam como letreiros em `layers`, quando o briefing pedir esse tratamento.
+
+### 6.3 Convenções de escrita
 
 | Convenção | Exemplos | Quando usar |
 |---|---|---|

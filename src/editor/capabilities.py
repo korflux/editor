@@ -8,6 +8,8 @@ from typing import Any
 
 from . import dependencies
 from .analysis.audio import MAX_AUDIO_WINDOW_SECONDS, MAX_AUDIO_WINDOWS
+from .analysis import captions as caption_suggestions
+from .plan import schema as caption_schema
 from .contracts import CLI_VERSION
 from .media import (
     HEVC_PIXEL_FORMATS,
@@ -291,6 +293,36 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             [],
             "prepara a estrutura técnica do trabalho sem criar estado editorial",
         ),
+        # Suggest lê o artefato já publicado; disponibilidade não depende de Whisper ou FFmpeg.
+        "captions_suggest": {
+            **_operation("available", ["analysis/transcription/<source-id>.json"], "frases originais somente leitura; tradução feita pelo agente"),
+            "command": "captions suggest",
+            "required": ["workdir", "source_id"],
+            "optional": ["start_s", "end_s", "max_chars", "max_duration_s"],
+            "max_chars": {
+                "default": caption_suggestions.SUGGEST_MAX_CHARS_DEFAULT,
+                "min": caption_suggestions.SUGGEST_MAX_CHARS_MIN,
+                "max": caption_suggestions.SUGGEST_MAX_CHARS_MAX,
+            },
+            "max_duration_s": {
+                "default": caption_suggestions.SUGGEST_MAX_DURATION_DEFAULT_S,
+                "min": caption_suggestions.SUGGEST_MAX_DURATION_MIN_S,
+                "max": caption_suggestions.SUGGEST_MAX_DURATION_MAX_S,
+            },
+            "pause_break_s": caption_suggestions.SUGGEST_PAUSE_BREAK_S,
+            "sentence_end_chars": list(caption_suggestions.SUGGEST_SENTENCE_END_CHARS),
+            "max_transcription_bytes": caption_suggestions.MAX_TRANSCRIPTION_BYTES,
+            "closes_on_segment_change": True,
+            "window": "start_s <= word.start_s < end_s; última palavra pode terminar depois de end_s",
+            "output_fields": ["source_id", "language", "source_sha256", "chunks"],
+            "chunk_fields": ["in_s", "out_s", "text", "words", "min_probability"],
+            "writes_files": False,
+            "translates": False,
+            "limitations": [
+                "palavra indivisível pode ultrapassar sozinha max_chars e max_duration_s",
+                "ponytail: uma transcrição por fonte; preservar análises antes de transcrever outro idioma, ampliar quando houver demanda real",
+            ],
+        },
         "analyze_transcribe": _operation(
             transcribe_status,
             ["faster-whisper", "ctranslate2", "modelo local"],
@@ -395,6 +427,41 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
         },
         "plan": {
             "schema_version": PLAN_SCHEMA_VERSION,
+            # Fonte única das allowlists e limites; estilo reutiliza layers.text_style abaixo.
+            "captions": {
+                "optional": True,
+                "fields": sorted(caption_schema.CAPTIONS_FIELDS),
+                "required": sorted(caption_schema.CAPTIONS_FIELDS),
+                "item_fields": sorted(caption_schema.CAPTION_ITEM_FIELDS),
+                "item_required": sorted(caption_schema.CAPTION_ITEM_FIELDS),
+                "style_fields": sorted(caption_schema.CAPTION_STYLE_FIELDS),
+                "style_required": ["font", "size_px", "color"],
+                "align_default": caption_schema.DEFAULT_CAPTION_ALIGN,
+                "default_boxes": {ratio: dict(box) for ratio, box in caption_schema.DEFAULT_CAPTION_BOXES.items()},
+                "min_items": caption_schema.MIN_CAPTION_ITEMS,
+                "max_items": caption_schema.MAX_CAPTION_ITEMS,
+                "max_text_chars": caption_schema.MAX_CAPTION_TEXT_CHARS,
+                "max_duration_s": caption_schema.MAX_CAPTION_DURATION_SECONDS,
+                "min_occurrence_s": caption_schema.MIN_CAPTION_OCCURRENCE_SECONDS,
+                "overlap_tolerance_s": caption_schema.CAPTION_OVERLAP_TOLERANCE_SECONDS,
+                "time_reference": "source",
+                "style_reference": "plan.layers.text_style",
+                "wrap": True,
+                "anchor": "box_bottom",
+                "draw_order": "above_layers",
+                "mapping": {
+                    "reference": "audio_tracks",
+                    "cut_windows": ["audio_start_s", "audio_end_s"],
+                    "loop_tracks": "ignored",
+                    "repeated_source": "all_occurrences",
+                    "contiguous_same_item": "merged",
+                    "overlapping_items": "PLAN_INVALID",
+                    "envelope_fields": ["items", "occurrences", "unplaced"],
+                    "item_base": 1,
+                    "unplaced": "items sem ocorrência após cortes e descarte de fragmentos curtos",
+                },
+                "limitations": ["sem estilo por item, animação, fundo, karaokê ou exportação SRT/VTT", "quebra de linha aproximada; conferir os quadros da preview"],
+            },
             "source_kinds": sorted(SOURCE_KINDS),
             "profile": {
                 # Mantido por compatibilidade: é a proporção horizontal, a única com `max_full_width`.

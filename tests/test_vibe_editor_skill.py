@@ -43,6 +43,14 @@ class VibeEditorSkillTests(unittest.TestCase):
         cls.channel_profile = read_skill_document(CHANNEL_PROFILE_PATH)
         cls.source_preparation = read_skill_document(SOURCE_PREPARATION_PATH)
 
+    def test_documents_teach_source_captions_and_preview_review(self) -> None:
+        """Cruza a jornada publicada: sugestão, tradução pelo agente e ocorrências auditadas."""
+
+        for document in (self.skill, self.youtube_reference, self.channel_profile):
+            for marker in ("captions suggest", "tempos da fonte", "occurrences", "unplaced", "preview", "uma transcrição por fonte", "palavra indivisível", "cauda pode passar", "loop", "0,3 s", "SRT/VTT"):
+                self.assertIn(marker, document)
+        self.assertIn('"schema_version": 2', self.channel_profile)
+
     def test_skill_orders_editorial_gate_before_approval_command(self) -> None:
         """Confirma que o gate aparece antes do comando que registra a aprovação humana."""
 

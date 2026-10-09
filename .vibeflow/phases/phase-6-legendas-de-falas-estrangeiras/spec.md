@@ -125,13 +125,13 @@ Sem interview em disco: as três decisões de produto foram fechadas pelo humano
 - [x] A3: `plan validate` recusa com `PLAN_INVALID`, antes de inspecionar mídia quando a regra é estrutural, campo fora da allowlist, tipos errados, texto vazio ou acima de 200 caracteres, `items` vazio ou acima de 2.000, intervalo inválido ou acima de 30 s, fonte inexistente ou sem áudio, itens da mesma fonte sobrepostos e ocorrências sobrepostas na timeline, sem ecoar valores recebidos.
 - [x] A4: na preview e na full, a legenda aparece nos quadros de cada ocorrência e não aparece fora delas, na caixa padrão da proporção ou na declarada, ancorada na base, com sombra e contorno quando declarados e a mesma fração da largura do quadro na preview e na full; em 16:9 e 9:16.
 - [x] A5: sem `captions` o `filter_complex` é byte a byte o anterior (goldens intactos); com `captions`, alterar um item depois da aprovação faz `render full` falhar com `APPROVAL_STALE` e preservar a full vigente.
-- [ ] A6: `capabilities` expõe `operations.captions_suggest` e `plan.captions` lidos das constantes, e a skill, `youtube-editing.md`, `canal-sonni-viaja.md` e `AGENTS.md` descrevem o fluxo e as limitações sem contradizer o código.
+- [x] A6: `capabilities` expõe `operations.captions_suggest` e `plan.captions` lidos das constantes, e a skill, `youtube-editing.md`, `canal-sonni-viaja.md` e `AGENTS.md` descrevem o fluxo e as limitações sem contradizer o código.
 
 ### Critérios de sucesso
 
-- [ ] C1: suíte completa verde, com a prova de render real das legendas (A4) e a de mapeamento (A2).
-- [ ] C2: gitleaks e pip-audit sem achados.
-- [ ] C3: versão minor (1.3.0), sem mudança de `schema_version`.
+- [x] C1: suíte completa verde, com a prova de render real das legendas (A4) e a de mapeamento (A2).
+- [x] C2: gitleaks e pip-audit sem achados.
+- [x] C3: versão minor (1.3.0), sem mudança de `schema_version`.
 
 ## Contratos e restrições necessárias
 

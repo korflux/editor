@@ -62,6 +62,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `src/editor/process.py`: execução estruturada e streaming PCM de processos locais sem shell intermediário.
 - `src/editor/analysis/audio.py`: análise de loudness, pico verdadeiro, níveis por janela e silêncio por amplitude.
 - `src/editor/analysis/frames.py`: seleção temporal, extração de PNGs e manifesto de frames efetivos.
+- `src/editor/analysis/captions.py`: leitura validada da transcrição publicada e quebra determinística em frases com tempos da fonte, sem escrita nem tradução.
 - `src/editor/analysis/transcription.py`: validação da resposta do Whisper, normalização tolerante até 0,5 s e publicação de transcrição com timestamps por palavra.
 - `src/editor/plan/schema.py`: allowlist estrutural e opções suportadas do schema v2 do plano, fonte única das proporções (`ASPECT_RATIOS`), do canvas de plataforma (`FIXED_CANVAS_DIMENSIONS`, `canvas_dimensions`), dos limites do `reframe` e das faixas e padrões de `shadow` e `outline` (`SHADOW_*`, `OUTLINE_*`), incluindo `profile.max_full_width` opcional (só no 16:9).
 - `src/editor/plan/validation.py`: validação de fontes, segmentos, áudio, movimento, `reframe`, cortes J/L, camadas (com o estilo normalizado do texto), timeline linear, perfil efetivo (canvas da full, `upscale` e, no 16:9, sem upscale do canvas) e arquivo concreto de fonte para `fontfile`.
@@ -84,6 +85,9 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `tests/test_decode_windows.py`: planejador de janelas e do seek com pre-roll de áudio, equivalência `framemd5` de vídeo e áudio com e sem janelas nos casos de borda, PCM amostra a amostra da preview e da full renderizadas em fontes GOP 12 com B-frames e GOP 25 sem B-frames (cortes em keyframe, perto do início, várias janelas, trilhas, J/L), render real de preview e full, fallback sem janelas e timeout sem repetição.
 - `tests/test_proxy_build.py`: `proxy build` real, reutilização, proxy reprovado não publicado, fonte alterada como obsoleta, metadado fora do formato e limpeza de `.tmp`.
 - `tests/test_preview_proxy.py`: preview com proxy numa fonte e original noutra, `--proxy off`, proxy obsoleto em `stale`, aprovação e full independentes do proxy.
+- `tests/test_captions_suggest.py`: sugestão pela CLI, janelas, limites, corrupção, rejeição de junction e preservação do trabalho.
+- `tests/test_captions_plan.py`: validação precoce e mapeamento das legendas por áudio, J/L, repetição, cortes, sobreposição e unplaced.
+- `tests/test_captions_render.py`: render real em 16:9/9:16, escala, base da caixa, efeitos, texto literal hostil e aprovação obsoleta.
 - `tests/test_transcription.py`: contrato canônico, seleção CPU/CUDA, timestamps obrigatórios e erros seguros da transcrição.
 - `tests/fixtures/media/main.mp4`: fixture curta H.264/AAC com trechos silenciosos para o contrato de áudio.
 - `tests/fixtures/workflow/`: plan.json v2, fontes locais, preview, aprovação e full do cenário de validação do MVP.
@@ -104,8 +108,8 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `.vibeflow/mvp/`: entrevista, spec, plan, analyze e implement do MVP.
 - `.vibeflow/phases/`: artefatos de entrevista, especificação, plano, análise, implementação e revisão por fase.
 - `.gitignore`: proteção mínima para segredos locais e backups gerados.
-- `AGENTS.md`: ponteiro para `.vibeflow/REGRAS.md`, usado por agentes compatíveis com AGENTS.
-- `CLAUDE.md`: ponteiro para `.vibeflow/REGRAS.md`, usado por agentes compatíveis com CLAUDE.
+- `AGENTS.md`: fonte única editável das regras e do mapa do projeto.
+- `.agents/rules/vibeflow.md`: ponte para `AGENTS.md`; `.vibeflow/old/` preserva os backups verificados das regras legadas.
 - `.erros-encontrados/`: registros de problemas fora do escopo encontrados durante as verificações.
 - `skills/vibe-editor/`: skill que ensina agentes a conduzir o fluxo de edição de vídeo local, incluindo verificação do ambiente, análise, preview, aprovação e full.
   - `references/youtube-editing.md`: padrão de qualidade de edição para YouTube, válido para qualquer vídeo de qualquer pessoa (fluxo, regra de cortes, texto na tela com fonte, áudio, entrega) e a tabela de decisões de estilo.
@@ -362,6 +366,17 @@ Nesse cenário cada preview com proxy economiza ~7,3 s de relógio e ~58 s de CP
 - **Dependências:** as da full (FFmpeg e FFprobe locais com `libx264` e `aac`; NVENC só com `--accel gpu`); nenhuma biblioteca, rede ou shell novos.
 - **Limitação conhecida:** `ponytail: o nível 5.2 do NVENC vale para qualquer resolução, e decodificadores muito antigos podem recusar nível acima do deles, derivar o menor nível da resolução e da taxa de quadros se algum player de entrega recusar a full high ou max por GPU`; `ponytail: três presets fixos medidos num material sintético, sem bitrate-alvo nem preset por fonte, acrescentar um preset ou um modo de bitrate quando uma fonte real de câmera mostrar que max ainda fica abaixo do bitrate desejado (a validação com bruto real de câmera não foi feita, só fontes sintéticas)`; o ganho de tamanho e de tempo depende da fonte e os números acima são orientação.
 - **Verificação:** `.venv\Scripts\python.exe -B -m unittest tests.test_render_quality -v`, `.venv\Scripts\python.exe -B -m unittest tests.test_full_render tests.test_gpu_accel tests.test_cli_contract tests.test_capabilities tests.test_vibe_editor_skill tests.test_preview_render tests.test_approval -v`, `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`, gitleaks e pip-audit.
+
+### Legendas, Phase 6
+
+- **Propósito:** obter a fala original em frases curtas e renderizar traduções escritas pelo agente, ligadas ao tempo da fonte e ao áudio efetivamente ouvido. Versão 1.3.0, com schema de plano 2 preservado.
+- **Entrada:** `editor captions suggest --workdir <absoluto> --source-id <id> [--start-s <s>] [--end-s <s>] [--max-chars <n>] [--max-duration-s <s>] --json` lê somente `analysis/transcription/<id>.json`. O plano aceita `captions.style` (fonte, tamanho, cor, alinhamento, caixa, sombra e contorno) e `captions.items` (`source_id`, `in_s`, `out_s`, `text`), sempre com tempos da fonte.
+- **Saída:** suggest retorna `source_id`, `language`, `source_sha256` e `chunks` com texto original, tempos, palavras e `min_probability`, sem criar arquivos. `plan validate` acrescenta `captions.items` (quantidade), `occurrences` (índices base 1 e tempos da timeline) e `unplaced` somente quando o bloco existe. Preview e full queimam as ocorrências acima de todas as camadas, com texto ancorado na base da caixa e escala proporcional na preview.
+- **Contrato:** 1 a 2.000 itens, texto até 200 caracteres e duração até 30 s; mapeamento por faixas de áudio sem loop, respeitando cortes J/L, repetição e recortes. Une ocorrências contíguas do mesmo item antes de omitir fragmentos abaixo de 0,3 s. Sobreposição entre itens da mesma fonte ou entre ocorrências de itens diferentes na timeline é recusada, com tolerância de 1 ms. O bloco original entra no hash canônico: alterar legenda após aprovação bloqueia a full com `APPROVAL_STALE`.
+- **Padrões:** suggest usa 84 caracteres (faixa 20 a 200), 6 s (faixa 1 a 10), e fecha na mudança de segmento, limite, pausa de 0,6 s ou pontuação final. Caixa padrão: x 0,05, largura 0,9, altura 0,14; y 0,80 no 16:9, 0,78 no 1:1 e 4:5, 0,62 no 9:16; alinhamento central. Constantes em `analysis/captions.py` e `plan/schema.py` alimentam `capabilities`.
+- **Dependências e segurança:** biblioteca padrão no suggest; FFmpeg `drawtext` e fonte concreta pelo resolvedor vigente no render. Sem rede, tradução, modelo ou subprocesso novo. Transcrição é lida com limite de tamanho e sem links/reparse points; erros não ecoam conteúdo. O escape compartilhado trata os dois parsers FFmpeg e mantém `expansion=none`, inclusive com apóstrofos.
+- **Limitações:** palavra indivisível pode exceder sozinha os limites sugeridos; a janela inclui palavras pelo início, então a cauda pode passar de `end_s`. `ponytail: uma transcrição por fonte, guardar uma por idioma quando o fluxo de cruzar idiomas pesar`. A quebra de texto mantém a aproximação vigente de largura de glifo. Não há SRT/VTT, trilha de legenda, estilo por item, animação ou caixa de fundo. O agente traduz e o humano confere a preview.
+- **Verificação:** `tests.test_captions_suggest`, `tests.test_captions_plan`, `tests.test_captions_render`, `tests.test_capabilities` e `tests.test_vibe_editor_skill`; suíte completa, gitleaks e pip-audit. Prova visual em preview/full 16:9 e 9:16, com pixels de texto/efeitos, base, escala e preservação da full por aprovação obsoleta.
 
 ## Decisões vigentes
 
