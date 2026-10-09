@@ -13,7 +13,7 @@ from ..workdir import (
     publish_full_atomic,
     relative_artifact_path,
 )
-from .preview import _preview_dimensions, _render_artifact
+from .preview import _render_artifact, _require_renderable_canvas
 
 
 def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
@@ -32,14 +32,13 @@ def render_full(workdir: str | Path, accel: str = "none") -> dict[str, Any]:
     )
     approval = verify_approval(workdir, validation)
 
-    # O perfil validado limita somente a full; alinhamento 16 preserva a resolução
-    # legada de fontes menores sem ultrapassar o teto explícito ou padrão.
-    canvas_width, canvas_height = _preview_dimensions(
-        document,
-        validation,
-        max_dimension=int(validation["profile"]["effective_full_width"]),
-        artifact_name="full",
-        width_alignment=16,
+    # O canvas da full é o que `plan validate` informou em `data.profile` (mesma função,
+    # `schema.canvas_dimensions`): tamanho fixo de plataforma em 9:16, 1:1 e 4:5 e, no 16:9,
+    # a largura da primeira fonte limitada por `max_full_width`, sem upscale e alinhada a 16.
+    canvas_width, canvas_height = _require_renderable_canvas(
+        int(validation["profile"]["full_width"]),
+        int(validation["profile"]["full_height"]),
+        "full",
     )
     metadata, used_accel, decode = _render_artifact(
         document,

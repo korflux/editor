@@ -190,6 +190,9 @@ class PlanValidationTests(unittest.TestCase):
                 "aspect_ratio": "16:9",
                 "max_full_width": 1920,
                 "effective_full_width": 320,
+                "full_width": 320,
+                "full_height": 180,
+                "upscale": [],
             },
         )
         self.assertEqual(data["timeline"]["duration_seconds"], 2.0)
@@ -365,6 +368,9 @@ class PlanValidationTests(unittest.TestCase):
                         "aspect_ratio": "16:9",
                         "max_full_width": 160,
                         "effective_full_width": 160,
+                        "full_width": 160,
+                        "full_height": 90,
+                        "upscale": [],
                     },
                 )
 

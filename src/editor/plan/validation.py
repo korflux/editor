@@ -22,6 +22,7 @@ from ..dependencies import is_regular_path, is_windows, resolve_executable
 from ..workdir import resolve_source_path, validate_workdir
 from .canonical import canonical_json, canonical_sha256
 from .schema import (
+    ASPECT_RATIOS,
     AUDIO_FIELDS,
     AUDIO_MODES,
     AUDIO_PROCESSING_FIELDS,
@@ -30,6 +31,7 @@ from .schema import (
     DEFAULT_MAX_FULL_WIDTH,
     FIT_MODES,
     IMAGE_LAYER_FIELDS,
+    LANDSCAPE_ASPECT_RATIO,
     LAYER_FIT_MODES,
     LAYER_TYPES,
     LIMITER_FIELDS,
@@ -52,6 +54,8 @@ from .schema import (
     TRACK_FIELDS,
     VIDEO_LAYER_FIELDS,
     VIDEO_FIELDS,
+    aspect_ratio_value,
+    canvas_dimensions,
     plan_error,
     reject_unknown_fields,
     require_array,
@@ -63,7 +67,6 @@ MAX_PLAN_BYTES = 2 * 1024 * 1024
 MAX_SEGMENTS = 1_000
 MAX_LAYERS = 1_000
 MAX_TIMELINE_DURATION_SECONDS = float(media.MAX_SOURCE_DURATION_SECONDS)
-ASPECT_RATIO = 16 / 9
 ASPECT_TOLERANCE = 1e-6
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_AUDIO_PROCESSING = {
@@ -342,13 +345,23 @@ def _read_plan(root: Path) -> tuple[Path, dict[str, Any]]:
     return plan_path, document
 
 
-def _validate_profile(value: Any) -> int:
-    """Valida o perfil 16:9 e devolve o teto final explícito ou compatível padrão."""
+def _validate_profile(value: Any) -> tuple[str, int | None]:
+    """Valida o perfil e devolve a proporção e o teto final (explícito ou padrão, só no 16:9).
+
+    Roda antes de qualquer inspeção de mídia. Nas proporções não 16:9 o tamanho da full é fixo
+    (`schema.FIXED_CANVAS_DIMENSIONS`), então `max_full_width` seria um segundo teto com outro
+    significado e é recusado em vez de ignorado.
+    """
 
     profile = require_object(value, "profile")
     reject_unknown_fields(profile, PROFILE_FIELDS, "profile")
-    if profile.get("aspect_ratio") != "16:9":
-        raise plan_error("O perfil de saída do MVP deve usar aspect_ratio 16:9.")
+    aspect_ratio = profile.get("aspect_ratio")
+    if not isinstance(aspect_ratio, str) or aspect_ratio not in ASPECT_RATIOS:
+        raise plan_error("O perfil de saída deve usar aspect_ratio 16:9, 9:16, 1:1 ou 4:5.")
+    if aspect_ratio != LANDSCAPE_ASPECT_RATIO:
+        if "max_full_width" in profile:
+            raise plan_error("O campo profile.max_full_width só é aceito com aspect_ratio 16:9.")
+        return aspect_ratio, None
     max_full_width = profile.get("max_full_width", DEFAULT_MAX_FULL_WIDTH)
     if (
         isinstance(max_full_width, bool)
@@ -359,26 +372,40 @@ def _validate_profile(value: Any) -> int:
         raise plan_error(
             "O campo profile.max_full_width deve ser um inteiro múltiplo de 32 entre 32 e 3840."
         )
-    return max_full_width
+    return aspect_ratio, max_full_width
 
 
 def _calculated_profile(
-    max_full_width: int,
+    aspect_ratio: str,
+    max_full_width: int | None,
     source_records: list[dict[str, Any]],
     timeline_segments: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Calcula o teto e a largura final sem ampliar a primeira fonte visual da timeline."""
+    """Monta `data.profile`: proporção, canvas da full e lista de ampliações.
+
+    No 16:9 informa também o teto e a largura efetiva, sem ampliar a primeira fonte visual da
+    timeline. `full_width`/`full_height` vêm de `schema.canvas_dimensions`, a mesma função que a
+    full lê ao renderizar, para o envelope e o arquivo nunca divergirem.
+    """
 
     first_source_id = timeline_segments[0]["video_source_id"]
     first_source = next(record for record in source_records if record["id"] == first_source_id)
     source_width = first_source.get("video_width")
     if isinstance(source_width, bool) or not isinstance(source_width, int) or source_width <= 0:
         raise plan_error("A largura da primeira fonte visual não pôde ser determinada.")
-    return {
-        "aspect_ratio": "16:9",
-        "max_full_width": max_full_width,
-        "effective_full_width": min(source_width, max_full_width),
-    }
+    full_width, full_height = canvas_dimensions(
+        aspect_ratio, source_width, max_full_width, final=True
+    )
+    profile: dict[str, Any] = {"aspect_ratio": aspect_ratio}
+    if aspect_ratio == LANDSCAPE_ASPECT_RATIO:
+        profile["max_full_width"] = max_full_width
+        profile["effective_full_width"] = min(source_width, max_full_width)
+    profile["full_width"] = full_width
+    profile["full_height"] = full_height
+    # Segmentos ampliados (índice e fator, decisão 9): ficam vazios até o reenquadramento (T2)
+    # definir o recorte de cada segmento; o campo já existe para o contrato do envelope não mudar.
+    profile["upscale"] = []
+    return profile
 
 
 def _validate_source_structure(value: Any) -> None:
@@ -686,8 +713,9 @@ def _validate_video(
     value: Any,
     source_map: dict[str, dict[str, Any]],
     location: str,
+    aspect_ratio: str,
 ) -> tuple[dict[str, Any], media.MediaMetadata]:
-    """Valida fonte visual, intervalo e ajuste de proporção de um segmento."""
+    """Valida fonte visual, intervalo e ajuste de um segmento contra a proporção do perfil."""
 
     video = require_object(value, location)
     reject_unknown_fields(video, VIDEO_FIELDS, location)
@@ -712,8 +740,10 @@ def _validate_video(
     if not source.video_width or not source.video_height:
         raise plan_error("A proporção da fonte de vídeo não pôde ser determinada.")
     source_ratio = source.video_width / source.video_height
-    if fit == "preserve" and abs(source_ratio - ASPECT_RATIO) > ASPECT_TOLERANCE:
-        raise plan_error("Uma fonte fora de 16:9 precisa declarar fit contain ou crop.")
+    if fit == "preserve" and abs(source_ratio - aspect_ratio_value(aspect_ratio)) > ASPECT_TOLERANCE:
+        raise plan_error(
+            f"Uma fonte fora de {aspect_ratio} precisa declarar fit contain ou crop."
+        )
     return video, source
 
 
@@ -836,8 +866,12 @@ def _validate_segments(
     value: Any,
     source_map: dict[str, dict[str, Any]],
     cuts: list[dict[str, Any]],
+    aspect_ratio: str,
 ) -> tuple[list[dict[str, Any]], float]:
-    """Valida a timeline visual e depois aplica as janelas globais de áudio dos cortes."""
+    """Valida a timeline visual e depois aplica as janelas globais de áudio dos cortes.
+
+    `aspect_ratio` é a proporção do perfil, contra a qual `fit: "preserve"` compara cada fonte.
+    """
 
     segments = require_array(value, "segments")
     if not segments:
@@ -849,7 +883,9 @@ def _validate_segments(
     for index, item in enumerate(segments, start=1):
         segment = require_object(item, "segments[]")
         reject_unknown_fields(segment, SEGMENT_FIELDS, "segments[]")
-        video, _ = _validate_video(segment.get("video"), source_map, "segments[].video")
+        video, _ = _validate_video(
+            segment.get("video"), source_map, "segments[].video", aspect_ratio
+        )
         duration = float(video["out_s"]) - float(video["in_s"])
         if timeline_end + duration > MAX_TIMELINE_DURATION_SECONDS + ASPECT_TOLERANCE:
             raise plan_error("A timeline excede a duração máxima permitida.")
@@ -969,7 +1005,7 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         or schema_version != PLAN_SCHEMA_VERSION
     ):
         raise plan_error(f"O plano deve usar schema_version {PLAN_SCHEMA_VERSION}.")
-    max_full_width = _validate_profile(document.get("profile"))
+    aspect_ratio, max_full_width = _validate_profile(document.get("profile"))
     cut_definitions, layer_definitions, audio_processing = _validate_plan_structure(document)
     resolved_font_files = _resolve_layer_fonts(layer_definitions)
     source_map, source_records = _inspect_sources(root, document.get("sources"))
@@ -977,9 +1013,10 @@ def _validate_loaded_plan(root: Path, plan_path: Path, document: dict[str, Any])
         document.get("segments"),
         source_map,
         cut_definitions,
+        aspect_ratio,
     )
     _validate_layer_intervals(layer_definitions, timeline_duration, source_map)
-    profile = _calculated_profile(max_full_width, source_records, timeline_segments)
+    profile = _calculated_profile(aspect_ratio, max_full_width, source_records, timeline_segments)
     return {
         "plan_path": str(plan_path),
         "relative_plan_path": "plan.json",

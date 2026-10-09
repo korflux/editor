@@ -180,8 +180,11 @@ def _video_segment_filter(
     canvas_height: int,
     frame_rate: float | None,
 ) -> str:
-    """Corta um vídeo e normaliza sua imagem para o canvas 16:9 da preview.
+    """Corta um vídeo e normaliza sua imagem para o canvas do perfil (qualquer proporção).
 
+    `crop` amplia até cobrir o canvas e recorta o centro (sem barras); `preserve` e `contain`
+    cabem inteiros e preenchem o resto com preto. O canvas já chega na proporção do perfil,
+    então este filtro não depende de ela ser 16:9.
     O `trim` usa os tempos do plano menos o início da janela de decode da entrada.
     """
 

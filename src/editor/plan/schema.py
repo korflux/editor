@@ -25,6 +25,33 @@ DEFAULT_MAX_FULL_WIDTH = 1_920
 MIN_MAX_FULL_WIDTH = 32
 MAX_MAX_FULL_WIDTH = 3_840
 MAX_FULL_WIDTH_STEP = 32
+
+# --- Perfil de saída: proporções e canvas (fonte única de validação, render e capabilities) ---
+LANDSCAPE_ASPECT_RATIO = "16:9"
+"""Única proporção cujo canvas é derivado da largura da fonte e limitado por `max_full_width`."""
+
+ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:5")
+"""Allowlist de `profile.aspect_ratio`; a ordem é a de exibição em mensagens e em `capabilities`."""
+
+ASPECT_RATIO_TERMS = {"16:9": (16, 9), "9:16": (9, 16), "1:1": (1, 1), "4:5": (4, 5)}
+"""Largura e altura relativas de cada proporção, usadas para comparar a proporção de uma fonte."""
+
+FIXED_CANVAS_DIMENSIONS = {
+    "9:16": {"full": (1_080, 1_920), "preview": (404, 720)},
+    "1:1": {"full": (1_080, 1_080), "preview": (720, 720)},
+    "4:5": {"full": (1_080, 1_350), "preview": (576, 720)},
+}
+"""Tamanho de plataforma das proporções não 16:9, independente da resolução das fontes.
+
+Todas as dimensões são pares (exigência de `yuv420p`) e o lado maior da preview é 720.
+"""
+
+FULL_WIDTH_ALIGNMENT = 16
+"""Alinhamento legado da largura da full 16:9, que preserva fontes menores que o teto."""
+
+PREVIEW_WIDTH_ALIGNMENT = 32
+"""Alinhamento da largura da preview 16:9, que mantém ambas as dimensões pares em `yuv420p`."""
+
 SOURCE_FIELDS = frozenset({"id", "kind", "path"})
 SEGMENT_FIELDS = frozenset({"video", "audio"})
 VIDEO_FIELDS = frozenset({"source_id", "in_s", "out_s", "fit", "motion"})
@@ -56,6 +83,39 @@ LAYER_TYPES = frozenset({"text", "image", "video"})
 LAYER_FIT_MODES = frozenset({"contain", "crop"})
 CUT_TYPES = frozenset({"j", "l"})
 TEXT_ALIGNS = frozenset({"left", "center", "right"})
+
+
+def aspect_ratio_value(aspect_ratio: str) -> float:
+    """Converte uma proporção da allowlist em largura/altura para comparar com a de uma fonte."""
+
+    width, height = ASPECT_RATIO_TERMS[aspect_ratio]
+    return width / height
+
+
+def canvas_dimensions(
+    aspect_ratio: str,
+    source_width: int,
+    max_width: int | None,
+    *,
+    final: bool,
+) -> tuple[int, int]:
+    """Devolve (largura, altura) do canvas da preview (`final=False`) ou da full (`final=True`).
+
+    Fonte única do tamanho de saída, lida por `plan validate` (`data.profile.full_*`), pelo render
+    e, na T4, por `capabilities`. As proporções 9:16, 1:1 e 4:5 têm tamanho fixo de plataforma. O
+    16:9 mantém a regra vigente: largura da primeira fonte de vídeo limitada por `max_width`
+    (teto da preview ou `max_full_width`), sem upscale, alinhada ao artefato e com altura par.
+    `max_width` só é lido no 16:9; as demais proporções o ignoram.
+    """
+
+    fixed = FIXED_CANVAS_DIMENSIONS.get(aspect_ratio)
+    if fixed is not None:
+        return fixed["full" if final else "preview"]
+    width = min(source_width, max_width)
+    width -= width % (FULL_WIDTH_ALIGNMENT if final else PREVIEW_WIDTH_ALIGNMENT)
+    height = width * 9 // 16
+    height -= height % 2
+    return width, height
 
 
 def plan_error(message: str) -> CliError:

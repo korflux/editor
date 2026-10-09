@@ -13,6 +13,7 @@ from typing import Any
 from .. import dependencies, media, process
 from ..contracts import CliError, EXIT_CODES
 from ..dependencies import is_regular_path
+from ..plan.schema import LANDSCAPE_ASPECT_RATIO, canvas_dimensions
 from ..plan.validation import load_validated_plan
 from ..workdir import (
     FullLayout,
@@ -62,15 +63,34 @@ def _number(value: object) -> str:
     return f"{number:.6f}".rstrip("0").rstrip(".") or "0"
 
 
+def _require_renderable_canvas(
+    width: int, height: int, artifact_name: str
+) -> tuple[int, int]:
+    """Recusa um canvas degenerado (menos de 2 pixels) antes de montar o grafo de filtros.
+
+    Só ocorre com fonte visual inicial minúscula no 16:9, cujo canvas é derivado da largura dela;
+    as proporções de tamanho fixo nunca chegam aqui com valor inválido.
+    """
+
+    if width < 2 or height < 2:
+        raise _error(
+            "RENDER_FAILED",
+            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
+            EXIT_CODES["OPERATION"],
+        )
+    return width, height
+
+
 def _preview_dimensions(
     document: Mapping[str, Any],
     validation: Mapping[str, Any],
-    *,
-    max_dimension: int | None = MAX_PREVIEW_DIMENSION,
-    artifact_name: str = "preview",
-    width_alignment: int = 32,
 ) -> tuple[int, int]:
-    """Escolhe o canvas 16:9 sem upscale, respeitando teto e alinhamento do artefato."""
+    """Escolhe o canvas da preview na proporção do perfil, com o lado maior em até 720 pixels.
+
+    As proporções fixas (9:16, 1:1, 4:5) vêm de `schema.FIXED_CANVAS_DIMENSIONS`; o 16:9 mantém
+    a regra vigente (largura da primeira fonte de vídeo sem upscale, alinhada a 32). A full lê o
+    canvas de `validation["profile"]`, calculado pela mesma `schema.canvas_dimensions`.
+    """
 
     first_video_source_id = str(document["segments"][0]["video"]["source_id"])
     source = next(
@@ -84,7 +104,7 @@ def _preview_dimensions(
     if not isinstance(source, Mapping):
         raise _error(
             "RENDER_FAILED",
-            f"A fonte visual inicial da {artifact_name} não pôde ser determinada.",
+            "A fonte visual inicial da preview não pôde ser determinada.",
             EXIT_CODES["OPERATION"],
         )
     try:
@@ -93,35 +113,23 @@ def _preview_dimensions(
     except (KeyError, TypeError, ValueError) as error:
         raise _error(
             "RENDER_FAILED",
-            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
+            "As dimensões da fonte visual inicial da preview são inválidas.",
             EXIT_CODES["OPERATION"],
         ) from error
     if source_width <= 0 or source_height <= 0:
         raise _error(
             "RENDER_FAILED",
-            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
+            "As dimensões da fonte visual inicial da preview são inválidas.",
             EXIT_CODES["OPERATION"],
         )
 
-    # O alinhamento 32 da preview mantém ambas as dimensões pares em yuv420p.
-    # A full preserva o alinhamento legado de 16 quando a fonte fica abaixo do teto.
-    width = min(source_width, max_dimension) if max_dimension is not None else source_width
-    width -= width % width_alignment
-    if width < 2:
-        raise _error(
-            "RENDER_FAILED",
-            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
-            EXIT_CODES["OPERATION"],
-        )
-    height = width * 9 // 16
-    height -= height % 2
-    if height < 2:
-        raise _error(
-            "RENDER_FAILED",
-            f"As dimensões da fonte visual inicial da {artifact_name} são inválidas.",
-            EXIT_CODES["OPERATION"],
-        )
-    return width, height
+    width, height = canvas_dimensions(
+        str(validation["profile"]["aspect_ratio"]),
+        source_width,
+        MAX_PREVIEW_DIMENSION,
+        final=False,
+    )
+    return _require_renderable_canvas(width, height, "preview")
 
 
 def _require_encoders(has_audio: bool) -> None:
@@ -497,8 +505,15 @@ def _validate_rendered_preview(
     canvas_height: int,
     max_dimension: int | None = MAX_PREVIEW_DIMENSION,
     artifact_name: str = "preview",
+    aspect_ratio: str = LANDSCAPE_ASPECT_RATIO,
 ) -> media.MediaMetadata:
-    """Valida o MP4 produzido antes de permitir sua publicação como artefato vigente."""
+    """Valida o MP4 produzido antes de permitir sua publicação como artefato vigente.
+
+    Exige as dimensões exatas do canvas do perfil (`aspect_ratio`) e, na preview, o lado maior
+    dentro de `max_dimension`. A razão largura/altura só é conferida no 16:9, cujo canvas é
+    derivado da fonte: nas proporções fixas as dimensões da tabela já são o contrato, e uma razão
+    exata é impossível com dimensões pares (404x720 difere de 9:16 em ~0,0014).
+    """
 
     try:
         metadata = media.inspect_rendered_artifact(
@@ -524,14 +539,17 @@ def _validate_rendered_preview(
         or metadata.video_width is None
         or metadata.video_height is None
         or exceeds_max_dimension
-        or abs(metadata.video_width / metadata.video_height - 16 / 9) > 0.001
+        or (
+            aspect_ratio == LANDSCAPE_ASPECT_RATIO
+            and abs(metadata.video_width / metadata.video_height - 16 / 9) > 0.001
+        )
     ):
         raise _error(
             "RENDER_FAILED",
             (
-                "A preview renderizada não respeita o perfil 16:9 de até 720 pixels."
+                f"A preview renderizada não respeita o perfil {aspect_ratio} de até {max_dimension} pixels."
                 if max_dimension is not None
-                else "A full renderizada não respeita o perfil final 16:9."
+                else f"A full renderizada não respeita o perfil final {aspect_ratio}."
             ),
             EXIT_CODES["OPERATION"],
         )
@@ -639,6 +657,7 @@ def _render_artifact(
             canvas_height=canvas_height,
             max_dimension=max_dimension,
             artifact_name=artifact_name,
+            aspect_ratio=str(validation["profile"]["aspect_ratio"]),
         )
         publish(layout, staging)
         staging = None
