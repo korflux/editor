@@ -10,6 +10,8 @@ from pathlib import Path
 from editor import media
 from editor.plan import schema as plan_schema
 from editor.plan.validation import _validate_layers_structure, _validate_reframe
+from editor.render import live
+from editor.ui import limits as ui_limits
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -54,7 +56,7 @@ class VibeEditorSkillTests(unittest.TestCase):
     def test_skill_orders_editorial_gate_before_approval_command(self) -> None:
         """Confirma que o gate aparece antes do comando que registra a aprovação humana."""
 
-        gate_start = self.skill.index("### 7. Auditar a preview antes de pedir aprovação")
+        gate_start = self.skill.index("### 7. Auditar a versão antes de pedir aprovação")
         approval_start = self.skill.index("### 8. Registrar a aprovação e gerar a full")
         approval_command = self.skill.index("editor approve", approval_start)
 
@@ -69,7 +71,7 @@ class VibeEditorSkillTests(unittest.TestCase):
     def test_skill_documents_temporal_visual_and_lettering_evidence(self) -> None:
         """Confirma comandos e evidências para fronteiras, movimento, fim e lettering."""
 
-        gate_start = self.skill.index("### 7. Auditar a preview antes de pedir aprovação")
+        gate_start = self.skill.index("### 7. Auditar a versão antes de pedir aprovação")
         approval_start = self.skill.index("### 8. Registrar a aprovação e gerar a full")
         gate = self.skill[gate_start:approval_start]
 
@@ -89,7 +91,7 @@ class VibeEditorSkillTests(unittest.TestCase):
     def test_skill_requires_human_decisions_and_rejects_automation(self) -> None:
         """Confirma registro de tradução, exclusões e falas removidas sem decisão automática."""
 
-        gate_start = self.skill.index("### 7. Auditar a preview antes de pedir aprovação")
+        gate_start = self.skill.index("### 7. Auditar a versão antes de pedir aprovação")
         approval_start = self.skill.index("### 8. Registrar a aprovação e gerar a full")
         gate = self.skill[gate_start:approval_start]
 
@@ -107,7 +109,7 @@ class VibeEditorSkillTests(unittest.TestCase):
     def test_youtube_reference_repeats_the_approval_gate(self) -> None:
         """Mantém a referência de YouTube alinhada ao fluxo obrigatório da skill principal."""
 
-        audit_start = self.youtube_reference.index("### 1.6 Auditar a preview antes da aprovação")
+        audit_start = self.youtube_reference.index("### 1.6 Auditar a versão antes da aprovação")
         approval_start = self.youtube_reference.index("### 1.7 Aprovar e gerar a versão final")
         audit = self.youtube_reference[audit_start:approval_start]
 
@@ -415,6 +417,103 @@ class VibeEditorSkillTests(unittest.TestCase):
             "Não crie cópias convertidas",
         ):
             self.assertIn(marker, self.skill)
+
+
+    def test_skill_teaches_the_review_interface_journey_in_order(self) -> None:
+        """A7 (phase 7, A11): ui start, revisão, aprovação na interface e render full, nessa ordem, com a preview opcional."""
+
+        skill = " ".join(self.skill.split())
+        review = self.skill.index("### 6. Abrir a interface de revisão e colher o feedback")
+        gate = self.skill.index("### 7. Auditar a versão antes de pedir aprovação")
+        approval = self.skill.index("### 8. Registrar a aprovação e gerar a full")
+        quality = self.skill.index("#### Qualidade da full (`--quality`)")
+        self.assertLess(review, gate)
+        self.assertLess(gate, approval)
+        self.assertLess(approval, quality)
+        # `ui start` e `ui stop` ficam na revisão; `approve` e `render full` na aprovação, depois do gate.
+        self.assertGreater(self.skill.index("editor ui start", review), review)
+        self.assertLess(self.skill.index("editor ui start", review), gate)
+        self.assertLess(self.skill.index("editor ui stop", review), gate)
+        self.assertGreater(self.skill.index("editor approve", approval), approval)
+        self.assertGreater(
+            self.skill.index("editor render full", approval), self.skill.index("editor approve", approval)
+        )
+        for marker in (
+            "`data.state` (`started`, ou `running`",
+            "`data.url`",
+            "`--no-open`",
+            "`127.0.0.1`",
+            "token",
+            "Copiar para IA",
+            "`plan_sha256`",
+            "`Pedido:`",
+            "Aprovar esta versão",
+            "`APPROVAL_PLAN_CHANGED`",
+            "`APPROVAL_STALE`",
+            "`APPROVAL_REQUIRED`",
+            "`approval.json`",
+            "schema_version 2",
+            "`approve` não exige `preview.mp4`",
+            "Preview como exportação opcional",
+            "não afeta a aprovação",
+            "só leitura",
+            "o agente não escolhe a aprovação por ele",
+            "nunca aprova no lugar dele",
+        ):
+            self.assertIn(marker, skill)
+        # Resoluções, limite de sessões e inatividade lidos das constantes que o servidor usa.
+        for resolution in live.RESOLUTIONS:
+            self.assertIn(f"`{resolution.replace('full', 'Full')}`", skill)
+        self.assertEqual(ui_limits.SESSION_LIMIT, 2)
+        self.assertIn("no máximo duas sessões de navegador", skill)
+        self.assertEqual(ui_limits.IDLE_TIMEOUT_S, 2 * 60 * 60)
+        self.assertIn("após 2 h sem pedidos", skill)
+        self.assertEqual(ui_limits.HOST, "127.0.0.1")
+
+    def test_documents_drop_the_claims_the_preview_bound_approval_made_true(self) -> None:
+        """A aprovação v2 não vincula a preview: nenhum documento da skill pode dizer o contrário (quebra do 2.0.0)."""
+
+        for name, document in (
+            ("SKILL.md", self.skill),
+            ("youtube-editing.md", self.youtube_reference),
+            ("canal-sonni-viaja.md", self.channel_profile),
+            ("source-preparation.md", self.source_preparation),
+        ):
+            flat = " ".join(document.split())
+            for stale in (
+                "registra qual plano, preview e fontes foram aprovados",
+                "registra o plano, a preview e as fontes que foram revisados",
+                "A preview só fica elegível para aprovação",
+                "Uma preview publicada é necessária antes da aprovação",
+                "gere uma nova preview e peça aprovação novamente",
+                "Gerar a preview e colher revisão",
+                "um trabalho próprio (pasta, plano, preview, aprovação e full)",
+                "aprovação humana da preview",
+                "Alterar `captions` muda o hash e exige nova preview/aprovação",
+            ):
+                self.assertNotIn(stale, flat, f"{name}: {stale}")
+
+    def test_youtube_reference_teaches_the_interface_review_and_approval(self) -> None:
+        """A referência de qualidade espelha a jornada da skill: interface, popup de aprovação, `approve` sem preview e a tabela de comandos."""
+
+        reference = " ".join(self.youtube_reference.split())
+        for marker in (
+            "### 1.5 Revisar na interface e ajustar",
+            "editor ui start --workdir",
+            "ui stop --workdir",
+            "Copiar para IA",
+            "Aprovar esta versão",
+            "`APPROVAL_PLAN_CHANGED`",
+            "`APPROVAL_STALE`",
+            "`approve` não exige `preview.mp4`",
+            "nunca a preview",
+            "exportação opcional",
+            "| Abrir a interface de revisão no navegador | `editor ui start ... --json` |",
+            "| Encerrar a interface | `editor ui stop ... --json` |",
+        ):
+            self.assertIn(marker, reference)
+        for resolution in live.RESOLUTIONS:
+            self.assertIn(f"`{resolution.replace('full', 'Full')}`", reference)
 
 
 if __name__ == "__main__":

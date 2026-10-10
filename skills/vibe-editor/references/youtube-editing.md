@@ -1,6 +1,6 @@
 # Padrão de qualidade de edição para YouTube
 
-Esta referência define o padrão de qualidade que a skill aplica a **qualquer vídeo, de qualquer pessoa**: como conduzir o fluxo com a CLI `editor` (plano, preview, aprovação e full) e o que um corte, um letreiro, o áudio e a entrega precisam cumprir para o resultado sair limpo e confiável.
+Esta referência define o padrão de qualidade que a skill aplica a **qualquer vídeo, de qualquer pessoa**: como conduzir o fluxo com a CLI `editor` (plano, revisão na interface, aprovação e full) e o que um corte, um letreiro, o áudio e a entrega precisam cumprir para o resultado sair limpo e confiável.
 
 O padrão nasceu da prática do canal Sonni Viaja (de Marco Kormoczi), analisada no `S04E31` e refinada nos episódios seguintes. Ele separa duas coisas:
 
@@ -81,7 +81,7 @@ Localize a fala estrangeira, transcreva no idioma dela, execute `captions sugges
 
 O comando é somente leitura e não traduz. Padrões: 84 caracteres (20 a 200), 6 s (1 a 10), pausa de 0,6 s, pontuação e troca de segmento. Uma palavra indivisível pode exceder o limite; a janela seleciona pelo início e a cauda pode passar de `end_s`. Existe uma transcrição por fonte: preserve a análise anterior antes de publicar outra em idioma diferente.
 
-Depois de `plan validate`, confira `data.captions.occurrences` e `unplaced`: o áudio efetivo, incluindo cortes J/L e repetições, determina as ocorrências; faixas `loop` são ignoradas e fragmentos menores que 0,3 s são omitidos. Confira quadros da preview dentro e fora das ocorrências, tradução, sincronismo, base da caixa, contraste e safe area. O texto é queimado acima das camadas e escala com a preview; a quebra é aproximada. Mudanças exigem nova preview e aprovação. Não há tradução automática, SRT/VTT, estilo por item, animação ou caixa de fundo. Letreiros de contexto continuam em `layers`.
+Depois de `plan validate`, confira `data.captions.occurrences` e `unplaced`: o áudio efetivo, incluindo cortes J/L e repetições, determina as ocorrências; faixas `loop` são ignoradas e fragmentos menores que 0,3 s são omitidos. Confira quadros da preview dentro e fora das ocorrências, tradução, sincronismo, base da caixa, contraste e safe area. O texto é queimado acima das camadas e escala com a preview; a quebra é aproximada. Mudanças alteram o hash e exigem nova aprovação. Não há tradução automática, SRT/VTT, estilo por item, animação ou caixa de fundo. Letreiros de contexto continuam em `layers`.
 
 ### 1.4 Montar o plano
 
@@ -154,7 +154,7 @@ Duas limitações do editor que afetam o texto e que o agente deve avisar ao usu
 
 #### Proporção de saída, vertical e reenquadramento
 
-`profile.aspect_ratio` aceita `16:9`, `9:16`, `1:1` e `4:5`, uma por plano. Cada proporção é um trabalho próprio (pasta, plano, preview, aprovação e full), porque o contrato é de uma preview, uma aprovação e uma full. O destino decide:
+`profile.aspect_ratio` aceita `16:9`, `9:16`, `1:1` e `4:5`, uma por plano. Cada proporção é um trabalho próprio (pasta, plano, aprovação e full), porque o contrato é de uma aprovação e uma full por plano. O destino decide:
 
 | Destino | Proporção | Full | Preview |
 |---|---|---|---|
@@ -186,19 +186,25 @@ Validar o plano antes de gerar qualquer vídeo:
 
 Se a validação falhar, corrigir a fonte, o intervalo ou a decisão no `plan.json`. Não ignorar o erro e não tentar compensá-lo durante a renderização.
 
-### 1.5 Gerar, assistir e ajustar a preview
+### 1.5 Revisar na interface e ajustar
 
-Renderizar uma versão de revisão:
+Abrir a interface de revisão no navegador do usuário (detalhes e o que ela oferece em `SKILL.md`, seção 6):
+
+```text
+.venv\Scripts\python.exe -B -m editor ui start --workdir "<workdir>" --json
+```
+
+O player roda ao vivo o mesmo grafo da full, a partir de qualquer instante, em `Full`, `1/2`, `1/3` ou `1/4` (as frações leem o proxy válido de cada fonte), então não há preview a esperar. A interface é só leitura: ao editar o `plan.json`, ela recarrega sozinha e mantém o cursor. Assistir à montagem procurando seis coisas: a história está clara, os cortes tiram pausas e falsos inícios sem comer palavras, o texto pode ser lido, o letreiro não cobre rosto nem o objeto que a pessoa aponta, a imagem acompanha a fala e o áudio está uniforme de um corte ao outro. Se algo precisar mudar, o usuário seleciona o trecho e usa "Copiar para IA"; o agente edita o plano e valida novamente. A interface nunca constrói proxy; com fontes grandes, rodar `proxy build` antes. Ao terminar, `ui stop --workdir "<workdir>" --json`.
+
+`render preview` segue como exportação opcional, sem efeito na aprovação, para quando o usuário quiser um arquivo ou o agente precisar de quadros para a auditoria da seção 1.6. Nas demais seções desta referência, "conferir na preview" vale tanto para a montagem na interface quanto para a preview exportada:
 
 ```text
 .venv\Scripts\python.exe -B -m editor render preview --workdir "<workdir>" --json
 ```
 
-Assistir à `preview.mp4` procurando seis coisas: a história está clara, os cortes tiram pausas e falsos inícios sem comer palavras, o texto pode ser lido, o letreiro não cobre rosto nem o objeto que a pessoa aponta, a imagem acompanha a fala e o áudio está uniforme de um corte ao outro. Se algo precisar mudar, editar o plano, validar novamente e gerar outra preview.
+### 1.6 Auditar a versão antes da aprovação
 
-### 1.6 Auditar a preview antes da aprovação
-
-A revisão da preview tem duas camadas que precisam ser registradas separadamente. Validação estrutural confirma o contrato do plano e o arquivo produzido. Inspeção visual e editorial confirma o que o espectador realmente verá e ouvirá. Uma camada sem a outra bloqueia o pedido de aprovação.
+A revisão da versão tem duas camadas que precisam ser registradas separadamente. Validação estrutural confirma o contrato do plano e, quando há preview exportada, o arquivo produzido. Inspeção visual e editorial confirma o que o espectador realmente verá e ouvirá. Uma camada sem a outra bloqueia o pedido de aprovação.
 
 #### Evidência estrutural
 
@@ -219,7 +225,7 @@ Para cada fronteira de fala, compare os tempos de `words[]` em `analysis\transcr
 .venv\Scripts\python.exe -B -m editor extract frames --workdir "<workdir>" --source-id "preview" --input "<workdir>\preview.mp4" --timestamps "<corte-0.5>,<corte>,<corte+0.5>,<movimento-inicio>,<movimento-fim>,<fim-1>,<fim>" --json
 ```
 
-Com `reframe`, extrair também um frame da preview em cada keyframe (tempo da timeline = início do segmento na timeline + `t_s`) e conferir sujeito e zonas seguras. Assista à preview inteira e confirme continuidade de ação, olhar, enquadramento e áudio. Confira que movimentos não cortam o assunto nem iniciam ou terminam de forma abrupta, e que o último plano não congela, fica preto ou termina o áudio antes da imagem. Para cada lettering, confirme fonte real, caixa, safe area, quebra de linha, contraste, tamanho e legibilidade. `plan validate` não substitui essa inspeção.
+Com `reframe`, extrair também um frame da preview em cada keyframe (tempo da timeline = início do segmento na timeline + `t_s`) e conferir sujeito e zonas seguras. Assista à montagem inteira (na interface ou na preview) e confirme continuidade de ação, olhar, enquadramento e áudio. Confira que movimentos não cortam o assunto nem iniciam ou terminam de forma abrupta, e que o último plano não congela, fica preto ou termina o áudio antes da imagem. Para cada lettering, confirme fonte real, caixa, safe area, quebra de linha, contraste, tamanho e legibilidade. `plan validate` não substitui essa inspeção.
 
 #### Registro das decisões humanas
 
@@ -234,14 +240,14 @@ Itens que não se aplicam devem ser registrados como “não se aplica”. A ski
 
 ### 1.7 Aprovar e gerar a versão final
 
-A full só deve ser gerada depois de uma aprovação explícita do usuário:
+A full só deve ser gerada depois de uma aprovação explícita do usuário. O caminho padrão é o botão "Aprovar esta versão" da interface: o popup mostra o hash curto, a duração e a nota de proxy, e a aprovação vale para o plano e as fontes que ele estava vendo (se algo mudou desde o carregamento, é recusada com `APPROVAL_PLAN_CHANGED`, sem gravar). A alternativa é a CLI, só depois de um "aprovado" claro do usuário no chat; `approve` não exige `preview.mp4`:
 
 ```text
 .venv\Scripts\python.exe -B -m editor approve --workdir "<workdir>" --json
 .venv\Scripts\python.exe -B -m editor render full --workdir "<workdir>" --json
 ```
 
-A aprovação registra o plano, a preview e as fontes que foram revisados. Se qualquer um deles mudar depois da aprovação, repetir a preview e pedir aprovação novamente.
+A aprovação (`approval.json` v2) registra o plano e as fontes que foram revisados, nunca a preview. Se qualquer um deles mudar depois da aprovação, `render full` responde `APPROVAL_STALE`: o usuário revisa a versão atual e aprova de novo.
 
 A qualidade do vídeo da full é escolhida na hora de gerá-la, com `--quality standard|high|max` (padrão `standard`; detalhes e custos na seção 4 e em `SKILL.md`). Ela não faz parte do que se aprova: a mesma aprovação vale para uma full re-renderizada com outra qualidade, e a preview usa sempre `standard`.
 
@@ -249,7 +255,7 @@ A qualidade do vídeo da full é escolhida na hora de gerá-la, com `--quality s
 
 ### 2.1 O padrão em uma página
 
-1. **Processo com prova.** Briefing confirmado, análise cruzada, plano validado, preview auditada e aprovação explícita antes da full. Nada de aprovação implícita.
+1. **Processo com prova.** Briefing confirmado, análise cruzada, plano validado, montagem auditada e aprovação explícita antes da full. Nada de aprovação implícita.
 2. **Cortes que não comem palavras.** O corte tira pausa, falso início e hesitação e preserva a ideia inteira. Fala só sai de propósito, e isso é registrado.
 3. **Ordem que o espectador entende.** A ordem vem do briefing. Quando o vídeo acompanha acontecimentos, segue a ordem em que aconteceram; qualquer inversão (gancho, conclusão antecipada) é decisão justificada e registrada.
 4. **Texto na tela com fonte.** O texto entrega informação que o espectador não teria como saber, no idioma do público. Todo fato, nome e valor tem fonte registrada; o que não tem fonte não vai para a tela.
@@ -419,10 +425,12 @@ A preview (até 720 px, na mesma proporção da full) é a referência de enquad
 | Conferir a imagem em momentos específicos | `editor extract frames ... --json` |
 | Conferir se o plano é válido | `editor plan validate ... --json` |
 | Preparar proxies leves para a preview | `editor proxy build ... --json` |
-| Gerar uma versão para revisão | `editor render preview ... --json` |
-| Registrar a aprovação humana | `editor approve ... --json` |
+| Abrir a interface de revisão no navegador | `editor ui start ... --json` |
+| Encerrar a interface | `editor ui stop ... --json` |
+| Exportar uma preview (opcional, sem efeito na aprovação) | `editor render preview ... --json` |
+| Registrar a aprovação humana (ou o botão da interface) | `editor approve ... --json` |
 | Gerar a versão final (`--quality standard\|high\|max`) | `editor render full ... --json` |
 
 Os comandos completos devem ser executados com o Python do ambiente virtual, como nos exemplos desta referência. Os três pontos na tabela representam os argumentos obrigatórios, especialmente `--workdir`, `--source-id` e `--input` nas análises.
 
-O agente não precisa pedir ao usuário que escreva comandos ou JSON. Ele deve traduzir o pedido para o plano, executar as análises, mostrar a preview e perguntar em linguagem comum se a edição está aprovada.
+O agente não precisa pedir ao usuário que escreva comandos ou JSON. Ele deve traduzir o pedido para o plano, executar as análises, abrir a interface de revisão e perguntar em linguagem comum se a edição está aprovada.

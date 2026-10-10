@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "editor"
-version = "1.3.0"
+version = "2.0.0"
 description = "CLI local para análise e edição linear de vídeo"
 requires-python = ">=3.11"
 dependencies = []

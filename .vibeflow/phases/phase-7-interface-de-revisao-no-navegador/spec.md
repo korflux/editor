@@ -229,15 +229,15 @@ O operador revisa a montagem que a IA cria e altera por CLI numa interface no na
 - [x] A8: "Copiar para IA" coloca na área de transferência o bloco de F7 com hash, timecodes, segundos, segmentos, camadas e legendas corretos para a seleção, sem caminho absoluto nem token.
 - [x] A9: o botão aprova a versão exibida e grava `approval.json` v2 (sem `preview_sha256`); com o plano ou uma fonte alterados depois do carregamento, recusa com `APPROVAL_PLAN_CHANGED` sem gravar; o selo mostra aprovado e, após nova alteração, desatualizado.
 - [x] A10: `editor approve` funciona sem `preview.mp4`; `render full` aceita a aprovação v2 sem preview e recusa v1, mutação de plano e mutação de fonte com `APPROVAL_STALE`, preservando a full vigente; `render preview` continua funcionando e não afeta a aprovação.
-- [ ] A11: `capabilities` expõe `operations.ui` (comandos, resoluções, limites de sessão e de inatividade) e o contrato de aprovação v2, lidos das constantes; skill `vibe-editor`, suas referências e `AGENTS.md` descrevem o fluxo ui start → revisão → aprovação → full sem contradizer o código.
+- [x] A11: `capabilities` expõe `operations.ui` (comandos, resoluções, limites de sessão e de inatividade) e o contrato de aprovação v2, lidos das constantes; skill `vibe-editor`, suas referências e `AGENTS.md` descrevem o fluxo ui start → revisão → aprovação → full sem contradizer o código.
 
 ### Critérios de sucesso
 
-- [ ] C1: suíte completa verde, com as provas de A3 (quadros e áudio do player iguais aos da full) e A10 (aprovação v2).
-- [ ] C2: gitleaks e pip-audit sem achados; nenhuma dependência nova no `requirements.lock`.
+- [x] C1: suíte completa verde, com as provas de A3 (quadros e áudio do player iguais aos da full) e A10 (aprovação v2).
+- [x] C2: gitleaks e pip-audit sem achados; nenhuma dependência nova no `requirements.lock`.
 - [x] C3: na máquina de referência (i5-13600K), com a fonte sintética 4K do `bench_render.py` e proxy, em 1/2: o primeiro quadro aparece em até 3 s depois do play, sem crescer com a posição na timeline (início, meio e fim de uma timeline de 60 s), e 30 s tocam sem pausa de buffer.
-- [ ] C4: versão 2.0.0, com a quebra (aprovação v2 e `preview_sha256` removido dos envelopes) descrita em `AGENTS.md`.
-- [ ] C5: jornada real no navegador do início ao fim: `ui start`, play, seleção, cópia, alteração do plano por fora, recarga, aprovação e `render full` aceitando a aprovação.
+- [x] C4: versão 2.0.0, com a quebra (aprovação v2 e `preview_sha256` removido dos envelopes) descrita em `AGENTS.md`.
+- [x] C5: jornada real no navegador do início ao fim: `ui start`, play, seleção, cópia, alteração do plano por fora, recarga, aprovação e `render full` aceitando a aprovação.
 
 ## Contratos e restrições necessárias
 

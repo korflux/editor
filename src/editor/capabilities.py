@@ -11,6 +11,14 @@ from .analysis.audio import MAX_AUDIO_WINDOW_SECONDS, MAX_AUDIO_WINDOWS
 from .analysis import captions as caption_suggestions
 from .plan import schema as caption_schema
 from .contracts import CLI_VERSION
+# `_APPROVAL_FIELDS` e `_SOURCE_APPROVAL_FIELDS` são a allowlist estrutural que `verify_approval` aplica ao
+# registro; o inventário a lê daqui para nunca divergir do que a full de fato aceita.
+from .integrity.approval import (
+    _APPROVAL_FIELDS,
+    _SOURCE_APPROVAL_FIELDS,
+    APPROVAL_SCHEMA_VERSION,
+    MAX_APPROVAL_BYTES,
+)
 from .media import (
     HEVC_PIXEL_FORMATS,
     HEVC_PROFILES,
@@ -77,6 +85,21 @@ from .plan.validation import (
     MAX_SEGMENTS,
     MAX_TIMELINE_DURATION_SECONDS,
 )
+from .render.live import (
+    LIVE_AUDIO_BITRATE,
+    LIVE_KEYFRAME_INTERVAL_S,
+    LIVE_MOVFLAGS,
+    LIVE_VIDEO_CRF,
+    LIVE_VIDEO_ENCODER,
+    LIVE_VIDEO_PRESET,
+    LIVE_VIDEO_TUNE,
+    RESOLUTION_DIVISORS,
+    RESOLUTIONS,
+    SCRUB_JPEG_QUALITY,
+    SCRUB_TIMEOUT_S,
+    SOURCE_MAX_SIDE,
+    SOURCE_VIEW_KINDS,
+)
 from .render.preview import (
     CPU_ENCODER_PRESET,
     CPU_VIDEO_ENCODER,
@@ -104,6 +127,25 @@ from .render.windows import (
     MAX_WINDOWS_PER_SOURCE,
     MERGE_GAP_S,
     MIN_READ_REDUCTION,
+)
+from .ui.limits import (
+    BODY_MAX_BYTES,
+    COOKIE_PREFIX,
+    CONTENT_SECURITY_POLICY,
+    HOST,
+    IDLE_TIMEOUT_S,
+    MAX_PROCESSES_PER_SESSION,
+    PROCESS_KINDS,
+    QUERY_MAX_BYTES,
+    REFERRER_POLICY,
+    REGISTRY_NAME,
+    SESSION_ACTIVE_S,
+    SESSION_LIMIT,
+    START_TIMEOUT_S,
+    STOP_TIMEOUT_S,
+    STREAM_FIRST_BYTE_TIMEOUT_S,
+    STREAM_STALL_TIMEOUT_S,
+    TOKEN_BYTES,
 )
 from .workdir import PROXY_DIRECTORY
 
@@ -247,6 +289,166 @@ def _canvas_capabilities() -> dict[str, Any]:
     return canvas
 
 
+def _approval_capabilities(status: str) -> dict[str, Any]:
+    """Descreve a aprovação v2 (phase 7): plano e fontes, sem preview, pela CLI ou pelo botão da interface.
+
+    Lê a versão e a allowlist estrutural de `integrity/approval.py` (as mesmas de `verify_approval`).
+    O registro v1 (que vinculava `preview_sha256`) é obsoleto: a versão atual o recusa com
+    `APPROVAL_STALE`, e as versões obsoletas saem de `APPROVAL_SCHEMA_VERSION`, não de um literal.
+    """
+
+    return {
+        **_operation(
+            status,
+            ["ffprobe"],
+            "aprovação local vinculada aos hashes do plano e das fontes, sem preview",
+        ),
+        "schema_version": APPROVAL_SCHEMA_VERSION,
+        "obsolete_versions": list(range(1, APPROVAL_SCHEMA_VERSION)),
+        "record_fields": sorted(_APPROVAL_FIELDS),
+        "source_fields": sorted(_SOURCE_APPROVAL_FIELDS),
+        "max_record_bytes": MAX_APPROVAL_BYTES,
+        "binds": ["plan_sha256", "sources"],
+        "requires_preview": False,
+        "preview_sha256": "removed",
+        "envelope_fields": [
+            "artifact_path",
+            "relative_artifact_path",
+            "approved_at",
+            "plan_sha256",
+            "sources",
+        ],
+        "channels": ["cli", "ui"],
+        "release_gate": {
+            "operation": "render_full",
+            "verifies": ["plan_sha256", "sources"],
+            "ignores": ["preview.mp4", "quality"],
+            "stale": "APPROVAL_STALE",
+            "required": "APPROVAL_REQUIRED",
+        },
+        "ui": {
+            "binds_loaded_version": ["plan_sha256", "sources_fingerprint"],
+            "changed": "APPROVAL_PLAN_CHANGED",
+            "writes_on_refusal": False,
+        },
+    }
+
+
+def _ui_capabilities(status: str, requires: list[str]) -> dict[str, Any]:
+    """Descreve a interface de revisão no navegador (phase 7, A11): comandos, resoluções, stream e tetos.
+
+    Número, lista e texto de contrato são lidos das constantes que o servidor e o núcleo de render usam
+    (`ui/limits.py` e `render/live.py`), então o inventário não diverge do que roda. Os `states` dos
+    comandos e os códigos de erro são os textos públicos de `ui/instance.py` e do servidor;
+    `tests/test_capabilities.py` confere que cada um existe no código.
+    """
+
+    return {
+        **_operation(
+            status,
+            requires,
+            "interface local de revisão: player ao vivo da montagem, timeline, modo Fonte, cópia de trecho para a IA e aprovação",
+        ),
+        "commands": {
+            "start": {
+                "command": "ui start",
+                "required": [],
+                "optional": ["workdir", "no_open"],
+                "states": ["started", "running"],
+                "envelope_fields": ["state", "url", "pid", "port"],
+                "opens_browser": "unless_no_open",
+                "reuses_running_instance": True,
+                "url_carries_token": True,
+                "errors": ["WORKDIR_INVALID", "UI_START_FAILED", "ARGUMENT_INVALID"],
+            },
+            "stop": {
+                "command": "ui stop",
+                "required": [],
+                "optional": ["workdir"],
+                "states": ["stopped", "not_running"],
+                "envelope_fields": ["state"],
+                "terminates_ffmpeg_children": True,
+                "errors": ["WORKDIR_INVALID", "UI_STOP_FAILED", "ARGUMENT_INVALID"],
+            },
+        },
+        "host": HOST,
+        "port": "free",
+        "instance": {
+            "per_workdir": 1,
+            "registry": f".tmp/{REGISTRY_NAME}",
+            "start_timeout_s": START_TIMEOUT_S,
+            "stop_timeout_s": STOP_TIMEOUT_S,
+        },
+        # Só leitura (SEC-01): a única escrita é a aprovação, que grava `approval.json` v2 (ver `approve`).
+        "read_only": True,
+        "writes": ["approval.json"],
+        "resolutions": {
+            "allowed": list(RESOLUTIONS),
+            "divisors": dict(RESOLUTION_DIVISORS),
+            "rounding": "down_to_even",
+            "reference": "full_canvas",
+            "reads": {"full": "originals", "fractions": "valid_proxy_else_original"},
+            "builds_proxy": False,
+            "text_scaling": "proportional_to_width",
+        },
+        "stream": {
+            "graph": "same_as_full",
+            "start": "any_time",
+            "container": "mp4_fragmented",
+            "movflags": LIVE_MOVFLAGS,
+            "video": {
+                "encoder": LIVE_VIDEO_ENCODER,
+                "preset": LIVE_VIDEO_PRESET,
+                "tune": LIVE_VIDEO_TUNE,
+                "crf": LIVE_VIDEO_CRF,
+                "keyframe_interval_s": LIVE_KEYFRAME_INTERVAL_S,
+            },
+            "audio": {"codec": "aac", "bitrate": LIVE_AUDIO_BITRATE},
+            "first_byte_timeout_s": STREAM_FIRST_BYTE_TIMEOUT_S,
+            "stall_timeout_s": STREAM_STALL_TIMEOUT_S,
+        },
+        "scrub": {"format": "jpeg", "quality": SCRUB_JPEG_QUALITY, "timeout_s": SCRUB_TIMEOUT_S},
+        "source_mode": {
+            "kinds": list(SOURCE_VIEW_KINDS),
+            "max_side_full_px": SOURCE_MAX_SIDE,
+            "canvas": "source",
+        },
+        "limits": {
+            "sessions": SESSION_LIMIT,
+            "session_active_s": SESSION_ACTIVE_S,
+            "ffmpeg_per_session": MAX_PROCESSES_PER_SESSION,
+            "ffmpeg_kinds": list(PROCESS_KINDS),
+            "idle_timeout_s": IDLE_TIMEOUT_S,
+            "query_max_bytes": QUERY_MAX_BYTES,
+            "body_max_bytes": BODY_MAX_BYTES,
+        },
+        "security": {
+            "token_bytes": TOKEN_BYTES,
+            "cookie_prefix": COOKIE_PREFIX,
+            "cookie_attributes": ["HttpOnly", "SameSite=Strict", "Path=/"],
+            "content_security_policy": CONTENT_SECURITY_POLICY,
+            "referrer_policy": REFERRER_POLICY,
+            "origin_required_on_post": True,
+            "errors": [
+                "UI_TOKEN_INVALID",
+                "UI_HOST_INVALID",
+                "UI_ORIGIN_INVALID",
+                "UI_SESSION_LIMIT",
+                "PLAYBACK_FAILED",
+                "FRAME_FAILED",
+            ],
+        },
+        "approval": {"button": True, "operation": "approve", "popup": True},
+        "limitations": [
+            "o stream não aceita Range: quadro a quadro, salto e scrub mostram o quadro composto e o play seguinte reinicia no cursor",
+            "ponytail: com limiter ou loudnorm ligados o áudio ao vivo parte frio em T e não é o da full, pré-aquecer o filtro se o operador revisar planos com normalização",
+            "ponytail: taxas de quadros misturadas entre segmentos podem deslocar o quadro em T em 1 ou 2 quadros da full, medir a fase com FFprobe se isso incomodar",
+            "ponytail: ui start simultâneo no mesmo trabalho pode subir dois servidores, usar trava de criação exclusiva se isso ocorrer de verdade",
+            "ponytail: a impressão das fontes usa tamanho e mtime_ns e não detecta troca que preserve os dois, usar hash parcial do conteúdo se esse caso aparecer",
+        ],
+    }
+
+
 def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
     """Coleta capacidades locais sem editar arquivos, baixar componentes ou acessar a rede."""
 
@@ -343,21 +545,24 @@ def collect_capabilities(model_dir: Path | None = None) -> dict[str, Any]:
             ["ffprobe"],
             "validação local de plan.json e das fontes declaradas",
         ),
-        "render_preview": _operation(
-            render_status,
-            render_requires,
-            "renderização linear da preview com publicação atômica",
-        ),
-        "approve": _operation(
-            ffprobe_status,
-            ["ffprobe"],
-            "aprovação local vinculada aos hashes do plano, preview e fontes",
-        ),
+        # Exportação opcional: a revisão acontece na interface e a preview não afeta a aprovação.
+        "render_preview": {
+            **_operation(
+                render_status,
+                render_requires,
+                "exportação opcional da preview linear com publicação atômica, sem efeito na aprovação",
+            ),
+            "optional": True,
+            "affects_approval": False,
+        },
+        # Aprovação v2 (phase 7): vincula plano e fontes, sem preview, pela CLI ou pelo botão da interface.
+        "approve": _approval_capabilities(ffprobe_status),
         "render_full": _operation(
             render_status,
             render_requires,
-            "renderização final condicionada à aprovação vigente",
+            "renderização final condicionada à aprovação v2 vigente (plano e fontes), sem olhar a preview",
         ),
+        "ui": _ui_capabilities(render_status, render_requires),
         "proxy_build": _operation(
             proxy_build_status,
             ["ffmpeg", "ffprobe", PROXY_VIDEO_ENCODER],

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import shutil
 import subprocess
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 from typing import Iterator
@@ -18,7 +19,10 @@ from editor import dependencies as editor_dependencies
 from editor import media
 from editor.analysis.frames import FRAME_PIXEL_FORMAT
 from editor.capabilities import choose_recommendation, collect_capabilities
+from editor.contracts import CLI_VERSION
+from editor.integrity import approval as approval_module
 from editor.plan import schema as plan_schema
+from editor.render import live
 from editor.render.preview import (
     CPU_ENCODER_PRESET,
     CPU_VIDEO_ENCODER,
@@ -28,11 +32,13 @@ from editor.render.preview import (
     QUALITY_CHOICES,
     QUALITY_PRESETS,
 )
+from editor.ui import limits as ui_limits
 from editor.whisper_backend import resolve_config
 from tests.support import remove_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = PROJECT_ROOT / "src" / "editor"
 DOCUMENTATION_PATHS = (
     PROJECT_ROOT / "skills" / "vibe-editor" / "SKILL.md",
     PROJECT_ROOT / "skills" / "vibe-editor" / "references" / "installation.md",
@@ -83,7 +89,7 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(payload["ok"], True)
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["command"], "capabilities")
-        self.assertEqual(data["cli_version"], "1.3.0")
+        self.assertEqual(data["cli_version"], "2.0.0")
         for key in (
             "system",
             "dependencies",
@@ -587,6 +593,215 @@ class CapabilitiesTests(unittest.TestCase):
             "sem sombra nem contorno",
             "não tem sombra, contorno nem fundo",
             "Fora do contrato: sombra e contorno de texto",
+        ):
+            self.assertNotIn(stale, combined)
+
+    def test_version_is_2_0_0_in_the_package_metadata_and_in_the_cli(self) -> None:
+        """C4 (phase 7): a quebra da aprovação v2 fecha a versão 2.0.0, igual no pacote, na CLI e no inventário."""
+
+        metadata = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["project"]["version"], "2.0.0")
+        self.assertEqual(CLI_VERSION, "2.0.0")
+        self.assertEqual(metadata["project"]["version"], CLI_VERSION)
+        with workspace_tempdir() as root:
+            data = collect_capabilities(root)
+        self.assertEqual(data["cli_version"], CLI_VERSION)
+
+    def test_ui_operation_exposes_the_contract_from_the_constants(self) -> None:
+        """A11 (phase 7): `operations.ui` é lido das constantes que o servidor e o núcleo ao vivo usam."""
+
+        with workspace_tempdir() as root:
+            data = collect_capabilities(root)
+        interface = data["operations"]["ui"]
+
+        self.assertEqual(interface["status"], data["operations"]["render_preview"]["status"])
+        self.assertEqual(interface["requires"], data["operations"]["render_full"]["requires"])
+        # Comandos e estados públicos (`ui start` e `ui stop`), sem a URL com o token no inventário.
+        start, stop = interface["commands"]["start"], interface["commands"]["stop"]
+        self.assertEqual((start["command"], stop["command"]), ("ui start", "ui stop"))
+        self.assertEqual((start["required"], start["optional"]), ([], ["workdir", "no_open"]))
+        self.assertEqual((stop["required"], stop["optional"]), ([], ["workdir"]))
+        self.assertEqual(start["states"], ["started", "running"])
+        self.assertEqual(stop["states"], ["stopped", "not_running"])
+        self.assertEqual(start["envelope_fields"], ["state", "url", "pid", "port"])
+        self.assertEqual(stop["envelope_fields"], ["state"])
+        self.assertTrue(start["reuses_running_instance"])
+        self.assertTrue(stop["terminates_ffmpeg_children"])
+        # Endereço, sessão, processos e prazos vêm de `ui/limits.py`.
+        self.assertEqual(interface["host"], ui_limits.HOST)
+        self.assertEqual(interface["instance"]["registry"], f".tmp/{ui_limits.REGISTRY_NAME}")
+        self.assertEqual(interface["instance"]["start_timeout_s"], ui_limits.START_TIMEOUT_S)
+        self.assertEqual(interface["instance"]["stop_timeout_s"], ui_limits.STOP_TIMEOUT_S)
+        limits = interface["limits"]
+        self.assertEqual(limits["sessions"], ui_limits.SESSION_LIMIT)
+        self.assertEqual(limits["session_active_s"], ui_limits.SESSION_ACTIVE_S)
+        self.assertEqual(limits["ffmpeg_per_session"], ui_limits.MAX_PROCESSES_PER_SESSION)
+        self.assertEqual(limits["ffmpeg_kinds"], list(ui_limits.PROCESS_KINDS))
+        self.assertEqual(limits["idle_timeout_s"], ui_limits.IDLE_TIMEOUT_S)
+        self.assertEqual(limits["query_max_bytes"], ui_limits.QUERY_MAX_BYTES)
+        self.assertEqual(limits["body_max_bytes"], ui_limits.BODY_MAX_BYTES)
+        security = interface["security"]
+        self.assertEqual(security["token_bytes"], ui_limits.TOKEN_BYTES)
+        self.assertEqual(security["cookie_prefix"], ui_limits.COOKIE_PREFIX)
+        self.assertEqual(security["content_security_policy"], ui_limits.CONTENT_SECURITY_POLICY)
+        self.assertEqual(security["referrer_policy"], ui_limits.REFERRER_POLICY)
+        self.assertTrue(security["origin_required_on_post"])
+        # Resoluções e stream vêm de `render/live.py`.
+        resolutions = interface["resolutions"]
+        self.assertEqual(resolutions["allowed"], list(live.RESOLUTIONS))
+        self.assertEqual(resolutions["divisors"], dict(live.RESOLUTION_DIVISORS))
+        self.assertEqual(resolutions["reads"], {"full": "originals", "fractions": "valid_proxy_else_original"})
+        self.assertIs(resolutions["builds_proxy"], False)
+        stream = interface["stream"]
+        self.assertEqual(stream["movflags"], live.LIVE_MOVFLAGS)
+        self.assertEqual(
+            stream["video"],
+            {
+                "encoder": live.LIVE_VIDEO_ENCODER,
+                "preset": live.LIVE_VIDEO_PRESET,
+                "tune": live.LIVE_VIDEO_TUNE,
+                "crf": live.LIVE_VIDEO_CRF,
+                "keyframe_interval_s": live.LIVE_KEYFRAME_INTERVAL_S,
+            },
+        )
+        self.assertEqual(stream["audio"], {"codec": "aac", "bitrate": live.LIVE_AUDIO_BITRATE})
+        self.assertEqual(stream["first_byte_timeout_s"], ui_limits.STREAM_FIRST_BYTE_TIMEOUT_S)
+        self.assertEqual(stream["stall_timeout_s"], ui_limits.STREAM_STALL_TIMEOUT_S)
+        self.assertEqual(
+            interface["scrub"],
+            {"format": "jpeg", "quality": live.SCRUB_JPEG_QUALITY, "timeout_s": live.SCRUB_TIMEOUT_S},
+        )
+        self.assertEqual(
+            interface["source_mode"],
+            {"kinds": list(live.SOURCE_VIEW_KINDS), "max_side_full_px": live.SOURCE_MAX_SIDE, "canvas": "source"},
+        )
+        # Só leitura: a única escrita é o `approval.json` da aprovação.
+        self.assertIs(interface["read_only"], True)
+        self.assertEqual(interface["writes"], ["approval.json"])
+        # Valores da spec escritos à parte, para uma troca de constante não passar calada.
+        self.assertEqual(interface["host"], "127.0.0.1")
+        self.assertEqual(resolutions["allowed"], ["full", "1/2", "1/3", "1/4"])
+        self.assertEqual((limits["sessions"], limits["ffmpeg_per_session"], limits["idle_timeout_s"]), (2, 3, 7200))
+        self.assertEqual(limits["ffmpeg_kinds"], ["stream", "source", "frame"])
+        self.assertEqual(limits["session_active_s"], 120.0)
+        self.assertEqual(security["token_bytes"], 32)
+        self.assertEqual(security["cookie_attributes"], ["HttpOnly", "SameSite=Strict", "Path=/"])
+        self.assertIn("frame-ancestors 'none'", security["content_security_policy"])
+        # As limitações com `ponytail:` conhecidas da interface seguem no inventário.
+        self.assertTrue(any("Range" in item for item in interface["limitations"]))
+        self.assertTrue(any(item.startswith("ponytail:") for item in interface["limitations"]))
+
+    def test_approve_operation_exposes_the_v2_contract_without_the_preview(self) -> None:
+        """A11 e A10 (phase 7): `operations.approve` descreve o registro v2 lido das constantes de `integrity/approval.py`."""
+
+        with workspace_tempdir() as root:
+            data = collect_capabilities(root)
+        approve = data["operations"]["approve"]
+
+        self.assertEqual(approve["status"], data["operations"]["plan_validate"]["status"])
+        self.assertEqual(approve["schema_version"], approval_module.APPROVAL_SCHEMA_VERSION)
+        self.assertEqual(approve["obsolete_versions"], [1])
+        self.assertEqual(approve["record_fields"], sorted(approval_module._APPROVAL_FIELDS))
+        self.assertEqual(approve["source_fields"], sorted(approval_module._SOURCE_APPROVAL_FIELDS))
+        self.assertEqual(approve["max_record_bytes"], approval_module.MAX_APPROVAL_BYTES)
+        # Sem preview: nem exigida, nem vinculada, nem no registro, nem no que a full verifica.
+        self.assertIs(approve["requires_preview"], False)
+        self.assertEqual(approve["preview_sha256"], "removed")
+        self.assertNotIn("preview_sha256", approve["record_fields"])
+        self.assertEqual(approve["binds"], ["plan_sha256", "sources"])
+        self.assertEqual(approve["release_gate"]["verifies"], ["plan_sha256", "sources"])
+        self.assertIn("preview.mp4", approve["release_gate"]["ignores"])
+        self.assertEqual(approve["channels"], ["cli", "ui"])
+        self.assertEqual(approve["ui"]["binds_loaded_version"], ["plan_sha256", "sources_fingerprint"])
+        self.assertIs(approve["ui"]["writes_on_refusal"], False)
+        self.assertNotIn("preview", " ".join(approve["envelope_fields"]))
+        # Valores do contrato escritos à parte.
+        self.assertEqual(approve["schema_version"], 2)
+        self.assertEqual(approve["record_fields"], ["approved_at", "plan_sha256", "schema_version", "sources"])
+        self.assertEqual(approve["source_fields"], ["sha256", "source_id"])
+        # A preview é só exportação opcional, sem efeito na aprovação, e a full lê só plano e fontes.
+        preview = data["operations"]["render_preview"]
+        self.assertIs(preview["optional"], True)
+        self.assertIs(preview["affects_approval"], False)
+        self.assertIn("sem olhar a preview", data["operations"]["render_full"]["reason"])
+
+    def test_ui_states_and_public_codes_exist_in_the_code(self) -> None:
+        """Os estados e os códigos de erro que o inventário cita são textos reais do código (nada inventado à mão)."""
+
+        with workspace_tempdir() as root:
+            data = collect_capabilities(root)
+        interface = data["operations"]["ui"]
+        approve = data["operations"]["approve"]
+        sources = "\n".join(
+            module.read_text(encoding="utf-8") for module in sorted(SOURCE_ROOT.rglob("*.py"))
+        )
+        instance = (SOURCE_ROOT / "ui" / "instance.py").read_text(encoding="utf-8")
+
+        for command in interface["commands"].values():
+            for state in command["states"]:
+                self.assertIn(f'"{state}"', instance, state)
+            for code in command["errors"]:
+                self.assertIn(f'"{code}"', sources, code)
+        for code in (
+            *interface["security"]["errors"],
+            approve["release_gate"]["stale"],
+            approve["release_gate"]["required"],
+            approve["ui"]["changed"],
+        ):
+            self.assertIn(f'"{code}"', sources, code)
+
+    def test_documentation_covers_the_review_interface_and_the_v2_approval(self) -> None:
+        """A11 e C4 (phase 7): a documentação descreve `ui`, a aprovação v2 e a quebra da 2.0.0, sem o contrato anterior."""
+
+        contents = {path: " ".join(path.read_text(encoding="utf-8").split()) for path in DOCUMENTATION_PATHS}
+        combined = "\n".join(contents.values())
+        agents = contents[DOCUMENTATION_PATHS[-1]]
+        skill = contents[DOCUMENTATION_PATHS[0]]
+
+        for marker in (
+            "Interface de revisão, Phase 7",
+            "ui start",
+            "ui stop",
+            "operations.ui",
+            "operations.approve",
+            "tests/test_ui_server.py",
+            "tests/test_live_stream.py",
+            "tests/e2e/test_phase_7_flow.py",
+            "render/live.py",
+            "Quebra de contrato (2.0.0, major)",
+            "`schema_version` 2",
+            "`preview_sha256`",
+            "`APPROVAL_STALE`",
+            "`APPROVAL_PLAN_CHANGED`",
+            "Aprovar esta versão",
+            "exportação opcional",
+        ):
+            self.assertIn(marker, agents, marker)
+        # Resoluções, tetos e inatividade citados no AGENTS.md saem das mesmas constantes do servidor.
+        for resolution in live.RESOLUTIONS:
+            self.assertIn(f"`{resolution}`", agents)
+        self.assertIn(f"{ui_limits.SESSION_LIMIT} sessões", agents)
+        self.assertIn(f"{ui_limits.MAX_PROCESSES_PER_SESSION} FFmpeg por sessão", agents)
+        self.assertIn(f"{ui_limits.IDLE_TIMEOUT_S // 3600} h sem pedidos", agents)
+        self.assertIn(f"{int(ui_limits.SESSION_ACTIVE_S)} s", agents)
+        self.assertIn(ui_limits.CONTENT_SECURITY_POLICY, agents)
+        for marker in ("ui start", "ui stop", "Aprovar esta versão", "`APPROVAL_STALE`", "`approve` não exige `preview.mp4`"):
+            self.assertIn(marker, skill, marker)
+        # Todo módulo e todo estático da interface aparecem no mapa de estrutura.
+        for module in sorted((SOURCE_ROOT / "ui").glob("*.py")):
+            if module.name != "__init__.py":
+                self.assertIn(f"`{module.name}`", agents, module.name)
+        for asset in sorted((SOURCE_ROOT / "ui" / "static").iterdir()):
+            self.assertIn(f"`{asset.name}`", agents, asset.name)
+        # Afirmações anteriores à phase 7 que o contrato 2.0.0 tornou falsas.
+        for stale in (
+            "aprovação explícita do plano e da preview vigente",
+            "exige `preview.mp4` regular já publicada",
+            "hash da preview e lista ordenada de hashes das fontes",
+            "exige `plan.json`, `preview.mp4`, `approval.json`",
+            "o plano, a preview e as fontes coincidirem por SHA-256",
+            "A aprovação continua vinculando plano canônico, preview e originais",
+            "Versão 1.3.0",
         ):
             self.assertNotIn(stale, combined)
 

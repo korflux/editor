@@ -99,5 +99,11 @@ novamente esta referência para orientar a instalação.
 - Movimento usa `from` e `to`, interpolação linear e `zoom` entre `0.5` e `4.0`.
   Cortes J/L usam duração explícita de até 30 segundos, sujeita à validação dos
   segmentos adjacentes.
+- A interface de revisão (`editor ui start`) não pede dependência além das já listadas:
+  o servidor usa a biblioteca padrão do Python e o FFmpeg local, escuta só em
+  `127.0.0.1` e a interface é HTML, CSS e JavaScript empacotados, sem CDN nem build.
+  `capabilities` informa `operations.ui` com os comandos, as resoluções e os limites.
+- A aprovação é v2 (`approval.json` com plano e fontes, sem preview): o botão da
+  interface e `editor approve` gravam o mesmo registro, e `render full` o confere.
 - O trabalho é local, linear e processado um por vez. A skill não instala
   componentes globais sem autorização explícita do usuário.

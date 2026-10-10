@@ -166,7 +166,7 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
 
 ### T7: Publicar o contrato da interface e fechar a versão 2.0.0
 
-- [ ] T7 concluída
+- [x] T7 concluída
 - **Spec:** A11, C1, C2, C4, C5
 - **O quê:**
   - **Capacidades:** `capabilities` expõe `operations.ui` (comandos, resoluções, tetos de sessão e de FFmpeg, inatividade) e o contrato de aprovação v2, lidos das constantes da T1, T2 e T3.
@@ -174,15 +174,17 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
   - **Versão:** 2.0.0 em `pyproject.toml`, `contracts.py` e testes de versão.
   - **Jornada E2E:** `ui start`, stream, seleção, alteração do plano por fora, recarga, aprovação pela API e `render full` aceitando a aprovação.
 - **Aceite:**
-  - [ ] `capabilities --json` confere com as constantes, e a skill e o `AGENTS.md` não contradizem o código.
-  - [ ] Jornada E2E verde, suíte completa verde, gitleaks e pip-audit sem achados, `requirements.lock` sem dependência nova.
-  - [ ] Jornada real no navegador do `ui start` à aprovação, com a full aceita (C5).
+  - [x] `capabilities --json` confere com as constantes, e a skill e o `AGENTS.md` não contradizem o código.
+  - [x] Jornada E2E verde, suíte completa verde, gitleaks e pip-audit sem achados, `requirements.lock` sem dependência nova.
+  - [x] Jornada real no navegador do `ui start` à aprovação, com a full aceita (C5).
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities tests.test_vibe_editor_skill tests.e2e.test_phase_7_flow -v`
-  - [ ] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
-  - [ ] `gitleaks detect --source . --no-banner`
-  - [ ] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_capabilities tests.test_vibe_editor_skill tests.e2e.test_phase_7_flow -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest discover -s tests -v`
+  - [x] `gitleaks detect --source . --no-banner`
+  - [x] `.venv\Scripts\python.exe -B -m pip_audit -r requirements.lock --no-deps --disable-pip`
 - **Visual:** necessária. C5 é a jornada real no navegador, reaproveitando as provas das T4 a T6 quando os inputs não mudaram.
+- **Prova:** verificação 1 -> 50 testes OK; suíte completa -> 468 testes OK; gitleaks sem vazamento (histórico e árvore com `--no-git`); pip-audit "No known vulnerabilities found"; `requirements.lock` sem diff; `quick_validate.py` da skill válido. E2E `tests/e2e/test_phase_7_flow.py` (2 testes): jornada `ui start` → stream e scrub → seleção → plano alterado por fora → aprovação antiga recusada (409) e atual aceita → `render full` aceita → mutação com selo `stale` e `APPROVAL_STALE` → `ui stop` sem órfãos; e `approve` pela CLI sem preview com v1 recusado. Bench `live` remedido: 1/2 com proxy 0,16/0,17/0,18 s até o primeiro quadro, 30 s em 1,71 s. C5 no navegador integrado, 1440x900: play, seleção por I/O com painel correto, Copiar para IA pelo campo manual, recarga com toast e cursor mantido, aprovação pelo popup com selo, `render full` aceito (1920x1080 h264/aac), console vazio, rede só local.
+- **Notas:** `AGENTS.md` editado pelo implementador com autorização do coordenador (seção "Interface de revisão, Phase 7", mapa, contratos de aprovação e preview, quebra 2.0.0); tabela "Decisões vigentes" intacta, linhas UI-01, UI-02, UI-03, SEC-01 e APPROVAL-01 propostas para o pós-review. `capabilities.py` importa `_APPROVAL_FIELDS` e `_SOURCE_APPROVAL_FIELDS` privados de `integrity/approval.py`. Fora do escopo: `.erros-encontrados/2026-10-09-docstring-do-pacote-ui-desatualizada.md`. Cópia real ao clipboard segue não conferida em Chrome normal.
 - **Deps:** T5, T6
 - **Arquivos:** `src/editor/capabilities.py`, `src/editor/contracts.py`, `pyproject.toml`, `skills/vibe-editor/`, `AGENTS.md`, `tests/test_capabilities.py`, `tests/test_vibe_editor_skill.py`, `tests/e2e/test_phase_7_flow.py` (novo)
 

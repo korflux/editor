@@ -3,15 +3,17 @@ name: vibe-editor
 description: >-
   Use quando o usuário solicitar editar, montar, cortar, juntar, sonorizar,
   legendar ou exportar um vídeo a partir de arquivos locais. Conduza o trabalho
-  do briefing à análise, plano, preview, aprovação explícita e full.mp4 usando
-  a CLI local editor. Não use para editar imagens isoladas ou apenas explicar o projeto.
+  do briefing à análise, plano, revisão na interface do navegador, aprovação
+  explícita e full.mp4 usando a CLI local editor. Não use para editar imagens
+  isoladas ou apenas explicar o projeto.
 ---
 
 # vibe-editor
 
 Use esta skill para transformar um pedido de edição de vídeo em uma execução local,
 reproduzível e aprovada pelo usuário. O agente conduz a conversa e usa a CLI
-`editor` para analisar fontes, montar o plano, gerar a preview e publicar a full.
+`editor` para analisar fontes, montar o plano, abrir a interface de revisão no
+navegador e publicar a full depois da aprovação do usuário.
 
 ## Limites da skill
 
@@ -22,8 +24,9 @@ reproduzível e aprovada pelo usuário. O agente conduz a conversa e usa a CLI
   geração de compressão) e obter o aceite do usuário. Os originais nunca são alterados.
 - Não escolha cortes, música, textos ou ordem dos trechos sem confirmar a intenção
   do usuário quando ela não estiver clara.
-- Nunca trate a existência da preview como aprovação. A aprovação precisa ser
-  explícita e humana antes da full.
+- Nunca trate a existência da preview, nem a interface aberta, como aprovação. A
+  aprovação precisa ser explícita e humana antes da full: o botão da interface ou um
+  "aprovado" claro do usuário no chat, e o agente nunca aprova no lugar dele.
 - Não use esta skill para editar imagens isoladas, criar um vídeo sem fontes locais,
   ou apenas explicar como o editor funciona.
 
@@ -206,7 +209,7 @@ Cada item exige `source_id`, `in_s`, `out_s`, `text`: sempre tempos da fonte, n�
 
 Execute `plan validate` e confira `data.captions.occurrences` e `unplaced`. O mapeamento segue as faixas de áudio e suas janelas nos cortes J/L, inclui cada repetição do trecho, une ocorrências contíguas do mesmo item e ignora faixas `loop`. Fragmentos menores que 0,3 s são omitidos; `unplaced` contém índices dos itens (base 1) sem ocorrência. Um b-roll com áudio `replace` só recebe a legenda da fonte realmente ouvida. Não grave tempos de timeline no plano.
 
-Renderize a preview e confira quadros dentro e fora de cada ocorrência, sincronismo com a fala, tradução, leitura, caixa, contraste e safe area antes de pedir aprovação. Alterar `captions` muda o hash e exige nova preview/aprovação antes da full. Não há tradução automática, SRT/VTT, trilha de legenda no MP4, estilo por item, animação, fundo ou karaokê. Use `layers` para letreiros com tempos da timeline; use `captions` para falas ancoradas na fonte.
+Revise a montagem na interface (seção 6) e, para conferir por quadros, exporte a preview: confira quadros dentro e fora de cada ocorrência, sincronismo com a fala, tradução, leitura, caixa, contraste e safe area antes de pedir aprovação. Alterar `captions` muda o hash e exige nova aprovação antes da full. Não há tradução automática, SRT/VTT, trilha de legenda no MP4, estilo por item, animação, fundo ou karaokê. Use `layers` para letreiros com tempos da timeline; use `captions` para falas ancoradas na fonte.
 
 ### 5. Escrever e validar o plano
 
@@ -255,7 +258,7 @@ claro. Em camada `image` ou `video` o plano é recusado.
 #### Proporção de saída e reenquadramento
 
 `profile.aspect_ratio` aceita `16:9`, `9:16`, `1:1` e `4:5`. Um plano tem uma única
-proporção, com uma preview, uma aprovação e uma full; para entregar em outra
+proporção, com uma revisão, uma aprovação e uma full; para entregar em outra
 proporção, abra outro trabalho (outra pasta) com outro plano. Escolha pelo destino:
 `16:9` para YouTube, `9:16` para Shorts, Reels e TikTok, `1:1` e `4:5` para feed.
 Fora do 16:9 o tamanho é fixo de plataforma, qualquer que seja a fonte: a full sai em
@@ -322,9 +325,77 @@ O atalho `validate` equivale ao longo acima com envelope `plan validate`. Os lon
 Se falhar, corrija a causa no plano ou nos arquivos declarados e valide novamente.
 Não ignore erro nem force a renderização.
 
-### 6. Gerar a preview e colher revisão
+### 6. Abrir a interface de revisão e colher o feedback
 
-Execute:
+Com o plano validado, abra a interface no navegador do usuário. Ela substitui a
+preview como forma de revisar: o player roda ao vivo, na hora, o mesmo grafo de
+filtros da full, então o usuário vê o que a full vai entregar, sem esperar nenhum
+render e sem `preview.mp4`:
+
+```text
+.venv\Scripts\python.exe -B -m editor ui start --workdir "<workdir>" --json
+```
+
+O envelope traz `data.state` (`started`, ou `running` quando já havia uma instância viva
+no trabalho, caso em que a URL é a mesma), `data.url`, `data.pid` e `data.port`. O
+servidor escuta só em `127.0.0.1`, numa porta livre, e a URL leva um token que o
+navegador troca por um cookie de sessão; o comando abre o navegador padrão, a menos que
+`--no-open` seja informado (então entregue `data.url` ao usuário). Não registre nem
+repita o token fora dessa entrega.
+
+O que o usuário tem na interface:
+
+- player com play, pausa, quadro a quadro, salto de corte e a resolução `Full`, `1/2`,
+  `1/3` ou `1/4`; as frações leem o proxy válido de cada fonte (selo "Proxy") e `Full`
+  lê os originais. Em `Full`, a compressão do stream é a única diferença em relação à
+  full; as frações servem para conferir ritmo, cortes e enquadramento. Com `limiter` ou
+  `normalize_loudness` ligados o áudio ao vivo parte sem histórico no instante do play e
+  não é o da full: confira a normalização na full, não no player;
+- timeline com vídeo, camadas, áudio (cortes J/L passando do limite do segmento),
+  trilhas e legendas, com seleção de trecho por Shift e arraste, pelas teclas I e O ou
+  por Alt e clique;
+- modo Fonte, que toca cada fonte inteira e mostra o que foi usado e o que foi descartado;
+- "Copiar para IA": copia o trecho selecionado, com `plan_sha256`, timecode, segundos,
+  segmentos (índice, `source_id` e intervalo na fonte), camadas, legendas e uma linha
+  `Pedido:` para o usuário completar. Use esse bloco como fonte do pedido de alteração:
+  os tempos dele são da fonte e do hash do plano, não precisam ser recalculados;
+- botão "Aprovar esta versão" (seção 8).
+
+A interface é só leitura: o agente é quem altera `plan.json`. Ao salvar uma versão
+válida, a interface recarrega sozinha em até 2 s, mantém o cursor no mesmo tempo, descarta
+a seleção e avisa "Plano atualizado". Um plano inválido aparece numa faixa com o código e
+a mensagem, e a tela segue na última versão válida, marcada como desatualizada e sem
+permitir a aprovação. Traduza o feedback do usuário em alterações no plano, valide com
+`plan validate` e deixe a interface recarregar.
+
+A interface nunca constrói proxy (`ui start` não decodifica fontes inteiras). Com fontes
+grandes (acima de 1280x720), construa proxies leves uma vez, sempre por comando
+explícito, para as frações responderem rápido:
+
+```text
+.venv\Scripts\python.exe -B -m editor proxy build --workdir "<workdir>" [--source-id "<id>"] --json
+```
+
+O comando decodifica cada fonte inteira; ele reutiliza proxies válidos e refaz os
+obsoletos em `<workdir>\proxy\`. A full nunca usa proxy e a aprovação continua vinculada
+aos originais; apagar `<workdir>\proxy\` é sempre seguro.
+
+Ao terminar a revisão (depois da full, ou quando o usuário desistir), encerre a interface:
+
+```text
+.venv\Scripts\python.exe -B -m editor ui stop --workdir "<workdir>" --json
+```
+
+`data.state` é `stopped`, ou `not_running` sem instância (exit 0). O encerramento também
+encerra os FFmpeg filhos. Uma instância esquecida encerra sozinha após 2 h sem pedidos, e
+são no máximo duas sessões de navegador por instância.
+
+#### Preview como exportação opcional
+
+`render preview` continua disponível como exportação, não como etapa obrigatória, e não
+afeta a aprovação. Use-a quando o usuário quiser um arquivo para assistir fora da
+interface ou quando você precisar de quadros para a sua própria auditoria (a seção 7
+extrai frames de `preview.mp4`, pois `extract frames` lê arquivos e não a interface):
 
 ```text
 .venv\Scripts\python.exe -B -m editor render preview --workdir "<workdir>" --json
@@ -338,38 +409,27 @@ somente quando `capabilities` informar `render.gpu_acceleration.status` como `av
 precisar da CPU livre. O envelope informa o modo realmente usado em `video.accel`.
 
 Os renders leem só os trechos das fontes que a timeline usa (janelas de decode), por padrão e
-sem flag; `data.decode` informa se isso ocorreu. Com fontes grandes (acima de 1280x720) e várias
-iterações de preview previstas, construa proxies leves uma vez, sempre por comando explícito:
-
-```text
-.venv\Scripts\python.exe -B -m editor proxy build --workdir "<workdir>" [--source-id "<id>"] --json
-```
-
-O comando decodifica cada fonte inteira, por isso a preview nunca o dispara; ele reutiliza proxies
-válidos e refaz os obsoletos em `<workdir>\proxy\`. A preview usa `--proxy auto` (padrão), que lê
+sem flag; `data.decode` informa se isso ocorreu. A preview usa `--proxy auto` (padrão), que lê
 o proxy válido de cada fonte e o original das demais; `--proxy off` lê só os originais. O
-envelope informa `data.proxy` com `sources` e `stale`. A full nunca usa proxy e a aprovação
-continua vinculada aos originais; apagar `<workdir>\proxy\` é sempre seguro.
+envelope informa `data.proxy` com `sources` e `stale`.
 
-Informe ao usuário onde está `preview.mp4` e peça que ele assista. Traduza o
-feedback em alterações no plano. Depois de qualquer alteração, repita a validação
-e gere uma nova preview. Ainda não peça aprovação: execute primeiro o gate editorial
-e visual da seção 7.
+Ainda não peça aprovação: execute primeiro o gate editorial e visual da seção 7. Se o
+usuário disser apenas “parece bom”, registre isso como feedback e conclua as auditorias
+obrigatórias. Não interprete aprovação implícita nem pule o gate.
 
-Se o usuário disser apenas “parece bom”, registre isso como feedback e conclua as
-auditorias obrigatórias. Não interprete aprovação implícita nem pule o gate.
+### 7. Auditar a versão antes de pedir aprovação
 
-### 7. Auditar a preview antes de pedir aprovação
-
-A preview só fica elegível para aprovação depois de duas provas independentes:
-validação estrutural do plano e inspeção editorial/visual da mídia renderizada.
-Renderizar com sucesso ou passar no `plan validate` não substitui assistir à
-preview. Se qualquer uma das duas provas faltar, não peça aprovação e não rode a
-operação `approve`.
+A versão revisada só fica elegível para aprovação depois de duas provas independentes:
+validação estrutural do plano e inspeção editorial/visual da mídia renderizada (o
+usuário assistindo à montagem na interface e os quadros que você extrai da
+`preview.mp4` exportada). Passar no `plan validate` ou abrir a interface com sucesso não
+substitui assistir à montagem. Se qualquer uma das duas provas faltar,
+não peça aprovação e não rode a operação `approve`.
 
 #### 7.1 Prova estrutural
 
-Execute novamente os comandos que certificam o contrato e a saída publicada:
+Execute novamente os comandos que certificam o contrato e, para a inspeção por quadros,
+a saída exportada:
 
 ```text
 .venv\Scripts\python.exe -B -m editor plan validate --workdir "<workdir>" --json
@@ -407,12 +467,13 @@ prematuro.
 
 #### 7.3 Auditoria visual do lettering
 
-Assista à preview em tamanho normal e confira cada camada de texto. A validação
+Assista à montagem em tamanho normal (na interface em `Full`, ou na `preview.mp4`)
+e confira cada camada de texto. A validação
 estrutural só prova que a fonte e a geometria são aceitas pelo schema. A inspeção
 visual deve confirmar a fonte real, a caixa, a safe area, a quebra de linha, o
 contraste, o tamanho e a leitura, sem texto cortado ou sobreposto a informação
 essencial. Se houver dúvida de leitura, ajuste o plano (por exemplo com `shadow` ou
-`outline`), valide e gere outra preview.
+`outline`), valide e deixe a interface recarregar (ou gere outra preview, se exportou uma).
 
 #### 7.4 Decisões humanas e resumo de exclusões
 
@@ -428,36 +489,57 @@ cada item aplicável:
 
 Não traduza, escolha cortes ou declare qualidade editorial automaticamente. Quando
 um item não se aplicar, registre explicitamente “não se aplica”. O resumo e as
-evidências precisam estar completos antes de perguntar ao usuário se a preview
+evidências precisam estar completos antes de perguntar ao usuário se a versão
 está aprovada.
 
 O gate só passa quando os estados abaixo forem verdadeiros ao mesmo tempo:
 
 1. `plan validate` e `render preview` passaram, prova estrutural registrada.
-2. A preview foi assistida e os frames de cortes, movimentos e encerramento foram
-   conferidos, prova visual registrada.
+2. A montagem foi assistida (na interface ou na preview) e os frames de cortes,
+   movimentos e encerramento foram conferidos, prova visual registrada.
 3. As decisões sobre tradução, arquivos excluídos e fala removida estão no resumo.
 
 Se algum estado estiver ausente, corrija o plano ou a análise e repita a validação
-e a preview. Somente depois mostre o resumo ao usuário e solicite uma confirmação
-explícita.
+e a revisão (e a preview, se exportou uma). Somente depois mostre o resumo ao usuário
+e solicite a aprovação explícita.
 
 ### 8. Registrar a aprovação e gerar a full
 
-Somente após uma confirmação clara como “Aprovado, pode gerar a versão final”,
-execute:
+A aprovação é do usuário e vale para a versão que ele viu. Ela vincula o hash canônico
+do plano (`plan_sha256`) e o SHA-256 de cada fonte declarada em `approval.json`
+(schema_version 2); a preview, a resolução assistida e a qualidade da full não entram.
+Há dois caminhos, e o agente não escolhe a aprovação por ele:
+
+1. **Pela interface (caminho padrão).** O usuário clica em "Aprovar esta versão" e
+   confirma o popup, que mostra o hash curto, a duração e a nota "visualizado com
+   proxy" quando for o caso. A interface envia o `plan_sha256` e a impressão das
+   fontes da versão exibida; se o plano ou uma fonte mudou desde o carregamento, a
+   aprovação é recusada com `APPROVAL_PLAN_CHANGED`, sem gravar nada, e a interface
+   recarrega para ele revisar a versão atual. O topo passa a mostrar "Aprovado às
+   HH:MM" e, se o plano mudar depois, "Aprovação desatualizada". O botão fica
+   desabilitado com o plano inválido ou desatualizado.
+2. **Pela CLI**, somente após uma confirmação clara do usuário no chat, como "Aprovado,
+   pode gerar a versão final". `approve` não exige `preview.mp4` e grava o mesmo
+   registro v2:
 
 ```text
 .venv\Scripts\python.exe -B -m editor approve --workdir "<workdir>" --json
+```
+
+Com a aprovação gravada, gere a versão final:
+
+```text
 .venv\Scripts\python.exe -B -m editor render full --workdir "<workdir>" --json
 ```
 
-O atalho `full` equivale a `render full` com envelope canônico. `init`, `approve` e `capabilities` não têm atalhos e permanecem inalterados.
+O atalho `full` equivale a `render full` com envelope canônico. `init`, `approve`, `ui` e `capabilities` não têm atalhos e permanecem inalterados.
 
-O primeiro comando registra qual plano, preview e fontes foram aprovados. O segundo
-confere se nada mudou e só então publica `full.mp4`. Se o editor informar que a
-aprovação ficou desatualizada, não force a execução: gere uma nova preview e peça
-aprovação novamente.
+`render full` recalcula o plano e as fontes e só então publica `full.mp4`; o envelope
+informa `approval` com `approved_at` e `plan_sha256`. Se o editor responder
+`APPROVAL_STALE` (plano ou fonte mudou depois da aprovação, ou o registro é o v1 de
+versões anteriores à 2.0.0, que vinculava a preview), não force a execução: deixe o
+usuário revisar a versão atual na interface e aprovar de novo. `APPROVAL_REQUIRED`
+significa que ainda não há aprovação.
 
 #### Qualidade da full (`--quality`)
 
@@ -500,7 +582,7 @@ trabalho para inspeção:
   analysis\
   plan.json
   approval.json
-  preview.mp4
+  preview.mp4    (opcional, só se exportada)
   full.mp4
   analysis\
   frames\

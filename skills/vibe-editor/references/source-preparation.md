@@ -125,4 +125,4 @@ Materiais reais passados pelo editor, com o resultado de cada tratamento:
 - Quando houve conversão, o plano usa as cópias em `sources\`. A aprovação por hash fica vinculada às cópias, então não as renomear nem recriá-las depois de aprovar o plano.
 - Guardar os originais. Registrar no resumo do briefing quais cópias foram criadas, a partir de qual original e com qual comando.
 - A preparação não resolve a proporção: o perfil do plano decide (`youtube-editing.md`, seção 1.4). Uma fonte vertical num perfil 16:9 gera um quadro 16:9 com barras ou recorte pesado; para entregar vertical, usar um perfil `9:16`. Avisar o usuário antes de seguir.
-- A preparação não substitui a aprovação humana da preview.
+- A preparação não substitui a aprovação humana da versão revisada (pelo botão da interface ou pelo `approve`).
