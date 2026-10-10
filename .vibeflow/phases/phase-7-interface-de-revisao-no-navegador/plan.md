@@ -224,3 +224,20 @@ rota: max
 - Arquivos: `src/editor/ui/state.py`, `tests/test_ui_server.py`.
 - Prova: regressão nova falhou antes do patch e passou depois; `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server.PlanStateTests tests.test_ui_server.SourceUsageTests -q` -> 12 testes OK, 6,214 s. Jornada JSON inválido, fonte removida, recuperação de fonte e plano preserva precedência dos erros e snapshot; plano válido com fonte ausente mantém SOURCE_INVALID.
 - Visual: reaproveitada, sem mudança de layout ou texto; classificação de erros coberta por estado real. Próximo passo: re-review do R6.
+
+### T8: Corrigir início de reprodução com fonte reutilizada fora de ordem
+- [x] T8 concluída
+- **Spec:** F3/F4, C3 e UI-01 existentes: play e scrub a partir do cursor sem decodificar o passado da fonte desnecessariamente.
+- **Deps:** T7
+- **Escopo autorizado:** correção solicitada em 2026-10-10; somente código do editor e provas isoladas. Não escrever em `A:\Youtube\S04E36`, alterar montagem, reiniciar servidor existente ou interferir com a IA editora.
+- **Aceite:** plano que abre perto do fim de uma fonte e depois retorna ao começo produz primeiro quadro/stream sem decodificar esse prefixo; preserva conteúdo, áudio, fontes/proxies e limites de entradas. Preview/full mantêm política existente.
+- **Diagnóstico:** snapshot de 160 cortes em `tmp-playback-diagnostic/plan.json`; primeiro recorte b0395 em 303,9036 s. União de usos anulava seek. Quadro inicial ultrapassou 35 s; janela adicional ordenada [303,9036;312,578933] ao lado da leitura completa produziu JPEG em 1,032 s com proxies, sem alterar o plano real.
+- **Verificação:** regressão sintética por frames/áudio e política de janelas; suítes live/decode/UI afetadas; prova do snapshot real em pasta isolada e navegador separado.
+- **Visual:** necessária, play e scrub na instância de diagnóstico.
+- **Arquivos:** `src/editor/render/windows.py`, `src/editor/render/ffmpeg_graph.py`, `tests/test_live_stream.py`.
+- **Prova:** `.venv/Scripts/python.exe -B -m unittest tests.test_live_stream tests.test_decode_windows -q` -> 48 testes OK em 98,298 s; `tests.test_ui_server -v` -> 74 testes OK em 77,778 s fora do sandbox (localhost era bloqueado nele). Sete casos de regressão/planner -> OK em 1,518 s. Quadros e PCM iguais à full com fonte fora de ordem, loop e camada; cobertura de J-cut, recortes longos, ordenação e tetos 8/24, política offline preservada.
+- **Prova real:** snapshot independente do episódio, proxies copiados; código final produziu JPEG em T0 em 1,297 s (1/2, 1344x756) e 3,453 s (Full, 2688x1512); T300 em 0,766 s (1/2); stream H.264/AAC de 2 s em 1,828 s, exit 0. Estes tempos são do caso real, não substituem o benchmark sintético C3.
+- **Prova visual:** navegador integrado em 1280x720, instância separada `127.0.0.1:53959`, trabalho `tmp-playback-diagnostic`; play 1/2 atravessou os primeiros cortes e letreiros até 16,483 s, readyState 4, sem erro; pausa/avanço de quadro em 16,516 s e Home/T0 carregaram JPEG com spinner oculto; Full mostrou quadro 2688x1512 e play avançou com readyState 4. Console sem erros/avisos. Aba e servidor temporários encerrados; interface original não reiniciada.
+- **Gates:** gitleaks em src e tests sem vazamentos; pip-audit do lockfile sem vulnerabilidades conhecidas; diff --check limpo. Nenhuma dependência alterada.
+- **Limitação:** sem folga nos tetos de entradas, mantém a política de união; documentado em ponytail. A instância original em execução precisa ser reiniciada posteriormente para carregar o código, em momento seguro para a outra IA. Nenhum arquivo da montagem foi escrito.
+- **Handoff:** vibe-review da T8; preservar alterações preexistentes no review, AGENTS e roadmap.

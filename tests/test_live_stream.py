@@ -33,7 +33,7 @@ from editor import dependencies
 from editor.contracts import CliError
 from editor.plan.validation import load_validated_plan
 from editor.render import live
-from editor.render.ffmpeg_graph import _used_source_ids, build_ffmpeg_graph
+from editor.render.ffmpeg_graph import _GraphInputs, _used_source_ids, build_ffmpeg_graph
 from editor.render.preview import _number
 from editor.render.proxy import build_proxies
 from editor.render.windows import DecodeWindow, TimeWindow, plan_decode_windows, source_intervals
@@ -362,6 +362,40 @@ class FullEquivalenceTests(LiveStreamTestCase):
                         self.assertEqual(state.start_s, start)
                         self.assertEqual((state.width, state.height), (160, 90))
                         self.assert_matches_full(state, produced, reference)
+
+    def test_reordered_source_preserves_first_seek_and_full_video_and_pcm(self) -> None:
+        """Reuso contínuo desde zero não anula o seek inicial; recortes longos e camadas continuam inteiros."""
+
+        with live_workdir() as workdir:
+            self.install_sources(workdir)
+            document = plan([segment(22, 24), segment(0, 22), segment(22, 26), segment(26, 30)])
+            document, validation = load(workdir, document)
+            unchanged = build_ffmpeg_graph(document, validation, canvas_width=160, canvas_height=90, windows=True)
+            self.assertEqual(unchanged.input_windows, (None,), "a política da preview/full continua sem seek")
+            reference = full_outputs(workdir, document, validation)
+            for start in (0.0, 1.0, 2.0, 24.0):
+                with self.subTest(t=start):
+                    state, produced = live_outputs(workdir, document, validation, start)
+                    self.assert_matches_full(state, produced, reference)
+                    if start < 2:
+                        windows = [span for span in state.graph.input_windows if span is not None]
+                        self.assertEqual([span.start_s for span in windows], [0.0, 22.0 + start])
+                        self.assertEqual(windows[-1].end_s, 30.0, "o uso posterior mais longo cabe na janela")
+                        self.assertEqual(windows[-1].seek_s, 21.75 + start)
+            # Camada e trilha em loop têm recortes próprios, mas usam a mesma política de entradas.
+            document = plan(
+                [segment(22, 24, [track(20, 24, loop=True)]), segment(0, 22), segment(22, 30)],
+                layers=[{"type": "video", "source_id": "main", "in_s": 26, "out_s": 30,
+                         "start_s": 0, "end_s": 4, "x": 0, "y": 0, "width": 0.5, "height": 0.5,
+                         "fit": "contain"}],
+            )
+            document, validation = load(workdir, document)
+            reference = full_outputs(workdir, document, validation)
+            for start in (0.0, 1.0):
+                with self.subTest(loop_e_camada=start):
+                    state, produced = live_outputs(workdir, document, validation, start)
+                    self.assert_matches_full(state, produced, reference)
+                    self.assertEqual(state.graph.input_windows[-1], DecodeWindow(20.0, 30.0))
 
     def test_video_on_a_29_97_fps_grid_equals_the_full(self) -> None:
         """T cai em `n / 29,97003`, de decimais infinitos: os quadros seguem idênticos aos da full.
@@ -709,6 +743,65 @@ class TimeWindowPlannerTests(unittest.TestCase):
     }
     TIMELINE = contiguous_timeline([2, 2, 2, 2])
     RECORDS = {"main": {"id": "main", "kind": "video", "duration_seconds": 100.0}}
+
+    def test_live_first_use_is_temporal_and_windows_cover_bisect_consumers_within_caps(self) -> None:
+        """Áudio J e camada podem preceder vídeo; a janela ordenada cobre todo consumidor selecionado."""
+
+        document = {
+            "segments": [
+                {"video": {"source_id": "other", "in_s": 0, "out_s": 2}, "audio": {"tracks": []}},
+                {"video": {"source_id": "main", "in_s": 80, "out_s": 82},
+                 "audio": {"tracks": [{"source_id": "main", "in_s": 79, "out_s": 82}]}},
+                {"video": {"source_id": "main", "in_s": 0, "out_s": 100}, "audio": {"tracks": []}},
+                {"video": {"source_id": "main", "in_s": 80, "out_s": 100}, "audio": {"tracks": []}},
+            ], "layers": [],
+        }
+        timeline = contiguous_timeline([2, 2, 100, 20])
+        timeline[1]["audio_start_s"] = 1.0  # J-cut: áudio de main começa antes de seu vídeo.
+        for layers, expected in (([], 79.0), ([{"type": "video", "source_id": "main", "in_s": 70,
+                                              "out_s": 74, "start_s": 0, "end_s": 4}], 70.0)):
+            document["layers"] = layers
+            self.assertEqual(plan_decode_windows(document, self.RECORDS, ("main",)), {})
+            result = plan_decode_windows(document, self.RECORDS, ("main",), timeline, TimeWindow(0))
+            self.assertEqual(result["main"], (DecodeWindow(0, 100), DecodeWindow(expected, 100)))
+            inputs = _GraphInputs(("main",), result)
+            for in_s, out_s in source_intervals(document, timeline, TimeWindow(0))["main"]:
+                index, _ = inputs.locate("main", in_s)
+                self.assertGreaterEqual(inputs.windows[index].end_s, out_s)
+        # Com 24 fontes não cabe entrada adicional; acima disso conserva o fallback vigente.
+        document["layers"] = []
+        for count in (23, 24, 25):
+            ids = tuple(f"v{i}" for i in range(count))
+            records = {source_id: {**self.RECORDS["main"], "id": source_id} for source_id in ids}
+            expanded = {"segments": [], "layers": []}
+            for source_id in ids:
+                for in_s, out_s in ((80, 82), (0, 100)):
+                    expanded["segments"].append({"video": {"source_id": source_id, "in_s": in_s, "out_s": out_s},
+                                                 "audio": {"tracks": []}})
+            timing = contiguous_timeline([2, 100] * count)
+            result = plan_decode_windows(expanded, records, ids, timing, TimeWindow(0))
+            self.assertTrue(all(len(spans) <= 8 for spans in result.values()))
+            if count <= 24:
+                self.assertLessEqual(sum(len(result.get(source_id, (None,))) for source_id in ids), 24)
+            else:
+                self.assertEqual(result, {})
+        # O primeiro uso cai numa janela mesclada, mas oito entradas já ocupam o teto por fonte.
+        starts = [4, 0, 10, 20, 30, 40, 50, 60, 70]
+        sparse = {"segments": [
+            {"video": {"source_id": "main", "in_s": start, "out_s": start + 0.5},
+             "audio": {"tracks": []}} for start in starts
+        ], "layers": []}
+        result = plan_decode_windows(sparse, self.RECORDS, ("main",),
+                                     contiguous_timeline([0.5] * len(starts)), TimeWindow(0))
+        self.assertEqual(len(result["main"]), 8)
+        self.assertEqual(result["main"][0].start_s, 0)
+        # Diferença dentro do pre-roll não justifica outro decoder com seek idêntico.
+        sparse["segments"] = [
+            {"video": {"source_id": "main", "in_s": start, "out_s": end}, "audio": {"tracks": []}}
+            for start, end in ((0.1, 0.5), (0, 100))
+        ]
+        result = plan_decode_windows(sparse, self.RECORDS, ("main",), contiguous_timeline([0.4, 100]), TimeWindow(0))
+        self.assertEqual(result, {})
 
     def test_time_window_skip_rules(self) -> None:
         window = TimeWindow(3.0)

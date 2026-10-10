@@ -1013,8 +1013,10 @@ def build_ffmpeg_graph(
     (segmento, trilha sem `loop`, camada de vídeo) com `motion` e `reframe` na posição do instante
     real; o que começa depois fica como está. O relógio dos quadros volta à timeline global entre a
     concatenação e as camadas (o `enable` delas é em tempo global) e é zerado só no fim, e o áudio dos
-    grupos é posto em `início - T`. Sem janela ativa (ou com T igual a 0) o grafo é o mesmo de sempre,
-    byte a byte. A comparação quadro a quadro e amostra a amostra com a full é a prova da T1.
+    grupos é posto em `início - T`. Sem `time_window` o grafo é o mesmo de sempre, byte a byte.
+    Em T=0 os recortes são os da full, mas o ao vivo pode abrir uma entrada extra para uma fonte
+    reutilizada fora de ordem, preservando o seek do primeiro uso. A comparação quadro a quadro
+    e amostra a amostra com a full prova que a política de entradas não altera o conteúdo.
     """
 
     window = time_window or TimeWindow(0.0)
@@ -1025,7 +1027,8 @@ def build_ffmpeg_graph(
     source_records = {str(record["id"]): record for record in validation["sources"]}
     inputs = _GraphInputs(
         source_order,
-        plan_decode_windows(document, source_records, source_order, timeline_segments, window)
+        # A presença explícita distingue o ao vivo em T=0 da preview/full, cuja política não muda.
+        plan_decode_windows(document, source_records, source_order, timeline_segments, time_window)
         if windows
         else {},
     )

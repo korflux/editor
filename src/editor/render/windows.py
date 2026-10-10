@@ -31,7 +31,8 @@ processar o trecho anterior. `TimeWindow` diz, para cada item da timeline (segme
 áudio, camada de vídeo), quanto do começo dele já passou de T (`skip`); o planejador cobre só o
 que alimenta `[T, fim]` e o grafo (`ffmpeg_graph.py`) avança o `in_s` do item pelo mesmo `skip`,
 então os dois sempre concordam sobre o que cada janela precisa conter. Sem janela de tempo (ou
-com T igual a 0) nada muda: mesmas janelas, mesmo grafo, mesmo comando.
+com T igual a 0) os recortes não mudam. Só o ao vivo preserva também o seek do primeiro uso
+temporal de uma fonte reutilizada fora de ordem; preview/full mantêm a política de união.
 """
 
 from __future__ import annotations
@@ -295,6 +296,8 @@ def plan_decode_windows(
     redução de leitura justifica janelar (`min_reduction` 0): num render que começa no meio, o ganho
     mínimo de 20% deixaria uma fonte longa ser decodificada desde o início só para descartar o
     começo, e o ao vivo não pode crescer com a posição.
+    A presença explícita de `window`, inclusive T=0, habilita a preservação do primeiro seek
+    temporal quando a união contém usos anteriores na fonte; sem ela a política fica inalterada.
     """
 
     video_ids = [
@@ -342,4 +345,72 @@ def plan_decode_windows(
     while total_inputs() > MAX_VIDEO_INPUTS:
         candidates = [source_id for source_id in video_ids if len(windows.get(source_id, ())) > 1]
         refresh(_merge_smallest_gap(groups, candidates))
+    if window is not None:
+        _preserve_live_first_reads(document, timeline_segments, window, source_records, video_ids, intervals, windows)
     return windows
+
+
+def _preserve_live_first_reads(
+    document: Mapping[str, Any],
+    timeline_segments: Sequence[Mapping[str, Any]] | None,
+    window: TimeWindow,
+    source_records: Mapping[str, Mapping[str, Any]],
+    video_ids: list[str],
+    intervals: Mapping[str, list[tuple[float, float]]],
+    windows: dict[str, tuple[DecodeWindow, ...]],
+) -> None:
+    """Preserva o seek do primeiro uso temporal sem mudar a união usada pela preview/full.
+
+    Uma montagem pode abrir no fim da fonte e depois voltar ao começo. A união sozinha força
+    o primeiro ramo a consumir esse prefixo. Uma entrada sobreposta, ordenada por `start_s`,
+    permite ao `bisect_right` do grafo escolher o seek tardio. Ela cobre todos os recortes que
+    podem passar a escolhê-la, inclusive os posteriores mais longos e o áudio com pre-roll.
+    ponytail: sem folga nos tetos 8/24 mantém a união, reservar entradas ao primeiro uso se um
+    trabalho real atingir esses tetos e ainda apresentar demora no início da reprodução.
+    """
+
+    if timeline_segments is None:
+        raise ValueError("a política ao vivo exige a timeline validada")
+    first: dict[str, tuple[float, float]] = {}
+
+    def consider(source_id: str, start_s: float, end_s: float, in_s: float, track: Mapping[str, Any] | None = None) -> None:
+        """Ordena usos pelo início efetivo na timeline; usos simultâneos precisam do menor seek."""
+
+        skip = window.skip(start_s, end_s)
+        if skip is None:
+            return
+        advanced = track_in_s(track, skip) if track is not None else in_s + skip
+        if advanced is None:
+            return
+        candidate = (max(window.start_s, start_s), advanced)
+        first[source_id] = min(first.get(source_id, candidate), candidate)
+
+    for segment, timeline in zip(document["segments"], timeline_segments, strict=True):
+        video = segment["video"]
+        consider(str(video["source_id"]), float(timeline["start_s"]), float(timeline["end_s"]), float(video["in_s"]))
+        for track in segment["audio"]["tracks"]:
+            consider(str(track["source_id"]), float(timeline["audio_start_s"]), float(timeline["audio_end_s"]), float(track["in_s"]), track)
+    for layer in document["layers"]:
+        if layer["type"] == "video":
+            consider(str(layer["source_id"]), float(layer["start_s"]), float(layer["end_s"]), float(layer["in_s"]))
+
+    total = sum(len(windows.get(source_id, (None,))) for source_id in video_ids)
+    for source_id in video_ids:
+        if source_id not in first or source_id not in intervals:
+            continue
+        anchor = first[source_id][1]
+        existing = windows.get(source_id, ())
+        containing = [span for span in existing if span.start_s <= anchor + SKIP_TOLERANCE_S]
+        start = containing[-1].start_s if containing else 0.0
+        if anchor <= start + SKIP_TOLERANCE_S or len(existing) >= MAX_WINDOWS_PER_SOURCE or total >= MAX_VIDEO_INPUTS:
+            continue
+        duration = float(source_records[source_id]["duration_seconds"])
+        # Sem ganho de união, a entrada inicial continua cobrindo todos os usos anteriores ao anchor.
+        base = existing or (DecodeWindow(0.0, duration),)
+        end = max(out_s for in_s, out_s in intervals[source_id] if in_s + SKIP_TOLERANCE_S >= anchor)
+        extra = DecodeWindow(anchor, min(duration, end + END_SLACK_S))
+        if extra.seek_s <= (containing[-1].seek_s if containing else 0.0) + SKIP_TOLERANCE_S:
+            # Dentro do pre-roll, uma entrada adicional faria a mesma leitura desde zero.
+            continue
+        windows[source_id] = tuple(sorted((*base, extra), key=lambda span: span.start_s))
+        total += 1
