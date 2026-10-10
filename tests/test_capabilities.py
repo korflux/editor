@@ -701,8 +701,8 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(approve["status"], data["operations"]["plan_validate"]["status"])
         self.assertEqual(approve["schema_version"], approval_module.APPROVAL_SCHEMA_VERSION)
         self.assertEqual(approve["obsolete_versions"], [1])
-        self.assertEqual(approve["record_fields"], sorted(approval_module._APPROVAL_FIELDS))
-        self.assertEqual(approve["source_fields"], sorted(approval_module._SOURCE_APPROVAL_FIELDS))
+        self.assertEqual(approve["record_fields"], sorted(approval_module.APPROVAL_FIELDS))
+        self.assertEqual(approve["source_fields"], sorted(approval_module.SOURCE_APPROVAL_FIELDS))
         self.assertEqual(approve["max_record_bytes"], approval_module.MAX_APPROVAL_BYTES)
         # Sem preview: nem exigida, nem vinculada, nem no registro, nem no que a full verifica.
         self.assertIs(approve["requires_preview"], False)

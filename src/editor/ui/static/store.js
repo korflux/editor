@@ -4,7 +4,7 @@
 // modo que nenhum importe o outro em círculo. Eventos usados: `plan` (plano novo carregado), `status`
 // (estado do servidor mudou), `workdir` (nome do trabalho conhecido pela primeira vez), `cursor`, `play`, `res`,
 // `selection` (marcas mudaram; `commit` indica o fim do gesto) e `context` (mudou o modo ou a fonte aberta).
-// Também guarda as preferências por trabalho no navegador (`localStorage`, sempre com try/catch).
+// Também guarda preferências não sensíveis em cookies por trabalho (cookies atravessam portas).
 //
 // Dois contextos de revisão (F3 e F6): o modo Montagem (tempo da montagem, taxa de saída) e o modo Fonte (tempo da
 // fonte aberta, taxa dela). Cada um tem a sua visão (cursor, marcas e trecho), guardada em `views`, e
@@ -21,6 +21,7 @@ const views = { assembly: freshView(), source: freshView() };
 
 export const state = {
   workdirName: "",
+  preferencesId: "",
   status: "loading", // loading | ready | outdated | missing | invalid (os rótulos de `GET /api/state`)
   error: null, // { code, message } do plano atual, quando inválido
   connectionLost: false,
@@ -159,14 +160,21 @@ export function reconcileViews() {
 
 // --- Preferências por trabalho (nada sensível: resolução, volume e mudo) ---
 
+/** Nome permitido do cookie de preferência do trabalho, separado dos cookies de autenticação. */
 function storageKey(name) {
-  return `editor-ui:${state.workdirName}:${name}`;
+  // O servidor fornece um hash do caminho; só preferências conhecidas entram neste namespace,
+  // separado dos cookies HttpOnly de sessão, que continuam isolados por porta.
+  if (!/^[a-f0-9]{64}$/.test(state.preferencesId) || !["res", "volume", "muted"].includes(name)) return null;
+  return `editor-ui-pref-${state.preferencesId}-${name}`;
 }
 
 /** Lê uma preferência; devolve `null` sem armazenamento (janela privada, bloqueio) ou sem valor. */
 export function readPref(name) {
   try {
-    return window.localStorage.getItem(storageKey(name));
+    const key = storageKey(name);
+    if (key === null) return null;
+    const entry = document.cookie.split("; ").find((part) => part.startsWith(`${key}=`));
+    return entry ? decodeURIComponent(entry.slice(key.length + 1)) : null;
   } catch {
     return null;
   }
@@ -175,7 +183,9 @@ export function readPref(name) {
 /** Grava uma preferência; a falha de armazenamento é ignorada (a tela funciona sem ele). */
 export function writePref(name, value) {
   try {
-    window.localStorage.setItem(storageKey(name), String(value));
+    const key = storageKey(name);
+    if (key === null || String(value).length > 32) return;
+    document.cookie = `${key}=${encodeURIComponent(String(value))}; Path=/; SameSite=Strict; Max-Age=31536000`;
   } catch {
     // Sem armazenamento a preferência só vale para esta sessão da página.
   }

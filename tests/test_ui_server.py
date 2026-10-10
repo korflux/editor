@@ -44,6 +44,7 @@ import warnings
 from collections.abc import Callable, Iterator
 from contextlib import redirect_stderr
 from typing import Any
+from types import SimpleNamespace
 from unittest.mock import call, patch
 from uuid import uuid4
 
@@ -736,6 +737,25 @@ class InstanceProcessTests(BigSourceTestCase):
 class SessionSecurityTests(UiTestCase):
     """Token, cookie, `Host`, `Origin`, teto de sessões, cabeçalhos e ausência do token no log."""
 
+    def test_preference_identity_survives_restart_and_separates_same_named_workdirs(self) -> None:
+        """A porta muda; a identidade opaca das preferências permanece e depende do caminho inteiro."""
+
+        with serving(self.workdir) as first:
+            client = first.client()
+            identity = client.get("/api/state").json["data"]["preferences_id"]
+            self.assertRegex(identity, r"^[a-f0-9]{64}$")
+        with serving(self.workdir) as restarted:
+            other = restarted.client()
+            self.assertEqual(other.get("/api/state").json["data"]["preferences_id"], identity)
+            self.assertEqual(other.get("/api/state", headers={"Cookie": f"editor-ui-pref-{identity}-res=1%2F2"}).code,
+                             "UI_TOKEN_INVALID")
+        with ui_workdir() as parent:
+            different = parent / self.workdir.name
+            different.mkdir()
+            with serving(different) as server:
+                alternate = server.client().get("/api/state").json["data"]["preferences_id"]
+                self.assertNotEqual(alternate, identity)
+
     def setUp(self) -> None:
         self.workdir_context = ui_workdir()
         self.workdir = self.workdir_context.__enter__()
@@ -862,7 +882,11 @@ class SessionSecurityTests(UiTestCase):
             self.assertEqual(SESSION_LIMIT, 2)
             # As duas vagas estão ativas: a terceira recebe UI_SESSION_LIMIT, sem cookie.
             third = Client(harness.port).login(harness.token)
-            self.assertEqual((third.status, third.json["error"]["code"]), (429, "UI_SESSION_LIMIT"))
+            self.assertEqual((third.status, third.headers["x-editor-error"]), (429, "UI_SESSION_LIMIT"))
+            self.assertIn("text/html", third.headers["content-type"])
+            self.assertIn("Limite de sessões", third.body.decode("utf-8"))
+            self.assertIn("style-src 'sha256-", third.headers["content-security-policy"])
+            self.assertNotIn(harness.token, third.body.decode("utf-8"))
             self.assertNotIn("set-cookie", third.headers)
             self.assertEqual(first.get("/api/state").status, 200)
             self.assertEqual(second.get("/api/state").status, 200)
@@ -1390,7 +1414,7 @@ class PlanStateTests(UiTestCase):
                 (workdir / "sources" / "main.mp4").unlink()
                 broken = wait_until(lambda: (lambda d: d if d["error"] else None)(self.state(client)), timeout_s=10)
                 self.assertEqual(broken["state"], "outdated")
-                self.assertEqual(broken["error"]["code"], "PLAN_INVALID")
+                self.assertEqual(broken["error"]["code"], "SOURCE_INVALID")
                 self.assertEqual(broken["plan"]["plan_sha256"], ready["plan"]["plan_sha256"])
 
     def test_a_plan_that_is_invalid_from_the_start_is_reported_as_invalid(self) -> None:
@@ -1877,7 +1901,7 @@ class SourceUsageTests(UiTestCase):
                     lambda: (lambda data: data if data["error"] else None)(client.get("/api/state").json["data"]), timeout_s=10
                 )
                 self.assertEqual((broken["state"], broken["plan"] is not None), ("outdated", True))
-                self.assertEqual(broken["error"]["code"], "PLAN_INVALID")
+                self.assertEqual(broken["error"]["code"], "SOURCE_INVALID")
 
 
 class SourceSelectionTests(UiTestCase):
@@ -2535,6 +2559,42 @@ class ApprovalApiTests(UiTestCase):
             self.assertLess(time.monotonic() - started, 10)
             release.set()
             self.assertEqual(self.await_approval(client, "current")["approved_at"], published["approved_at"])
+
+    def test_changed_keys_queue_only_the_latest_check_without_parallel_hashes(self) -> None:
+        """Retém o primeiro hash e troca a chave duas vezes: a leitura antiga acaba antes da nova começar."""
+
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        active = 0
+        maximum = 0
+        seen = []
+
+        def slow(root: Path, validation: dict[str, Any]) -> dict[str, str]:
+            """Marca leituras simultâneas e retém a primeira até a fila ser substituída."""
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            seen.append(validation["version"])
+            if len(seen) == 1:
+                entered.set()
+                release.wait(10)
+            active -= 1
+            if validation["version"] == 3:
+                finished.set()
+            return {"approved_at": "2026-10-10T00:00:00Z"}
+
+        tracker = ui_approval.ApprovalTracker(self.workdir)
+        with patch.object(ui_approval, "verify_approval", slow):
+            try:
+                tracker._start_check((None, "1", "1"), SimpleNamespace(validation={"version": 1}))
+                self.assertTrue(entered.wait(10))
+                tracker._start_check((None, "2", "2"), SimpleNamespace(validation={"version": 2}))
+                tracker._start_check((None, "3", "3"), SimpleNamespace(validation={"version": 3}))
+                self.assertEqual(seen, [1])
+            finally:
+                release.set()
+            self.assertTrue(finished.wait(10))
+            wait_until(lambda: not tracker._running)
+        self.assertEqual((maximum, seen), (1, [1, 3]))
 
     def test_the_page_declares_the_accessible_approval_dialog_and_its_module(self) -> None:
         with serving(self.workdir) as harness:

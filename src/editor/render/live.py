@@ -285,29 +285,10 @@ def prepare_live(
     )
 
 
-def _seek_image_inputs(arguments: Sequence[str], seek_s: float) -> list[str]:
-    """Dá `-ss` às entradas de imagem em loop (as únicas com `-framerate`), para não decodificá-las desde 0.
-
-    O grafo conta com esse seek (`FfmpegGraph.image_seek_s`): o fluxo da imagem nasce em T e ele
-    devolve o relógio global. Sem seek (T igual a 0) a lista volta como está.
-    """
-
-    if seek_s <= 0:
-        return list(arguments)
-    result: list[str] = []
-    previous = ""
-    for token in arguments:
-        result.append(token)
-        if previous == "-framerate":
-            result.extend(["-ss", _number(seek_s)])
-        previous = token
-    return result
-
-
 def live_arguments(live: LiveRender, filter_script: Path, output_arguments: Sequence[str]) -> list[str]:
     """Comando do FFmpeg (sem o executável): entradas do render, filtro por arquivo e a saída dada.
 
-    As entradas (`-ss`/`-t` das janelas de decode, imagens em loop, caminhos do original ou do proxy)
+    As entradas (`-ss`/`-t` das janelas de decode, imagens estáticas, caminhos do original ou do proxy)
     vêm da mesma `preview._build_ffmpeg_arguments` da preview e da full, cortadas antes do filtro.
     A saída é de quem chama: `stream_output_arguments`, `frame_output_arguments` ou, na prova, um
     `framemd5` no lugar do encoder.
@@ -322,7 +303,7 @@ def live_arguments(live: LiveRender, filter_script: Path, output_arguments: Sequ
         frame_rate=live.frame_rate,
     )
     filter_option = dependencies.ffmpeg_filter_option()
-    inputs = _seek_image_inputs(full_command[: full_command.index(filter_option)], live.graph.image_seek_s)
+    inputs = full_command[: full_command.index(filter_option)]
     return [*inputs, filter_option, str(filter_script), *output_arguments]
 
 

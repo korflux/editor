@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import re
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import struct
@@ -402,6 +404,52 @@ class FullEquivalenceTests(LiveStreamTestCase):
                     full = build_ffmpeg_graph(document, validation, canvas_width=160, canvas_height=90, windows=True)
                     self.assertEqual(state.graph, full)
 
+    def test_cached_image_matches_the_previous_looping_decoder_with_alpha_and_windows(self) -> None:
+        """A otimização mantém cada pixel do grafo anterior, inclusive bordas, alfa e o trecho ao vivo."""
+
+        with live_workdir() as workdir:
+            self.install_sources(workdir)
+            # Raster com regiões transparentes e semitransparentes, mais de uma camada e ambos os fits.
+            run_ffmpeg(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                        "color=red@0.4:s=64x48,format=rgba,drawbox=x=0:y=0:w=20:h=20:color=blue@0:t=fill:replace=1",
+                        "-frames:v", "1", "-y", str(workdir / "sources" / "logo.png")])
+            document, validation = load(workdir, SCENARIOS["camada_de_imagem"][0])
+            document["layers"] = [
+                {**document["layers"][0], "start_s": 1.04, "end_s": 3.08, "fit": "contain"},
+                {**document["layers"][0], "start_s": 5.12, "end_s": 7.04, "fit": "crop"},
+            ]
+            document, validation = load(workdir, document)
+            for width, height in ((160, 90), (80, 44)):
+                for windows in (False, True):
+                    with self.subTest(canvas=(width, height), windows=windows):
+                        graph = build_ffmpeg_graph(document, validation, canvas_width=width,
+                                                   canvas_height=height, windows=windows)
+                        # Reconstrói exatamente o ramo anterior: image2 em loop, scale por quadro,
+                        # trim pela timeline inteira. O resto do grafo e as entradas não mudam.
+                        old_text = graph.filter_complex.replace(
+                            "trim=end_frame=1,setpts=PTS-STARTPTS", "trim=duration=8,setpts=PTS-STARTPTS")
+                        old_text = re.sub(r",loop=loop=-1:size=1:start=0,trim=duration=8,setpts=PTS-STARTPTS", "", old_text)
+                        previous = replace(graph, filter_complex=old_text)
+                        comparisons = []
+                        for candidate, legacy in ((previous, True), (graph, False)):
+                            command = graph_arguments(candidate, validation)
+                            option = dependencies.ffmpeg_filter_option()
+                            inputs = command[:command.index(option)]
+                            if legacy:
+                                position = inputs.index("-framerate")
+                                inputs[position:position] = ["-loop", "1"]
+                            script = workdir / "comparison-filter.txt"
+                            script.write_bytes(candidate.filter_complex.encode("utf-8"))
+                            output, frames, pcm = lossless_outputs(candidate, workdir, 25)
+                            run_ffmpeg([*inputs, option, str(script), *output])
+                            comparisons.append(read_outputs(candidate, frames, pcm))
+                        self.assertEqual(comparisons[0].frames, comparisons[1].frames)
+                        self.assertEqual(comparisons[0].pcm, comparisons[1].pcm)
+                        resolution = "full" if width == 160 else "1/2"
+                        for start in (0, 1.04, 2, 3.08, 5.12, 6, 7.04):
+                            state, produced = live_outputs(workdir, document, validation, start, resolution)
+                            self.assert_matches_full(state, produced, comparisons[0])
+
     def test_a_late_start_reads_only_what_feeds_the_rest_of_the_timeline(self) -> None:
         document = SCENARIOS["segmentos"][0]
         with live_workdir() as workdir:
@@ -564,19 +612,21 @@ class ResolutionAndStreamTests(LiveStreamTestCase):
                     self.assertEqual((info["streams"][0]["width"], info["streams"][0]["height"]), dimensions)
             self.assertEqual(list((workdir / ".tmp").iterdir()), [], "o script de filtro deve ser removido")
 
-    def test_image_layer_inputs_are_seeked_to_the_start_instead_of_decoded_from_zero(self) -> None:
+    def test_image_layer_repeats_one_scaled_frame_without_looping_or_seeking_the_input(self) -> None:
+        """Imagem estática mantém o relógio do ao vivo sem releitura nem escala por quadro."""
         with live_workdir() as workdir:
             self.install_sources(workdir)
             document, validation = load(workdir, SCENARIOS["camada_de_imagem"][0])
-            for start, expected in ((0.0, []), (4.0, ["-ss", "4"])):
+            for start in (0.0, 4.0):
                 with self.subTest(t=start):
                     state = live.prepare_live(workdir, document, validation, start, "full")
                     with live.filter_script(workdir, state) as script:
                         arguments = live.stream_arguments(state, script)
-                    looped = arguments.index("-loop")
-                    self.assertEqual(arguments[looped + 1 : looped + 4], ["1", "-framerate", "25"])
-                    self.assertEqual(arguments[looped + 4 : looped + 4 + len(expected)], expected)
-                    self.assertEqual(state.graph.image_seek_s, start)
+                    self.assertNotIn("-loop", arguments)
+                    image = arguments.index("-framerate")
+                    self.assertEqual(arguments[image + 1 : image + 3], ["25", "-i"])
+                    self.assertIn("trim=end_frame=1,setpts=PTS-STARTPTS,format=rgba,scale=", state.graph.filter_complex)
+                    self.assertIn("loop=loop=-1:size=1:start=0", state.graph.filter_complex)
 
     def test_scrub_failure_is_a_safe_error_and_leaves_no_temporary_file(self) -> None:
         with live_workdir() as workdir:

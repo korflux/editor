@@ -238,8 +238,8 @@ def read_static(name: str) -> tuple[bytes, str] | None:
     return entry.read_bytes(), content_type
 
 
-def _invalid_page() -> tuple[bytes, str]:
-    """Tela "Sessão inválida" e a CSP dela: a base da spec mais o hash do `<style>` embutido.
+def _invalid_page(code: str = "UI_TOKEN_INVALID") -> tuple[bytes, str]:
+    """Telas "Sessão inválida" e "Limite de sessões", com texto fixo e CSP pelo hash do estilo embutido.
 
     A tela não pode depender de estático (todo estático exige sessão) nem de estilo em linha sem
     permissão; o hash do bloco de estilo, calculado sobre o texto como o navegador o lê (quebras de
@@ -250,6 +250,12 @@ def _invalid_page() -> tuple[bytes, str]:
     if found is None:
         raise CliError(code="INTERNAL_ERROR", message="Falha interna.", exit_code=EXIT_CODES["INTERNAL"])
     page = found[0]
+    if code == "UI_SESSION_LIMIT":
+        page = page.replace(b"Sess\xc3\xa3o inv\xc3\xa1lida", "Limite de sessões".encode("utf-8"))
+        page = page.replace(
+            b"Abra a interface de novo pela CLI: editor ui start.",
+            "Duas sessões estão ativas. Feche uma delas e aguarde dois minutos antes de tentar novamente.".encode("utf-8"),
+        )
     policy = CONTENT_SECURITY_POLICY
     match = _STYLE_BLOCK.search(page)
     if match is not None:
@@ -520,12 +526,12 @@ class UiRequestHandler(BaseHTTPRequestHandler):
                 pass
 
     def _send_error(self, path: str, error: CliError, status: int | None = None, headers: Mapping[str, str] | None = None) -> None:
-        """Responde um erro de domínio: a tela "Sessão inválida" para navegação sem sessão, JSON no resto."""
+        """Responde navegação sem sessão ou acima do limite com página segura; APIs recebem o envelope JSON."""
 
         self._drain_body()
         status = status if status is not None else status_for(error)
-        if error.code == "UI_TOKEN_INVALID" and not path.startswith(API_PREFIX):
-            page, policy = _invalid_page()
+        if error.code in {"UI_TOKEN_INVALID", "UI_SESSION_LIMIT"} and not path.startswith(API_PREFIX):
+            page, policy = _invalid_page(error.code)
             # A tela não traz o código no corpo; o cabeçalho o deixa legível a quem chama por script.
             self._send(
                 status,
@@ -729,6 +735,9 @@ class UiRequestHandler(BaseHTTPRequestHandler):
             ]
         data = {
             "workdir_name": self.server.root.name,
+            # Identidade opaca e estável: preferências do navegador atravessam a troca de porta,
+            # sem publicar caminho nem misturar trabalhos com nomes iguais.
+            "preferences_id": hashlib.sha256(os.fsencode(self.server.root)).hexdigest(),
             "state": reading.status,
             "error": reading.error,
             "resolutions": list(live.RESOLUTIONS),

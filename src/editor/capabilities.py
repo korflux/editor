@@ -11,11 +11,11 @@ from .analysis.audio import MAX_AUDIO_WINDOW_SECONDS, MAX_AUDIO_WINDOWS
 from .analysis import captions as caption_suggestions
 from .plan import schema as caption_schema
 from .contracts import CLI_VERSION
-# `_APPROVAL_FIELDS` e `_SOURCE_APPROVAL_FIELDS` são a allowlist estrutural que `verify_approval` aplica ao
+# `APPROVAL_FIELDS` e `SOURCE_APPROVAL_FIELDS` são a allowlist estrutural que `verify_approval` aplica ao
 # registro; o inventário a lê daqui para nunca divergir do que a full de fato aceita.
 from .integrity.approval import (
-    _APPROVAL_FIELDS,
-    _SOURCE_APPROVAL_FIELDS,
+    APPROVAL_FIELDS,
+    SOURCE_APPROVAL_FIELDS,
     APPROVAL_SCHEMA_VERSION,
     MAX_APPROVAL_BYTES,
 )
@@ -305,8 +305,8 @@ def _approval_capabilities(status: str) -> dict[str, Any]:
         ),
         "schema_version": APPROVAL_SCHEMA_VERSION,
         "obsolete_versions": list(range(1, APPROVAL_SCHEMA_VERSION)),
-        "record_fields": sorted(_APPROVAL_FIELDS),
-        "source_fields": sorted(_SOURCE_APPROVAL_FIELDS),
+        "record_fields": sorted(APPROVAL_FIELDS),
+        "source_fields": sorted(SOURCE_APPROVAL_FIELDS),
         "max_record_bytes": MAX_APPROVAL_BYTES,
         "binds": ["plan_sha256", "sources"],
         "requires_preview": False,

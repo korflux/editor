@@ -32,12 +32,6 @@ class FfmpegGraph:
     has_audio: bool
     input_windows: tuple[DecodeWindow | None, ...] = ()
     """Janela de cada entrada (paralela a `input_source_ids`); vazio ou `None` é leitura completa sem `-ss`."""
-    image_seek_s: float = 0.0
-    """`-ss` que o comando deve dar às entradas de imagem em loop (render ao vivo a partir de T); 0 é sem seek.
-
-    Uma camada de imagem lê a imagem em loop desde 0 (decodificação a cada quadro); o ao vivo pula o
-    trecho anterior com o seek de entrada, que o grafo desconta em `_media_layer_filter`.
-    """
 
 
 class _GraphInputs:
@@ -933,8 +927,8 @@ def _media_layer_filter(
 
     No render ao vivo a partir de T (`window_start_s`), `skip_s` é o avanço da camada de vídeo que já
     começou antes de T: o recorte parte de `in_s + skip_s` e o PTS global o põe em T (`start_s +
-    skip_s`). A imagem lê com `-ss T` (`FfmpegGraph.image_seek_s`), então seu fluxo já nasce em T e
-    só recebe o relógio global de volta. Com 0 e 0 a camada é a de sempre.
+    skip_s`). A imagem é decodificada, formatada e escalada uma vez; o filtro `loop` repete esse
+    quadro já pronto, preservando alfa e a grade de 25 fps, inclusive no ao vivo a partir de T.
     """
 
     left = min(canvas_width - 1, int(float(layer["x"]) * canvas_width))
@@ -965,19 +959,20 @@ def _media_layer_filter(
         )
     else:
         input_index, _ = inputs.locate(str(layer["source_id"]), 0.0)
-        if window_start_s > 0:
-            source = (
-                f"trim=duration={_number(timeline_duration - window_start_s)},"
-                f"setpts=PTS-STARTPTS+{_clock_shift(window_start_s)}"
-            )
-        else:
-            source = f"trim=duration={_number(timeline_duration)},setpts=PTS-STARTPTS"
+        source = "trim=end_frame=1,setpts=PTS-STARTPTS"
     filters = [
         f"[{input_index}:v:0]{source},format=rgba,"
         f"scale=w={width}:h={height}:force_original_aspect_ratio={scale_mode}"
     ]
     if fit == "crop":
         filters.append(f",crop=w={width}:h={height}:x=(iw-ow)/2:y=(ih-oh)/2")
+    if layer["type"] == "image":
+        # Cache só depois das operações estáticas caras; nenhuma releitura da imagem por quadro.
+        filters.append(
+            f",loop=loop=-1:size=1:start=0,trim=duration={_number(timeline_duration - window_start_s)},"
+            "setpts=PTS-STARTPTS"
+            + (f"+{_clock_shift(window_start_s)}" if window_start_s > 0 else "")
+        )
     filters.append(f"[{scaled}]")
     x = str(left) if fit == "crop" else f"{left}+({width}-w)/2"
     y = str(top) if fit == "crop" else f"{top}+({height}-h)/2"
@@ -1176,5 +1171,4 @@ def build_ffmpeg_graph(
         input_source_ids=tuple(inputs.source_ids),
         input_windows=tuple(inputs.windows),
         has_audio=has_audio,
-        image_seek_s=live_start,
     )

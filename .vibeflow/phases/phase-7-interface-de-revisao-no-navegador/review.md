@@ -1,6 +1,6 @@
 # Review: interface de revisão no navegador com player ao vivo
 # Alvo: phase-7-interface-de-revisao-no-navegador
-# Status: aprovado
+# Status: rascunho
 
 ## Contexto
 
@@ -27,7 +27,7 @@
 | A5 | ok | `ui/static/timeline.js`, `ui/selection.py`; seleção conferida contra `plan validate` |
 | A6 | ok | `ui/state.py` (vigia, última versão válida); prova visual T4 |
 | A7 | ok | `ui/usage.py`, `render/live.py` (fonte inteira); prova visual T5 |
-| A8 | partial | texto conferido por teste e `writeText` chamado com ele; cópia real ao clipboard em Chrome normal não lida (R3, não bloqueia) |
+| A8 | ok | R3: clique e leitura real do clipboard no Chrome; captura igual à API após normalizar CRLF (2026-10-10) |
 | A9 | ok | `ui/server.py` `_serve_approve`, `integrity/approval.py`; recusas 409 sem gravar |
 | A10 | ok | `integrity/approval.py`, `render/full.py`; `tests/test_approval.py`, `tests/test_full_render.py`, E2E |
 | A11 | ok | `capabilities.py` lido das constantes; `AGENTS.md` e skill coerentes com o código |
@@ -43,14 +43,14 @@ nenhum bloqueio
 
 ### Optional / Nit
 
-- [ ] R1: **Nit** - `src/editor/ui/approval.py` (`_start_check`) - o docstring promete conferência das fontes "uma thread por vez", mas `_pending` é sobrescrito por uma chave nova e outra thread de `verify_approval` começa enquanto a anterior ainda lê as fontes; alternar versões do plano com aprovação vinda da CLI pode somar leituras completas de fontes grandes em paralelo - remédio: vibe-implement serializar a conferência (trava ou thread única) ou corrigir o docstring - prova: teste com duas chaves seguidas e contagem de threads ativas.
-- [ ] R2: **Nit** - `src/editor/capabilities.py` - importa `_APPROVAL_FIELDS` e `_SOURCE_APPROVAL_FIELDS`, nomes privados de `integrity/approval.py` - remédio: vibe-implement expor constantes públicas (`APPROVAL_FIELDS`, `SOURCE_APPROVAL_FIELDS`) e usá-las nos dois lados - prova: `unittest tests.test_capabilities tests.test_approval`.
-- [ ] R3: **Optional** - A8 - a cópia real à área de transferência não foi lida num Chrome normal (o navegador integrado nega a permissão); o código chama `navigator.clipboard.writeText` com o texto do servidor e o fallback manual foi provado - remédio: o operador conferir uma vez colando o texto num editor - prova: texto colado igual ao de `/api/selection`.
-- [ ] R4: **Nit** - `src/editor/ui/server.py` (`_send_error`) - `UI_SESSION_LIMIT` numa navegação (`GET /?token=` com duas sessões ativas) devolve o envelope JSON cru em vez de uma página como a "Sessão inválida" - remédio: vibe-implement servir página curta para `UI_SESSION_LIMIT` fora de `/api/` - prova: teste HTTP com terceira sessão por navegação.
+- [x] R1: **Nit** - `src/editor/ui/approval.py` (`_start_check`) - o docstring promete conferência das fontes "uma thread por vez", mas `_pending` é sobrescrito por uma chave nova e outra thread de `verify_approval` começa enquanto a anterior ainda lê as fontes; alternar versões do plano com aprovação vinda da CLI pode somar leituras completas de fontes grandes em paralelo - remédio: vibe-implement serializar a conferência (trava ou thread única) ou corrigir o docstring - prova: teste com duas chaves seguidas e contagem de threads ativas.
+- [x] R2: **Nit** - `src/editor/capabilities.py` - importa `_APPROVAL_FIELDS` e `_SOURCE_APPROVAL_FIELDS`, nomes privados de `integrity/approval.py` - remédio: vibe-implement expor constantes públicas (`APPROVAL_FIELDS`, `SOURCE_APPROVAL_FIELDS`) e usá-las nos dois lados - prova: `unittest tests.test_capabilities tests.test_approval`.
+- [x] R3: **Optional** - A8 - a cópia real à área de transferência não foi lida num Chrome normal (o navegador integrado nega a permissão); o código chama `navigator.clipboard.writeText` com o texto do servidor e o fallback manual foi provado - remédio: o operador conferir uma vez colando o texto num editor - prova: texto colado igual ao de `/api/selection`.
+- [x] R4: **Nit** - `src/editor/ui/server.py` (`_send_error`) - `UI_SESSION_LIMIT` numa navegação (`GET /?token=` com duas sessões ativas) devolve o envelope JSON cru em vez de uma página como a "Sessão inválida" - remédio: vibe-implement servir página curta para `UI_SESSION_LIMIT` fora de `/api/` - prova: teste HTTP com terceira sessão por navegação.
 
 ## Visual
 
-- Browser: navegador integrado (`mcp__Claude_Browser__*`), evidência das T4 a T7 reaproveitada: estáticos inalterados depois da T6 e T7 sem mudança de interface; rotas `/` em Montagem e Fonte, 1440x900, 1024x700 e 900x700, popup de aprovação, recarga e faixa de erro, console sem CSP e rede só em 127.0.0.1.
+- Browser: navegador integrado (`mcp__Claude_Browser__*`), evidência das T4 a T7 reaproveitada: estáticos inalterados depois da T6 e T7 sem mudança de interface; rotas `/` em Montagem e Fonte, 1440 x 900, 1024x700 e 900 x 700, popup de aprovação, recarga e faixa de erro, console sem CSP e rede só em 127.0.0.1.
 - Leitura: ok, exceto a cópia real ao clipboard (R3).
 
 ## Segurança
@@ -110,3 +110,14 @@ finalização Git da phase (após confirmação humana)
 - Abriu: R1, R2, R3, R4 (todos Nit/Optional)
 - Fechou: nenhum
 - Veredito desta etapa: Approve final, confirmado pelo humano em 2026-10-10
+
+## Correções de 2026-10-10, solicitadas pelo humano
+
+- R1: worker única de hash com fila que guarda somente a chave mais recente; teste retém a primeira leitura e prova máximo de uma leitura ativa e descarte da versão intermediária.
+- R2: APPROVAL_FIELDS e SOURCE_APPROVAL_FIELDS públicas e consumidas por aprovação, capacidades e testes.
+- R3: Chrome, seleção 0 a 0,720 s da fixture workflow; clique real em Copiar para IA, navigator.clipboard.readText retornou texto completo com CRLF. A captura coincide com /api/selection?start=0&end=0.72 após normalização de quebras de linha. Código de cópia intacto.
+- R4: navegação sem vaga recebe página Limite de sessões com status 429 e CSP por hash; API conserva envelope. Inspeção visual 900 x 700: texto legível, sem clipping; HTTP 429 e favicon 401 esperados, sem erro de CSP.
+- .erros-encontrados: colisão do Python global e modo das regras corrigidos no commit `7731a91`; imagem, fonte ausente, preferências e docstring corrigidos e registrados nos respectivos arquivos.
+- Visual integrado: Chrome 1440 x 900, resolução 1/2, volume 0,35, mudo; ui stop/start troca porta 51659 por 60751, preferências restauradas e unmute retorna 0,35. Renomear main.mp4 da fixture exibe SOURCE_INVALID na faixa, mantém última versão e bloqueia aprovação. Fonte restaurada após a prova. Console da montagem sem erros.
+- Gates: gitleaks histórico de 90 commits e diretórios src/tests limpos; pip-audit requirements.lock sem vulnerabilidades; pip check global e venv sem dependências quebradas.
+- A aprovação humana da Etapa 1 permanece histórica. Esta rodada aguarda revisão independente e confirmação final antes de push.

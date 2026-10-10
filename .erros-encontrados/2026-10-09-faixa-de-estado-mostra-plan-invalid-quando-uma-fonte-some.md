@@ -6,3 +6,8 @@
 - **Impacto conhecido:** só de leitura. A faixa traz um código genérico em vez do específico, mas a mensagem é segura e a linha da fonte e o player dizem `SOURCE_INVALID`. Nenhum dado nem a aprovação dependem disso.
 - **Sugestão de correção:** em `PlanState._reload`, quando a validação falha, o `plan.json` não mudou desde a última versão válida e alguma fonte dessa versão deixou de ser arquivo regular, publicar `SOURCE_INVALID` (mensagem de `live.source_unavailable()`) em vez de `PLAN_INVALID`. Muda o contrato do estado fixado pela T3 e o teste citado acima, então fica fora da T5.
 - **Relação com a tarefa atual:** T5 (fonte ausente como "Indisponível" com `SOURCE_INVALID`). A T5 cobre a lista, o player e as rotas; a faixa de estado segue o contrato da T3.
+
+## Correção em 2026-10-10
+
+- **Estado: RESOLVIDO.** PlanState traduz a falha para SOURCE_INVALID quando o plano mantém a assinatura da última versão válida e uma fonte ficou indisponível. Plano realmente alterado/inválido conserva PLAN_INVALID. Teste HTTP atualizado conforme o aceite da spec; navegador 1440x900 confirmou a faixa SOURCE_INVALID ao renomear a fonte da fixture.
+- Evidências integradas: plan.md e review.md da Phase 7, rodada de correções de 2026-10-10.

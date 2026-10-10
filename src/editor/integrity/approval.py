@@ -39,13 +39,13 @@ MAX_APPROVAL_BYTES = 64 * 1024
 """Limite suficiente para o registro local e para impedir payloads arbitrários."""
 APPROVAL_SCHEMA_VERSION = 2
 """Versão do `approval.json`: a v1 (que vinculava `preview_sha256`) é tratada como obsoleta."""
-_APPROVAL_FIELDS = {
+APPROVAL_FIELDS = {
     "schema_version",
     "approved_at",
     "plan_sha256",
     "sources",
 }
-_SOURCE_APPROVAL_FIELDS = {"source_id", "sha256"}
+SOURCE_APPROVAL_FIELDS = {"source_id", "sha256"}
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -199,7 +199,7 @@ def _read_approval(path: Path) -> dict[str, Any]:
         or payload.get("schema_version") != APPROVAL_SCHEMA_VERSION
     ):
         raise _approval_stale("O registro de aprovação usa uma versão obsoleta. Aprove o plano novamente.")
-    if set(payload) != _APPROVAL_FIELDS:
+    if set(payload) != APPROVAL_FIELDS:
         raise _approval_stale("O registro de aprovação não possui o schema esperado.")
 
     approved_at = payload.get("approved_at")
@@ -217,7 +217,7 @@ def _read_approval(path: Path) -> dict[str, Any]:
     if not isinstance(sources, list):
         raise _approval_stale("A lista de fontes da aprovação é inválida.")
     for source in sources:
-        if not isinstance(source, Mapping) or set(source) != _SOURCE_APPROVAL_FIELDS:
+        if not isinstance(source, Mapping) or set(source) != SOURCE_APPROVAL_FIELDS:
             raise _approval_stale("Uma fonte do registro de aprovação é inválida.")
         if not isinstance(source.get("source_id"), str):
             raise _approval_stale("Uma fonte do registro de aprovação é inválida.")

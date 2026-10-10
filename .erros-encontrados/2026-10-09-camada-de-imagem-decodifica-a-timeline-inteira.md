@@ -7,3 +7,8 @@
 - **Impacto conhecido ou provável:** custo de CPU linear na duração da timeline por camada de imagem, sem efeito no resultado. Pesa em planos longos com várias camadas de imagem.
 - **Sugestão de correção:** limitar a imagem ao intervalo da camada, com `-ss`/`-t` na entrada (o `-ss` em imagem em loop pula sem decodificar, medido) e o PTS global em `start_s`, ou `loop` do filtro sobre um único quadro decodificado. Muda o texto do `filter_complex` das camadas de imagem, então exige regravar os goldens e provar `framemd5` igual.
 - **Relação com a tarefa atual:** achado ao medir o custo de T tardio no render ao vivo (T1 da phase 7). O render ao vivo já evita o custo para o trecho anterior a T (`-ss` na entrada de imagem, `FfmpegGraph.image_seek_s`); a preview e a full seguem como estão, fora do escopo da T1.
+
+## Correção em 2026-10-10
+
+- **Estado: RESOLVIDO.** Imagem decodificada, convertida e escalada uma única vez; filtro loop repete o quadro pronto. Removido o seek específico de imagem no ao vivo. A prova de test_live_stream compara framemd5 e PCM com o grafo anterior, incluindo alfa, contain/crop, duas camadas, janelas e vários inícios do stream.
+- Evidências integradas: plan.md e review.md da Phase 7, rodada de correções de 2026-10-10.

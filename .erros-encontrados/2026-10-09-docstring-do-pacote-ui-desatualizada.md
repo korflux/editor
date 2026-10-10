@@ -6,3 +6,8 @@
 - **Impacto conhecido:** só documentação. O código e o `AGENTS.md` (seção "Interface de revisão, Phase 7") estão corretos; quem lê só o `__init__.py` acha que a aprovação ainda não existe e não encontra dois dos módulos.
 - **Sugestão de correção:** reescrever a frase final para "a única escrita é a aprovação (`POST /api/approve`, `approval.json` v2)" e acrescentar `usage` e `approval` ao mapa do pacote.
 - **Relação com a tarefa atual:** T7 (contrato da interface e documentação). O arquivo fica fora dos paths permitidos da T7, então não foi alterado.
+
+## Correção em 2026-10-10
+
+- **Estado: RESOLVIDO.** Docstring de editor.ui atualizado com usage, approval e a aprovação v2 já implementada via POST /api/approve.
+- Evidências integradas: plan.md e review.md da Phase 7, rodada de correções de 2026-10-10.

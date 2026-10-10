@@ -8,7 +8,9 @@ Mapa do pacote:
 - `state`: estado do plano (revalidação por arquivo alterado) e a visão entregue à interface;
 - `selection`: mapeamento de um intervalo da montagem para segmentos, camadas e legendas e o texto "Copiar para IA";
 - `playback`: abertura, relé e encerramento do FFmpeg do stream e do quadro de scrub;
+- `usage`: intervalos de uso de cada fonte na montagem, para o modo Fonte;
+- `approval`: conferência em segundo plano e selo da aprovação exibida;
 - `static/`: HTML, CSS e JS empacotados, a única mídia que o servidor lê do disco.
 
-A interface é só leitura (SEC-01): a única escrita futura é a aprovação, que chega na T6 pela rota própria.
+A interface é só leitura (SEC-01): a única escrita editorial é a aprovação (`POST /api/approve`, `approval.json` v2).
 """

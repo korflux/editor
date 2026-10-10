@@ -45,6 +45,7 @@ function apply(data) {
   const firstRead = state.workdirName === "";
   state.connectionLost = false;
   state.workdirName = data.workdir_name;
+  state.preferencesId = data.preferences_id;
   state.resolutions = data.resolutions;
   if (firstRead) emit("workdir");
   state.status = data.state;

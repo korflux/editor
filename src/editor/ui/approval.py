@@ -74,6 +74,8 @@ class ApprovalTracker:
         self._lock = threading.Lock()
         self._known: tuple[_Key, dict[str, str | None]] | None = None
         self._pending: _Key | None = None
+        self._queued: tuple[_Key, PlanSnapshot] | None = None
+        self._running = False
 
     def status(self, reading: StateReading) -> dict[str, str | None]:
         """Situação da aprovação para a leitura atual do plano; nunca bloqueia na leitura das fontes."""
@@ -117,6 +119,7 @@ class ApprovalTracker:
             self._known = ((file_key, plan_sha256, sources_fingerprint), _result(CURRENT, approved_at))
             # Uma conferência em andamento para outra chave fica sem efeito (ver `_verify`).
             self._pending = None
+            self._queued = None
 
     def _remember(self, key: _Key, result: dict[str, str | None]) -> dict[str, str | None]:
         """Guarda um resultado conclusivo para a chave e o devolve."""
@@ -132,24 +135,36 @@ class ApprovalTracker:
             if self._pending == key:
                 return
             self._pending = key
+            self._queued = (key, snapshot)
+            if self._running:
+                return
+            self._running = True
         threading.Thread(
-            target=self._verify, args=(key, snapshot), name="editor-ui-approval-check", daemon=True
+            target=self._verify, name="editor-ui-approval-check", daemon=True
         ).start()
 
-    def _verify(self, key: _Key, snapshot: PlanSnapshot) -> None:
+    def _verify(self) -> None:
         """Conferência completa pela mesma `verify_approval` da full; o resultado só vale se a chave ainda é a pendente.
 
         Falha de qualquer tipo resolve como em `_conclusive` (nunca "em dia" sem a prova) e não derruba a thread.
         """
 
-        try:
-            result = _result(CURRENT, verify_approval(self._root, snapshot.validation)["approved_at"])
-        except Exception as error:
-            result = _conclusive(error)
-        with self._lock:
-            if self._pending != key:
-                return
-            self._pending = None
-            # Registro trocado durante a conferência: o resultado é do arquivo antigo e o próximo estado refaz.
-            if stat_key(self._path) == key[0]:
-                self._known = (key, result)
+        # Uma única worker consome a versão mais recente. Mudanças durante o hash substituem a fila,
+        # sem somar leituras concorrentes nem gastar hashes nas versões intermediárias abandonadas.
+        while True:
+            with self._lock:
+                if self._queued is None:
+                    self._running = False
+                    return
+                key, snapshot = self._queued
+                self._queued = None
+            try:
+                result = _result(CURRENT, verify_approval(self._root, snapshot.validation)["approved_at"])
+            except Exception as error:
+                result = _conclusive(error)
+            with self._lock:
+                if self._pending == key:
+                    self._pending = None
+                    # Registro trocado: o resultado antigo não pode afirmar que o novo está em dia.
+                    if stat_key(self._path) == key[0]:
+                        self._known = (key, result)

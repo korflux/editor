@@ -348,6 +348,12 @@ class PlanState:
         try:
             snapshot = self._validate()
         except CliError as error:
+            previous = self.read().snapshot
+            if (error.code == "PLAN_INVALID" and previous is not None
+                    and self._validated is not None and signature[0] == self._validated[0]
+                    and unavailable_source_ids(previous.validation)):
+                # Só uma fonte da mesma versão válida sumiu: preserve o erro específico do modo Fonte.
+                error = source_unavailable()
             failure = _error_dict(error)
         except Exception:
             # Falha inesperada nunca derruba a vigia nem vaza detalhe: a tela vê só o código genérico.

@@ -6,3 +6,8 @@
 - **Impacto conhecido:** só conveniência. Nenhum dado do trabalho nem da aprovação depende disso. O operador que reabre a interface a cada pedido da IA precisa escolher a resolução de novo.
 - **Sugestão de correção:** o `ui start` poderia reutilizar a última porta usada para o mesmo trabalho (guardada no registro de `.tmp` ou ao lado do plano) quando ela estiver livre, o que mantém a origem e o `localStorage`. Alternativa: guardar a preferência em cookie sem `HttpOnly` (cookies não são isolados por porta), com prefixo e nome do trabalho. Qualquer das duas muda a T3 (instância e sessão), então fica fora da T4.
 - **Relação com a tarefa atual:** T4 (player e resolução lembrada por trabalho). A T4 grava com `try/catch` conforme pedido e funciona dentro da mesma instância; a limitação é do endereço efêmero.
+
+## Correção em 2026-10-10
+
+- **Estado: RESOLVIDO.** Preferências não sensíveis em cookies SameSite=Strict separados dos cookies de sessão HttpOnly. Namespace pelo SHA-256 do caminho do trabalho, evitando colisão de nomes; GET /api/state publica somente preferences_id. Navegador 1440 x 900: resolução 1/2, volume 0,35 e mudo sobreviveram a ui stop/start com porta 51659 passando a 60751; desativar mudo restaurou 0,35. Teste HTTP cobre identidade estável e separação de trabalhos homônimos.
+- Evidências integradas: plan.md e review.md da Phase 7, rodada de correções de 2026-10-10.

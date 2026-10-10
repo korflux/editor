@@ -460,7 +460,8 @@ def _build_ffmpeg_arguments(
                 EXIT_CODES["OPERATION"],
             )
         if record["kind"] == "image":
-            arguments.extend(["-loop", "1", "-framerate", "25"])
+            # Um quadro decodificado; o grafo repete a imagem já escalada, não a entrada image2.
+            arguments.extend(["-framerate", "25"])
         elif gpu_decode and record["kind"] == "video":
             arguments.extend(["-hwaccel", dependencies.GPU_HWACCEL])
         if window is not None:
