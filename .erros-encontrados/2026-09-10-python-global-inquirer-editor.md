@@ -10,3 +10,8 @@
 - **Venv:** `.venv\Scripts\python.exe -B -m pip check` -> `No broken requirements found`; `inquirer` não está instalado no venv e o `editor` editável local não tem dependentes quebrados.
 - **Global:** `python -m pip check` ainda falha com `inquirer 3.4.1 has requirement editor>=1.6.0, but you have editor 0.1.0`; `pip show editor` confirma instalação editável a partir de `A:\Projetos\editor`, que sombreia o pacote PyPI `editor` exigido pelo `inquirer` (colisão de nomes, projeto externo `open-interpreter` depende de `inquirer`).
 - **Decisão:** manter sem alteração no global (remover afetaria outros projetos) e sem renomear o pacote (quebra major fora do escopo); caminho suportado permanece o venv provisionado por `scripts/install.ps1`.
+
+## Correção em 2026-10-10
+
+- **Estado: RESOLVIDO.** Removida a instalação editável antiga do projeto no Python global e restaurado `editor==1.6.6` do PyPI, dependência de `inquirer`. A CLI de vídeo permanece isolada no `.venv` do projeto; nenhuma renomeação de contrato foi necessária.
+- **Prova:** `python -m pip check` e `.venv\Scripts\python.exe -m pip check` -> `No broken requirements found`; `python -I -c "import editor, inquirer; print(editor.__file__)"` importa o pacote global correto e o inquirer; `.venv\Scripts\python.exe -m editor --version` -> `editor 2.0.0`.
