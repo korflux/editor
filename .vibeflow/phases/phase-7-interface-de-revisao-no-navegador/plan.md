@@ -217,3 +217,10 @@ rota: max
 - **Arquivos de código:** src/editor/capabilities.py, integrity/approval.py, render/ffmpeg_graph.py, render/live.py, render/preview.py, ui/__init__.py, ui/approval.py, ui/server.py, ui/state.py, ui/static/reload.js, ui/static/store.js; testes test_capabilities.py, test_live_stream.py, test_ui_server.py.
 - **Visual:** necessária e executada. Chrome 1440x900, `/` da fixture: resolução 1/2, volume 0,35 e mudo persistem após restart em outra porta; fonte removida gera faixa SOURCE_INVALID e bloqueia aprovação. Limite de sessões: página segura e legível em 900x700. Console da montagem limpo; página de limite com HTTP 429 e favicon 401 esperados. R3 conforme leitura real do clipboard acima.
 - **Gates:** gitleaks histórico e árvore de src/tests limpos; pip-audit sem vulnerabilidades; git diff --check limpo após normalizar fim dos registros.
+
+### Correção R6, 2026-10-10
+
+- Concluída: `_valid_plan_key` guarda exclusivamente a assinatura do último plano válido; `_validated` continua registrando tentativas para a vigia não repeti-las.
+- Arquivos: `src/editor/ui/state.py`, `tests/test_ui_server.py`.
+- Prova: regressão nova falhou antes do patch e passou depois; `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server.PlanStateTests tests.test_ui_server.SourceUsageTests -q` -> 12 testes OK, 6,214 s. Jornada JSON inválido, fonte removida, recuperação de fonte e plano preserva precedência dos erros e snapshot; plano válido com fonte ausente mantém SOURCE_INVALID.
+- Visual: reaproveitada, sem mudança de layout ou texto; classificação de erros coberta por estado real. Próximo passo: re-review do R6.

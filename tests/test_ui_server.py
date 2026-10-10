@@ -1417,6 +1417,44 @@ class PlanStateTests(UiTestCase):
                 self.assertEqual(broken["error"]["code"], "SOURCE_INVALID")
                 self.assertEqual(broken["plan"]["plan_sha256"], ready["plan"]["plan_sha256"])
 
+    def test_invalid_json_keeps_its_error_when_a_source_disappears_and_then_recovers(self) -> None:
+        """Uma fonte ausente não mascara JSON inválido; só o plano da última carga válida recebe SOURCE_INVALID."""
+
+        with ui_workdir() as workdir:
+            self.install(workdir, simple_plan())
+            state = PlanState(workdir)
+            state.refresh()
+            good = state.read().snapshot
+            self.assertEqual(state.read().status, "ready")
+            (workdir / "plan.json").write_text("{ JSON inválido", encoding="utf-8")
+            state.refresh()
+            state.refresh()
+            original_error = state.read().error
+            self.assertEqual(original_error["code"], "PLAN_INVALID")
+            source = workdir / "sources" / "main.mp4"
+            moved = workdir / "main-backup.mp4"
+            source.rename(moved)
+            state.refresh()
+            state.refresh()
+            self.assertEqual(state.read().error, original_error)
+            self.assertIs(state.read().snapshot, good)
+            moved.rename(source)
+            state.refresh()
+            state.refresh()
+            self.assertEqual(state.read().error, original_error)
+            self.write_plan(workdir, simple_plan())
+            state.refresh()
+            state.refresh()
+            self.assertEqual((state.read().status, state.read().error), ("ready", None))
+            source.rename(moved)
+            state.refresh()
+            state.refresh()
+            self.assertEqual((state.read().status, state.read().error["code"]), ("outdated", "SOURCE_INVALID"))
+            moved.rename(source)
+            state.refresh()
+            state.refresh()
+            self.assertEqual((state.read().status, state.read().error), ("ready", None))
+
     def test_a_plan_that_is_invalid_from_the_start_is_reported_as_invalid(self) -> None:
         with ui_workdir() as workdir:
             (workdir / "plan.json").write_text("[]", encoding="utf-8")

@@ -249,6 +249,9 @@ class PlanState:
         self._reading = StateReading(snapshot=None, error=None, loaded=False)
         self._source_paths: tuple[str, ...] = ()
         self._validated: tuple[Any, Any] | None = None
+        # A vigia memoriza também tentativas fracassadas em `_validated`, para não repeti-las.
+        # A classificação de fonte ausente precisa da assinatura da última carga bem-sucedida.
+        self._valid_plan_key: tuple[int, int] | None = None
         self._pending: tuple[Any, Any] | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -350,7 +353,7 @@ class PlanState:
         except CliError as error:
             previous = self.read().snapshot
             if (error.code == "PLAN_INVALID" and previous is not None
-                    and self._validated is not None and signature[0] == self._validated[0]
+                    and signature[0] == self._valid_plan_key
                     and unavailable_source_ids(previous.validation)):
                 # Só uma fonte da mesma versão válida sumiu: preserve o erro específico do modo Fonte.
                 error = source_unavailable()
@@ -359,6 +362,7 @@ class PlanState:
             # Falha inesperada nunca derruba a vigia nem vaza detalhe: a tela vê só o código genérico.
             failure = {"code": "INTERNAL_ERROR", "message": "Falha interna."}
         else:
+            self._valid_plan_key = signature[0]
             self._source_paths = tuple(str(record["path"]) for record in snapshot.validation["sources"])
             # O plano fica com a assinatura de antes da validação (se mudou durante ela, o próximo ciclo
             # revalida) e as fontes, da lista nova, medidas agora.

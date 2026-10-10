@@ -11,3 +11,4 @@
 
 - **Estado: RESOLVIDO.** PlanState traduz a falha para SOURCE_INVALID quando o plano mantém a assinatura da última versão válida e uma fonte ficou indisponível. Plano realmente alterado/inválido conserva PLAN_INVALID. Teste HTTP atualizado conforme o aceite da spec; navegador 1440x900 confirmou a faixa SOURCE_INVALID ao renomear a fonte da fixture.
 - Evidências integradas: plan.md e review.md da Phase 7, rodada de correções de 2026-10-10.
+- **Refinamento R6:** assinatura da última validação bem-sucedida separada das tentativas fracassadas. JSON inválido seguido de fonte removida continua PLAN_INVALID; 12 testes de estado/uso de fontes verdes, com reprodução vermelha antes do patch.

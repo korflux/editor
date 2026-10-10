@@ -1,6 +1,6 @@
 # Review: interface de revisão no navegador com player ao vivo
 # Alvo: phase-7-interface-de-revisao-no-navegador
-# Status: rascunho
+# Status: request-changes
 
 ## Contexto
 
@@ -39,7 +39,7 @@
 
 ## Checklist de correções
 
-nenhum bloqueio
+- [x] R6: **Required** - `src/editor/ui/state.py:353` - a tradução para `SOURCE_INVALID` compara `signature[0]` com `_validated[0]`, mas `_validated` também recebe a assinatura de validação fracassada ao fim de `_reload`. Reprodução: carregar plano válido, escrever JSON inválido e atualizar duas vezes produz `PLAN_INVALID`; remover uma fonte e atualizar duas vezes passa a `SOURCE_INVALID`, embora o JSON continue inválido. A correção mascara o erro original e contradiz a condição registrada de preservar `PLAN_INVALID` para plano realmente inválido. Remédio: vibe-implement comparar com a assinatura que originou o último snapshot válido, ou condicionar a tradução a uma falha efetivamente causada pela fonte; cobrir a sequência combinada e a recuperação. Prova: reprodução da Etapa 2 deve manter `PLAN_INVALID`, preservando o caso de plano intacto com fonte ausente (`SOURCE_INVALID`). R5 fica reservado à nomenclatura de infraestrutura usada pelo coordenador.
 
 ### Optional / Nit
 
@@ -51,26 +51,26 @@ nenhum bloqueio
 ## Visual
 
 - Browser: navegador integrado (`mcp__Claude_Browser__*`), evidência das T4 a T7 reaproveitada: estáticos inalterados depois da T6 e T7 sem mudança de interface; rotas `/` em Montagem e Fonte, 1440 x 900, 1024x700 e 900 x 700, popup de aprovação, recarga e faixa de erro, console sem CSP e rede só em 127.0.0.1.
-- Leitura: ok, exceto a cópia real ao clipboard (R3).
+- Leitura da Etapa 1: cópia real pendente. R3 comprovado e fechado na Etapa 2 pela evidência de Chrome abaixo.
 
 ## Segurança
 
 - Borda HTTP (`ui/server.py`): ordem Host → sessão → Origin → rota/método → query/corpo antes de abrir arquivo ou processo; `Host` exato contra DNS rebinding; token e cookie comparados com `hmac.compare_digest`; cookie `HttpOnly`, `SameSite=Strict`, nome com a porta; token sai da URL por 302; POST exige `Origin` própria; sem CORS. Query até 2 KiB e 32 caracteres por valor, decimais sem sinal nem expoente, `source_id` pelo padrão do trabalho e existente no plano; corpo só no POST, JSON sem chave repetida, só os dois campos de 64 hex, até 1 KiB; `Transfer-Encoding` recusado.
 - Arquivos: estáticos por `STATIC_NAME_PATTERN` (sem separador) e só dentro do pacote; mídia só pelos caminhos validados do plano ou do proxy; nenhum caminho vindo do navegador.
 - Processos: FFmpeg sem shell, stdin e stderr descartados; um por tipo e sessão (ponytail do instante de sobreposição registrado); prazos de primeiro byte e de pausa de 30 s; kill na troca, no descarte da sessão e no encerramento; `ui stop` só mata a árvore depois de provar identidade e pid pela porta (registro forjado não mata outro processo, coberto por teste).
-- Segredos e logs: token só no registro `.tmp` e no envelope de `ui start`; log com método, rota casada e status; servidor sem stdout/stderr herdado (coberto por teste); erros sem caminho nem stderr. Frontend sem `innerHTML`/`eval`; `localStorage` só para a resolução.
+- Segredos e logs: token só no registro `.tmp` e no envelope de `ui start`; log com método, rota casada e status; servidor sem stdout/stderr herdado (coberto por teste); erros sem caminho nem stderr. Frontend sem `innerHTML`/`eval`; desde a Etapa 2, preferências não sensíveis em cookies próprios por trabalho, separados da autenticação.
 - Aprovação: hash do plano e impressão conferidos antes do SHA-256 das fontes e a impressão de novo depois, publicação atômica; plano alterado depois do carregamento grava nada (testado com troca de fonte durante o hash). Limitação conhecida e registrada: troca de fonte que preserve tamanho e `mtime_ns` escapa da impressão (o SHA-256 gravado e conferido pela full cobre o conteúdo).
 - Nada explorável encontrado no que o diff tocou.
 
 ## Notas
 
 - `render/live.py` documenta as diferenças de áudio com `limiter`/`loudnorm` ligados e de quadros com taxas misturadas; ambas estão em `AGENTS.md` e na skill, fora do que A3 prova (plano padrão e taxa única).
-- Registros fora do escopo da phase em `.erros-encontrados/2026-10-09-*.md` (camada de imagem, faixa de estado com `PLAN_INVALID`, preferências por porta, docstring do pacote `ui`) seguem abertos e não bloqueiam.
+- Os quatro registros de 2026-10-09 receberam correção nesta rodada. A tradução de erro de fonte exige o complemento R6; imagem, preferências e docstring foram conferidos. Registros de Python global e modo Git das regras também têm resolução e prova anexadas.
 
 ## Veredito vigente
 
-- [x] **Approve**: nenhum Critical/Required em `[ ]`
-- [ ] **Request changes**: há Critical/Required em `[ ]`
+- [ ] **Approve**: nenhum Critical/Required em `[ ]`
+- [x] **Request changes**: R6 Required aberto
 - [ ] **Approve com defer**: <qual R* e por quê>
 
 ## Decisões para vigência
@@ -85,9 +85,9 @@ nenhum bloqueio
 
 ## Handoff
 
-finalização Git da phase (após confirmação humana)
+vibe-implement para R6; nova review antes da finalização desta rodada
 
-- [x] Aprovação humana (leu o arquivo e confirmou) em 2026-10-10, com publicação das decisões UI-01, UI-02, UI-03, SEC-01 e APPROVAL-01 e push autorizados
+- [x] Aprovação humana histórica da Etapa 1 (não aprova a Etapa 2), em 2026-10-10, com publicação das decisões UI-01, UI-02, UI-03, SEC-01 e APPROVAL-01 e push autorizados
 
 - Chat: review executada em subagente de contexto limpo (Modo A do `vibe-implement`). Os R* abertos são Nit/Optional e não bloqueiam; podem entrar numa correção posterior por subagente corretor, se o humano quiser. Após Approve e confirmação humana, o coordenador faz a finalização Git da phase. O `review.md` vivo e o diff são a ponte.
 
@@ -121,3 +121,49 @@ finalização Git da phase (após confirmação humana)
 - Visual integrado: Chrome 1440 x 900, resolução 1/2, volume 0,35, mudo; ui stop/start troca porta 51659 por 60751, preferências restauradas e unmute retorna 0,35. Renomear main.mp4 da fixture exibe SOURCE_INVALID na faixa, mantém última versão e bloqueia aprovação. Fonte restaurada após a prova. Console da montagem sem erros.
 - Gates: gitleaks histórico de 90 commits e diretórios src/tests limpos; pip-audit requirements.lock sem vulnerabilidades; pip check global e venv sem dependências quebradas.
 - A aprovação humana da Etapa 1 permanece histórica. Esta rodada aguarda revisão independente e confirmação final antes de push.
+
+### Etapa 2 - correções R1 a R4 e registros, diff `430874c..cbf4f89`
+
+- Data: 2026-10-10. Tipo: final; fila T1 a T7 concluída. Revisor delegado em contexto limpo, sem participação na implementação. Snapshot: `cbf4f89bcfb3a1d1c38949f08e5a261e65b4d28e`.
+- Escopo: código e testes de `7731a91`/`cbf4f89`, registros de resolução e jornada integrada. Preservados os artefatos preexistentes de roadmap, phases 8 a 15, review da phase 6 e alteração residual de AGENTS. Motor `review.ps1 -Dir phase-7-interface-de-revisao-no-navegador` confirmou o alvo; motor lido, sem escrita em AGENTS. Aplicada a referência da skill chamadora `vibe-implement/references/delegation.md`.
+- Rastreabilidade: interview → spec A1 a A11/C1 a C5 → analyze → plan conferidos no recorte alterado: A2 (sessão), A3 (imagem), A4 (preferências), A6/A7 (estado), A8 (clipboard), A9/A10 (aprovação), A11 (constantes). Nenhuma task ausente; R6 afeta a correção do diagnóstico.
+- Provas reaproveitadas do corretor/coordenador na mesma árvore, inputs de código/testes inalterados: 38 testes capabilities/aprovação; 73 suíte UI; 102 grupo foco/UI/live; 83 preview/aspect/full/windows. Grupos sobrepostos, sem somá-los. Asserções inspecionadas: teste de concorrência retém a primeira leitura, descarta a segunda chave e prova máximo de uma leitura ativa; imagem compara framemd5 e PCM com reconstrução do grafo anterior, transparência, crop/contain, duas camadas, janelas, resoluções e vários T. Goldens não enfraquecidos.
+- Gates reaproveitados: gitleaks em 90 commits e src/tests sem vazamentos, pip-audit sem vulnerabilidades e pip check global/venv verdes. Lockfile inalterado. Resolução global editor PyPI 1.6.6 e venv editor 2.0.0 documentada no registro; modo de AGENTS restaurado sem substituir seu conteúdo.
+- Executado nesta review: `.venv/Scripts/python.exe -B -m unittest tests.e2e.test_phase_7_flow -q` → **2 testes OK, 15,725 s**. Motivo: cobrir integração entre estado, HTTP, stream, aprovação e full depois das correções. Executado com permissão de loopback fora do sandbox. `git diff --check 430874c..cbf4f89` → limpo.
+- Segurança auditada: preferências em allowlist, hash hexadecimal de 64 caracteres, valores gravados limitados a 32 caracteres e codificados; consumidor valida resolução, volume finito em [0,1] e booleano de mudo. Cookies de preferência não autenticam; teste HTTP recusa preferência sem sessão. Não há caminho bruto nem segredo nas preferências. Cookies continuam compartilhados entre portas pelo modelo local já documentado; nomes de sessão por porta evitam sobrescrita, não constituem isolamento de segurança. Página de limite usa texto fixo e CSP calculada do estilo. Worker serializada guarda somente a chave mais recente; resultado obsoleto não substitui aprovação lembrada. Nenhum Critical encontrado.
+- Visual reaproveitada: Chrome, rota `/`, 1440x900, restart 51659 → 60751 mantendo resolução 1/2, volume 0,35 e mudo; retirada de fonte mostra SOURCE_INVALID e bloqueia aprovação. Página de limite em 900x700 sem clipping, 429 e favicon 401 esperados. Clique real em Copiar para IA e leitura do clipboard iguais à API após normalizar CRLF. Código correspondente não mudou depois das provas; navegador não repetido.
+- Prova adversarial adicional: `PlanState` real com cópia descartável de `tests/fixtures/workflow`, sem mocks nem servidor. Saída: `initial ready None`; após JSON inválido: `PLAN_INVALID`; após remover fonte mantendo o JSON inválido: **SOURCE_INVALID**. Esperado: continuar **PLAN_INVALID**. A assinatura comparada é a da última tentativa, não a do último plano válido. Aprovação permanece bloqueada, sem evidência de aprovação indevida ou perda de dados.
+- Reprodução executada por stdin de `.venv/Scripts/python.exe -B -` (helper remove a cópia temporária ao sair):
+
+```python
+import shutil
+from pathlib import Path
+from tests.test_ui_server import ui_workdir
+from editor.ui.state import PlanState
+with ui_workdir() as root:
+    fixture = Path('tests/fixtures/workflow')
+    shutil.copytree(fixture / 'sources', root / 'sources', dirs_exist_ok=True)
+    shutil.copy2(fixture / 'plan.json', root / 'plan.json')
+    state = PlanState(root)
+    state.refresh()
+    print('initial', state.read().status, state.read().error)
+    assert state.read().status == 'ready'
+    (root / 'plan.json').write_text('{ broken', encoding='utf-8')
+    state.refresh(); state.refresh()
+    print('invalid_plan', state.read().error)
+    Path(state.read().snapshot.validation['sources'][0]['path']).unlink()
+    state.refresh(); state.refresh()
+    print('invalid_plan_then_missing_source', state.read().error)
+```
+
+- Abriu: **R6 Required**. Fechou e confirmou contra diff/provas: **R1, R2, R3, R4**. Critical encontrados: nenhum.
+- Veredito desta etapa: **Request changes**. Handoff: vibe-implement para R6. Nenhuma nova aprovação humana registrada; a confirmação da Etapa 1 é histórica.
+
+#### Propostas de vigência da rodada (pendentes, não aplicadas)
+
+| ID | Ação proposta | Decisão proposta | Fonte/evidência |
+|---|---|---|---|
+| UI-04 | cria | Resolução, volume e mudo persistem no navegador em cookies não sensíveis por SHA-256 do caminho do trabalho, atravessando portas; nomes próprios não substituem os cookies HttpOnly de sessão. | `ui/static/store.js`, `ui/server.py`, teste HTTP e visual da Etapa 2 |
+| UI-01 | atualiza | Preservar a equivalência de quadros e PCM e o grafo compartilhado; substituir a afirmação histórica de comando/grafo byte a byte pelo registro de que imagens estáticas são decodificadas e escaladas uma vez e repetidas por filtro, com equivalência de saída provada. | `render/ffmpeg_graph.py`, `preview.py`, `test_cached_image_matches_the_previous_looping_decoder_with_alpha_and_windows` |
+
+Após fechar R6 e confirmar a review final, proposta de patch documental mínimo em AGENTS: remover a frase que enumera como abertos os três registros agora tratados, documentar a persistência UI-04 na seção da interface e ajustar UI-01. Não houve edição de AGENTS nesta review.
