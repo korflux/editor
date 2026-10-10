@@ -1,8 +1,9 @@
 // Avisos da tela: toast, faixa de estado e cabeçalho do trabalho (nome, hash do plano, selo de versão).
 //
 // A faixa de estado mostra o código e a mensagem segura de um plano inválido (a interface continua com a
-// última versão válida, marcada como desatualizada) ou a perda de conexão com o servidor. O toast é um por
-// vez, dura 4 s e é anunciado por `role="status"`.
+// última versão válida, marcada como desatualizada), a perda de conexão com o servidor ou a recusa da última
+// tentativa de aprovar (`state.approvalNotice`, T6), nessa ordem de prioridade. O toast é um por vez, dura 4 s
+// e é anunciado por `role="status"`.
 
 import { on, state } from "./store.js";
 
@@ -30,13 +31,13 @@ export function toast(message) {
   toastTimer = setTimeout(() => dom.toast.classList.remove("show"), TOAST_MS);
 }
 
-/** Código e texto da faixa de estado (sem código para o aviso de conexão, que não vem do servidor), ou `null` sem aviso. */
+/** Código e texto da faixa de estado (sem código para o aviso de conexão e de falha de rede, que não vêm do servidor), ou `null` sem aviso. */
 function statusBarContent() {
   if (state.connectionLost) {
     return { code: null, message: "A conexão com a interface foi perdida. Abra de novo pela CLI: editor ui start." };
   }
   if ((state.status === "outdated" || state.status === "invalid") && state.error) return state.error;
-  return null;
+  return state.approvalNotice;
 }
 
 /** Atualiza faixa de estado, selo "Versão desatualizada", hash e nome do trabalho a partir do estado. */

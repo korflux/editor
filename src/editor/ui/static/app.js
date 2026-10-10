@@ -7,11 +7,11 @@
 //   selection  marcas I/O e trecho selecionado          panel      painel do trecho e "Copiar para IA"
 //   reload     recarga quando o plano muda              shortcuts  atalhos do Premiere
 //   sources    modo Fonte: alternância, lista de fontes e a ida e volta entre fonte e montagem
+//   approval   aprovação da versão exibida: botão, popup, selo e recusa por mudança (F8, T6)
 // Aqui só se liga o que depende do nome do trabalho (resolução salva e seletor) e se inicia a recarga.
-//
-// Pontos de extensão: T6 ocupa `#approval-slot` e `#approve-slot` da barra superior.
 
 import "./status.js";
+import "./approval.js";
 import * as player from "./player.js";
 import "./selection.js";
 import { initPanelLayout } from "./panel.js";

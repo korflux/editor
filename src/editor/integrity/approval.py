@@ -8,6 +8,8 @@ Pontos de entrada:
 - `approve_workdir_if_unchanged`: caminho do servidor da interface, aprova só a versão que o
   operador viu, recusando com `APPROVAL_PLAN_CHANGED` se plano ou fontes mudaram desde o carregamento;
 - `sources_fingerprint`: impressão leve das fontes, fonte única para o estado exibido e para a recusa;
+- `read_approval`: leitura estrutural do registro, sem tocar nas fontes (o selo da interface a usa para
+  descartar uma aprovação de outro plano sem calcular nenhum SHA-256);
 - `verify_approval`: barreira da full, recalcula os hashes e libera ou recusa com `APPROVAL_STALE`.
 """
 
@@ -223,6 +225,19 @@ def _read_approval(path: Path) -> dict[str, Any]:
     return payload
 
 
+def read_approval(workdir: str | Path) -> dict[str, Any]:
+    """Lê e valida a estrutura de `approval.json` do trabalho, sem hashear nem abrir as fontes.
+
+    Ausência do arquivo é `APPROVAL_REQUIRED`; destino não regular, JSON inválido, registro v1 ou
+    campos fora do schema são `APPROVAL_STALE` (ou `OUTPUT_INVALID` para destino linkado). Quem precisa
+    saber se o registro vale para o estado atual compara `plan_sha256` por aqui e só então chama
+    `verify_approval`, que é quem lê as fontes inteiras.
+    """
+
+    layout = prepare_approval_layout(workdir)
+    return _read_approval(layout.destination)
+
+
 def verify_approval(
     workdir: str | Path,
     validation: dict[str, Any],
@@ -234,8 +249,7 @@ def verify_approval(
     `APPROVAL_REQUIRED`.
     """
 
-    layout = prepare_approval_layout(workdir)
-    approval = _read_approval(layout.destination)
+    approval = read_approval(workdir)
 
     try:
         source_hashes = _hash_sources(validation)

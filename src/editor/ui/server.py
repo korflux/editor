@@ -14,14 +14,16 @@ Ordem das checagens de todo pedido (nada é aberto antes de a anterior passar):
 
 Rotas (a forma é escolha do plano; a interface não é contrato externo):
 - `GET /` e `GET /static/<nome>`: estáticos empacotados (só o que existe em `ui/static/`);
-- `GET /api/state`: estado do plano (visão, erro seguro, impressão das fontes);
+- `GET /api/state`: estado do plano (visão, erro seguro, impressão das fontes) e a situação da aprovação;
 - `GET /api/stream?t=&res=`: MP4 fragmentado H.264/AAC da montagem a partir de `t` (núcleo da T1);
 - `GET /api/frame?t=&res=`: JPEG do quadro composto de `t` (scrub);
 - `GET /api/selection?start=&end=`: segmentos, camadas e legendas do trecho e o texto "Copiar para IA";
 - `GET /api/source/stream?source_id=&t=&res=`: MP4 fragmentado da fonte inteira a partir de `t` (modo Fonte, T5);
 - `GET /api/source/frame?source_id=&t=&res=`: JPEG do quadro da fonte em `t` (scrub do modo Fonte);
 - `GET /api/source/selection?source_id=&start=&end=`: situação (usado, descartado, parcial), partes usadas e a
-  posição de cada uma na montagem, mais o texto "Copiar para IA" da fonte.
+  posição de cada uma na montagem, mais o texto "Copiar para IA" da fonte;
+- `POST /api/approve`: aprova a versão que o operador viu, pelo `plan_sha256` e a `sources_fingerprint` do
+  corpo (T6, a única escrita da interface).
 
 Respostas JSON usam o envelope padrão de `contracts`; todas levam CSP, `nosniff` e `Referrer-Policy`.
 Erros nunca carregam token, caminho nem detalhe interno, e o log do servidor registra só método, rota
@@ -30,8 +32,10 @@ casada e status (a query, onde viaja o token, nunca é registrada).
 A fonte do modo Fonte (T5) é sempre um `source_id` de vídeo ou áudio do plano, validado pelo padrão do
 trabalho e contra o plano antes de abrir arquivo ou processo; o arquivo vem do plano, nunca do navegador.
 
-Pontos de extensão: a T6 acrescenta `POST /api/approve` (`Route.body_fields`, já validado aqui: JSON só com
-esses campos, cada um com 64 hexadecimais minúsculos, até 1 KiB) sobre `approve_workdir_if_unchanged`.
+Aprovação (T6): `POST /api/approve` usa a allowlist de corpo de `Route.body_fields` (JSON só com esses campos,
+cada um com 64 hexadecimais minúsculos, até 1 KiB) e chama `approve_workdir_if_unchanged`, que revalida o plano
+em disco e recusa com `APPROVAL_PLAN_CHANGED` (409) se plano ou fontes não são mais os exibidos. A resposta
+nunca leva o caminho do `approval.json`.
 
 ponytail: HTTP/1.0 sem keep-alive (cada pedido abre uma conexão local), troque por HTTP/1.1 com
 `Content-Length` se o custo de conexão aparecer no scrub.
@@ -73,9 +77,11 @@ from ..contracts import (
     serialize_envelope,
     success_envelope,
 )
+from ..integrity.approval import approve_workdir_if_unchanged
 from ..render import live
 from ..workdir import validate_source_id, validate_workdir
 from . import playback
+from .approval import ApprovalTracker
 from .instance import Instance, remove_instance, write_instance
 from .limits import (
     BODY_DRAIN_MAX_BYTES,
@@ -166,6 +172,7 @@ ROUTES = (
     Route("/api/source/stream", ("GET",), "_serve_source_stream", query=("source_id", "t", "res")),
     Route("/api/source/frame", ("GET",), "_serve_source_frame", query=("source_id", "t", "res")),
     Route("/api/source/selection", ("GET",), "_serve_source_selection", query=("source_id", "start", "end")),
+    Route("/api/approve", ("POST",), "_serve_approve", body_fields=("plan_sha256", "sources_fingerprint")),
 )
 """Allowlist de rotas dinâmicas; os estáticos entram por `/static/<nome>` com a própria allowlist de nomes."""
 
@@ -333,6 +340,7 @@ class UiServer(ThreadingHTTPServer):
         self.idle_timeout_s = idle_timeout_s
         self.sessions = SessionStore(active_s=session_active_s, clock=clock)
         self.plan_state = PlanState(root, poll_interval_s=poll_interval_s)
+        self.approval = ApprovalTracker(root)
         self._clock = clock
         self._last_activity = clock()
         self._log = log or (lambda line: print(line, file=sys.stderr, flush=True))
@@ -537,7 +545,7 @@ class UiRequestHandler(BaseHTTPRequestHandler):
         self._dispatch("GET")
 
     def do_POST(self) -> None:
-        """Método POST da allowlist (a aprovação da T6): exige `Origin` própria e segue `_dispatch`."""
+        """Método POST da allowlist (só `/api/approve`): exige `Origin` própria e segue `_dispatch`."""
 
         self._dispatch("POST")
 
@@ -651,8 +659,7 @@ class UiRequestHandler(BaseHTTPRequestHandler):
     def read_json_body(self, route: Route) -> dict[str, str]:
         """Corpo JSON da rota: objeto só com os campos de `route.body_fields`, cada um com 64 hexadecimais, até 1 KiB.
 
-        Ainda sem rota que o use (a aprovação chega na T6); fica aqui porque a allowlist de corpo é parte
-        da superfície que esta tarefa fecha.
+        Usada pela aprovação (`_serve_approve`); a recusa é sempre `ARGUMENT_INVALID`, sem repetir o corpo.
         """
 
         raw = self.headers.get("Content-Length")
@@ -699,7 +706,7 @@ class UiRequestHandler(BaseHTTPRequestHandler):
         self._send(200, found[0], found[1])
 
     def _serve_state(self, route: Route, raw_query: str) -> None:
-        """`GET /api/state`: estado do plano, com proxy e disponibilidade de cada fonte atualizados a cada consulta."""
+        """`GET /api/state`: estado do plano, com proxy, disponibilidade de cada fonte e situação da aprovação a cada consulta."""
 
         parse_query(raw_query, route.query)
         reading = self.server.plan_state.read()
@@ -726,6 +733,8 @@ class UiRequestHandler(BaseHTTPRequestHandler):
             "error": reading.error,
             "resolutions": list(live.RESOLUTIONS),
             "plan": plan,
+            # `{state: none|checking|current|stale, approved_at}`: o selo da barra superior (ver `ui/approval.py`).
+            "approval": self.server.approval.status(reading),
         }
         self._send_json(200, success_envelope("ui state", data))
 
@@ -805,6 +814,23 @@ class UiRequestHandler(BaseHTTPRequestHandler):
             raise _argument_error()
         data = describe_selection(snapshot, self.server.root.name, start_s, end_s)
         self._send_json(200, success_envelope("ui selection", data))
+
+    def _serve_approve(self, route: Route, raw_query: str) -> None:
+        """`POST /api/approve`: aprova a versão exibida, a única escrita da interface (F8, passos 2 e 3).
+
+        O corpo já passou pela allowlist (`plan_sha256` e `sources_fingerprint`, 64 hexadecimais). A
+        aprovação condicionada revalida o plano em disco, compara os dois valores com os atuais, calcula os
+        SHA-256 das fontes, confere a impressão de novo e só então publica `approval.json` v2 atomicamente;
+        divergência é `APPROVAL_PLAN_CHANGED` sem gravar, plano inválido é `PLAN_INVALID` e fonte ilegível,
+        `SOURCE_INVALID`. A resposta traz só o instante e o hash (o resultado interno tem o caminho do arquivo).
+        """
+
+        parse_query(raw_query, route.query)
+        body = self.read_json_body(route)
+        result = approve_workdir_if_unchanged(self.server.root, body["plan_sha256"], body["sources_fingerprint"])
+        self.server.approval.remember_current(body["plan_sha256"], body["sources_fingerprint"], result["approved_at"])
+        data = {"approved_at": result["approved_at"], "plan_sha256": result["plan_sha256"]}
+        self._send_json(200, success_envelope("ui approve", data))
 
     # --- Rotas do modo Fonte (T5) ---
 

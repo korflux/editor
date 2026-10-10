@@ -12,7 +12,10 @@ Prova em quatro frentes, todas com HTTP e FFmpeg reais:
 - modo Fonte (T5): uso de cada fonte conferido contra o plano e `source_intervals`, seleção na fonte (usado,
   descartado, parcial e posição na montagem) conferida contra `plan validate`, stream e quadro da fonte inteira
   (comando do núcleo, original em `full` e proxy nas frações, fonte só de áudio, termina com o cliente),
-  `SOURCE_INVALID` para fonte ausente e as recusas da allowlist.
+  `SOURCE_INVALID` para fonte ausente e as recusas da allowlist;
+- aprovação (T6): `POST /api/approve` grava o `approval.json` v2 e a `render full` real o aceita, plano ou fonte
+  alterados depois do carregamento são `APPROVAL_PLAN_CHANGED` sem gravar, as recusas de `Origin`, cookie e corpo,
+  e a situação da aprovação no estado (nenhuma, em verificação, em dia e desatualizada) sem hashear a cada consulta.
 """
 
 from __future__ import annotations
@@ -45,10 +48,12 @@ from unittest.mock import call, patch
 from uuid import uuid4
 
 from editor.contracts import CliError
+from editor.integrity.approval import approve_workdir, verify_approval
 from editor.plan.validation import load_validated_plan, validate_plan
 from editor.render import live
 from editor.render.proxy import build_proxies
 from editor.render.windows import source_intervals
+from editor.ui import approval as ui_approval
 from editor.ui import instance as ui_instance
 from editor.ui import server as ui_server
 from editor.ui.limits import (
@@ -2204,6 +2209,346 @@ class SourceMediaApiTests(BigSourceTestCase):
                 # O limite exato da fonte é aceito, no último quadro.
                 response = client.get("/api/source/frame?source_id=main&t=30&res=full")
                 self.assertEqual((response.status, response.headers["x-editor-start-s"]), (200, "29.960000"))
+
+
+# --- Aprovação pela interface (T6) ------------------------------------------------------------------
+
+
+APPROVE_FIELDS = ("plan_sha256", "sources_fingerprint")
+STALE_MESSAGE = "O plano mudou desde que foi carregado. Revise a versão atual antes de aprovar."
+
+
+class ApprovalApiTests(UiTestCase):
+    """`POST /api/approve`, a situação da aprovação no estado e a recusa de tudo que não é a versão exibida."""
+
+    def setUp(self) -> None:
+        self.workdir_context = ui_workdir()
+        self.workdir = self.workdir_context.__enter__()
+        self.addCleanup(self.workdir_context.__exit__, None, None, None)
+        self.install(self.workdir, simple_plan())
+        self.approval_path = self.workdir / "approval.json"
+
+    # --- Auxiliares ---
+
+    def state(self, client: Client) -> dict[str, Any]:
+        """`data` de `GET /api/state`."""
+
+        response = client.get("/api/state")
+        self.assertEqual(response.status, 200, response.body)
+        return response.json["data"]
+
+    def shown(self, client: Client) -> dict[str, str]:
+        """Os dois valores que a tela devolve ao aprovar: `plan_sha256` e `sources_fingerprint` da versão exibida."""
+
+        plan = self.state(client)["plan"]
+        return {name: plan[name] for name in APPROVE_FIELDS}
+
+    def approval(self, client: Client) -> dict[str, Any]:
+        """Situação da aprovação que o estado informa."""
+
+        return self.state(client)["approval"]
+
+    def post(self, harness: Harness, client: Client, body: Any, *, headers: dict[str, str] | None = None) -> Response:
+        """`POST /api/approve` com a origem própria (a menos que `headers` a troque) e o corpo (bytes ou JSON)."""
+
+        payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+        merged = {"Origin": f"http://127.0.0.1:{harness.port}", **(headers or {})}
+        return client.request("POST", "/api/approve", body=payload, headers=merged)
+
+    def assert_nothing_written(self) -> None:
+        """Não há `approval.json` nem sobra de publicação em `.tmp`."""
+
+        self.assertFalse(self.approval_path.exists())
+        self.assertEqual([entry.name for entry in (self.workdir / ".tmp").glob(".approval-*")], [])
+
+    def edit_plan(self) -> None:
+        """Muda o plano em disco (o primeiro corte fica 2 s mais curto), o que muda o hash canônico."""
+
+        edited = simple_plan()
+        edited["segments"][0]["video"]["out_s"] = 3
+        edited["segments"][0]["audio"]["tracks"][0]["out_s"] = 3
+        self.write_plan(self.workdir, edited)
+
+    def await_approval(self, client: Client, state: str) -> dict[str, Any]:
+        """Espera o estado informar a situação `state` da aprovação (a vigia e a conferência das fontes são assíncronas)."""
+
+        return wait_until(
+            lambda: (lambda value: value if value["state"] == state else None)(self.approval(client)),
+            timeout_s=15, message=f"a aprovação não ficou {state}",
+        )
+
+    # --- A rota ---
+
+    def test_approving_publishes_the_v2_record_and_the_real_render_full_accepts_it(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            shown = self.shown(client)
+            self.assertEqual(self.approval(client), {"state": "none", "approved_at": None})
+            response = self.post(harness, client, shown)
+            self.assertEqual(response.status, 200, response.body)
+            data = response.json["data"]
+            self.assertEqual(response.json["command"], "ui approve")
+            self.assertEqual(set(data), {"approved_at", "plan_sha256"})
+            self.assertEqual(data["plan_sha256"], shown["plan_sha256"])
+            # O registro é o v2 exato, com o SHA-256 completo de cada fonte, e não cita a preview.
+            record = json.loads(self.approval_path.read_text(encoding="utf-8"))
+            self.assertEqual(set(record), {"schema_version", "approved_at", "plan_sha256", "sources"})
+            self.assertEqual(record["schema_version"], 2)
+            self.assertEqual((record["approved_at"], record["plan_sha256"]), (data["approved_at"], shown["plan_sha256"]))
+            self.assertEqual(
+                record["sources"],
+                [{"source_id": "main", "sha256": hashlib.sha256((self.workdir / "sources" / "main.mp4").read_bytes()).hexdigest()}],
+            )
+            # O caminho do arquivo e o do trabalho nunca saem pela API.
+            for secret in (str(self.workdir), self.workdir.name, "approval.json", "artifact_path", "\\\\"):
+                self.assertNotIn(secret, response.body.decode("utf-8"))
+            # O estado fica em dia na hora, sem calcular o SHA-256 das fontes (a própria rota já o conferiu).
+            with patch.object(ui_approval, "verify_approval", side_effect=AssertionError("não deve hashear as fontes")):
+                self.assertEqual(self.approval(client), {"state": "current", "approved_at": data["approved_at"]})
+            # A barreira da full aceita o registro, e a CLI real renderiza a full com ele (sem preview).
+            _, validation = load_validated_plan(self.workdir)
+            self.assertEqual(verify_approval(self.workdir, validation)["approved_at"], data["approved_at"])
+        self.assertFalse((self.workdir / "preview.mp4").exists())
+        result, envelope = run_cli("render", "full", "--workdir", str(self.workdir), "--json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(envelope["ok"])
+        self.assertTrue((self.workdir / "full.mp4").is_file())
+
+    def test_a_plan_edited_after_loading_is_refused_without_touching_the_current_approval(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            shown = self.shown(client)
+            self.assertEqual(self.post(harness, client, shown).status, 200)
+            before = (self.approval_path.read_bytes(), self.approval_path.stat().st_mtime_ns)
+            self.edit_plan()
+            # O servidor compara com o plano em disco na hora do clique, sem esperar a vigia perceber a edição.
+            refused = self.post(harness, client, shown)
+            self.assertEqual((refused.status, refused.code), (409, "APPROVAL_PLAN_CHANGED"), refused.body)
+            self.assertEqual(refused.json["error"]["message"], STALE_MESSAGE)
+            self.assertEqual((self.approval_path.read_bytes(), self.approval_path.stat().st_mtime_ns), before)
+            self.assertEqual([entry.name for entry in (self.workdir / ".tmp").glob(".approval-*")], [])
+
+    def test_a_plan_edited_after_loading_creates_no_file_when_nothing_was_approved(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            shown = self.shown(client)
+            self.edit_plan()
+            refused = self.post(harness, client, shown)
+            self.assertEqual((refused.status, refused.code), (409, "APPROVAL_PLAN_CHANGED"), refused.body)
+            self.assert_nothing_written()
+            # A versão recarregada, essa sim, é aprovada.
+            reloaded = wait_until(
+                lambda: (lambda value: value if value != shown else None)(self.shown(client)),
+                timeout_s=10, message="o hash não mudou",
+            )
+            self.assertEqual(self.post(harness, client, reloaded).status, 200)
+
+    def test_a_source_changed_after_loading_is_refused_and_the_reloaded_version_is_approved(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            shown = self.shown(client)
+            source = self.workdir / "sources" / "main.mp4"
+            metadata = source.stat()
+            # Mesmo plano, mesmo conteúdo, outro `mtime_ns`: a impressão leve diverge e a aprovação é recusada.
+            os.utime(source, ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 5_000_000_000))
+            refused = self.post(harness, client, shown)
+            self.assertEqual((refused.status, refused.code), (409, "APPROVAL_PLAN_CHANGED"), refused.body)
+            self.assertEqual(refused.json["error"]["message"], STALE_MESSAGE)
+            self.assert_nothing_written()
+            # Depois da recarga a tela devolve a impressão nova e a aprovação passa.
+            reloaded = wait_until(
+                lambda: (lambda value: value if value != shown else None)(self.shown(client)),
+                timeout_s=10, message="a impressão não mudou",
+            )
+            self.assertEqual(reloaded["plan_sha256"], shown["plan_sha256"])
+            self.assertEqual(self.post(harness, client, reloaded).status, 200)
+
+    def test_an_invalid_plan_or_a_missing_source_at_the_click_is_refused_with_a_public_code(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            shown = self.shown(client)
+            (self.workdir / "plan.json").write_text("{ nada", encoding="utf-8")
+            invalid = self.post(harness, client, shown)
+            self.assertEqual((invalid.status, invalid.code), (409, "PLAN_INVALID"), invalid.body)
+            self.write_plan(self.workdir, simple_plan())
+            (self.workdir / "sources" / "main.mp4").unlink()
+            missing = self.post(harness, client, shown)
+            self.assertEqual(missing.status, 409, missing.body)
+            self.assertIn(missing.code, {"PLAN_INVALID", "SOURCE_INVALID"})
+            for response in (invalid, missing):
+                for secret in (str(self.workdir), "main.mp4", "Traceback"):
+                    self.assertNotIn(secret, response.body.decode("utf-8"))
+            self.assert_nothing_written()
+
+    def test_a_post_without_session_origin_or_with_a_body_outside_the_allowlist_is_refused(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            good = self.shown(client)
+            digest_a = "a" * 64
+            origin = {"Origin": f"http://127.0.0.1:{harness.port}"}
+            body = json.dumps(good).encode()
+            # Sessão e origem: o cookie é conferido antes de tudo; a origem própria é obrigatória no POST.
+            no_cookie = client.request("POST", "/api/approve", body=body, headers=origin, cookie=False)
+            self.assertEqual((no_cookie.status, no_cookie.code), (401, "UI_TOKEN_INVALID"))
+            wrong_cookie = client.request(
+                "POST", "/api/approve", body=body, headers={**origin, "Cookie": f"{harness.server.cookie}={'0' * 43}"}, cookie=False
+            )
+            self.assertEqual((wrong_cookie.status, wrong_cookie.code), (401, "UI_TOKEN_INVALID"))
+            no_origin = client.request("POST", "/api/approve", body=body)
+            self.assertEqual((no_origin.status, no_origin.code), (403, "UI_ORIGIN_INVALID"))
+            for foreign in ("http://evil.test", "null", f"http://127.0.0.1:{harness.port + 1}", f"https://127.0.0.1:{harness.port}"):
+                with self.subTest(origin=foreign):
+                    response = self.post(harness, client, good, headers={"Origin": foreign})
+                    self.assertEqual((response.status, response.code), (403, "UI_ORIGIN_INVALID"))
+            wrong_host = client.request("POST", "/api/approve", body=body, headers={**origin, "Host": "evil.test"})
+            self.assertEqual((wrong_host.status, wrong_host.code), (403, "UI_HOST_INVALID"))
+            # Corpo fora da allowlist: campo a mais ou a menos, formato, tipo, JSON, tamanho e ausência de corpo.
+            for name, payload in {
+                "campo a mais": {**good, "extra": digest_a},
+                "caminho no lugar": {**good, "path": "approval.json"},
+                "sem a impressão": {"plan_sha256": good["plan_sha256"]},
+                "sem o hash": {"sources_fingerprint": good["sources_fingerprint"]},
+                "hash curto": {**good, "plan_sha256": "a" * 63},
+                "hash com maiúscula": {**good, "plan_sha256": "A" * 64},
+                "hash não hexadecimal": {**good, "sources_fingerprint": "z" * 64},
+                "valor numérico": {**good, "plan_sha256": 7},
+                "valor nulo": {**good, "sources_fingerprint": None},
+                "lista": [good],
+                "JSON inválido": b"{nao e json",
+                "chave duplicada": b'{"plan_sha256":"%s","plan_sha256":"%s","sources_fingerprint":"%s"}' % ((digest_a.encode(),) * 3),
+                "acima de 1 KiB": {**good, "folga": "x" * 1100},
+                "vazio": b"",
+            }.items():
+                with self.subTest(name):
+                    response = self.post(harness, client, payload)
+                    self.assertEqual((response.status, response.code), (400, "ARGUMENT_INVALID"), response.body)
+            query = client.request("POST", "/api/approve?x=1", body=body, headers=origin)
+            self.assertEqual((query.status, query.code), (400, "ARGUMENT_INVALID"))
+            no_length = raw_request(
+                harness.port,
+                (
+                    f"POST /api/approve HTTP/1.0\r\nHost: 127.0.0.1:{harness.port}\r\nCookie: {client.cookie}\r\n"
+                    f"Origin: http://127.0.0.1:{harness.port}\r\n\r\n"
+                ).encode(),
+            )
+            self.assertIn(b" 400 ", no_length.split(b"\r\n", 1)[0] + b" ")
+            chunked = raw_request(
+                harness.port,
+                (
+                    f"POST /api/approve HTTP/1.0\r\nHost: 127.0.0.1:{harness.port}\r\nCookie: {client.cookie}\r\n"
+                    f"Origin: http://127.0.0.1:{harness.port}\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+                ).encode(),
+            )
+            self.assertIn(b" 400 ", chunked.split(b"\r\n", 1)[0] + b" ")
+            # Só POST: as outras formas da rota são recusadas, e nada disso gravou a aprovação.
+            refused_get = client.request("GET", "/api/approve", headers=origin)
+            self.assertEqual((refused_get.status, refused_get.code), (405, "ARGUMENT_INVALID"))
+            self.assertEqual(refused_get.headers["allow"], "POST")
+            for method in ("PUT", "DELETE"):
+                response = client.request(method, "/api/approve", headers=origin)
+                self.assertEqual((response.status, response.code), (405, "ARGUMENT_INVALID"), method)
+            self.assert_nothing_written()
+            # A sessão e o servidor seguem de pé, e o clique legítimo ainda passa.
+            self.assertEqual(self.post(harness, client, good).status, 200)
+
+    # --- Situação da aprovação no estado ---
+
+    def test_the_state_reports_none_current_and_stale_and_hashes_only_when_the_version_changes(self) -> None:
+        with patch.object(ui_approval, "verify_approval", wraps=ui_approval.verify_approval) as verify, \
+                serving(self.workdir) as harness:
+            client = harness.client()
+            self.assertEqual(self.approval(client), {"state": "none", "approved_at": None})
+            # Aprovação de fora da interface (como `editor approve` pela CLI): confere as fontes uma vez.
+            published = approve_workdir(self.workdir)
+            current = self.await_approval(client, "current")
+            self.assertEqual(current["approved_at"], published["approved_at"])
+            for _ in range(5):
+                self.assertEqual(self.approval(client), current)
+            self.assertEqual(verify.call_count, 1)
+            # Plano editado depois de aprovado: desatualizada, sem tocar nas fontes (o hash do plano já difere).
+            self.edit_plan()
+            stale = self.await_approval(client, "stale")
+            self.assertEqual(stale["approved_at"], None)
+            self.assertEqual(verify.call_count, 1)
+            # Plano de volta ao aprovado: em dia de novo (a conferência das fontes é refeita para esta versão).
+            self.write_plan(self.workdir, simple_plan())
+            self.assertEqual(self.await_approval(client, "current")["approved_at"], published["approved_at"])
+            self.assertEqual(verify.call_count, 2)
+            # Plano inválido em disco: nenhuma aprovação vale para ele, e ao corrigi-lo o registro volta a valer.
+            (self.workdir / "plan.json").write_text("{ nada", encoding="utf-8")
+            wait_until(lambda: self.state(client)["state"] == "outdated", timeout_s=10, message="o plano não ficou inválido")
+            self.assertEqual(self.approval(client), {"state": "stale", "approved_at": None})
+            self.write_plan(self.workdir, simple_plan())
+            self.assertEqual(self.await_approval(client, "current")["approved_at"], published["approved_at"])
+
+    def test_a_source_with_other_content_makes_the_approval_stale(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            published = approve_workdir(self.workdir)
+            self.assertEqual(self.await_approval(client, "current")["approved_at"], published["approved_at"])
+            before = self.state(client)["plan"]["sources_fingerprint"]
+            create_gop_source(self.workdir / "replacement.mp4", gop=25)
+            source = self.workdir / "sources" / "main.mp4"
+            wait_until(lambda: PlanStateTests.try_replace(self.workdir / "replacement.mp4", source), message="não foi possível trocar a fonte")
+            wait_until(lambda: self.state(client)["plan"]["sources_fingerprint"] != before, timeout_s=10, message="a impressão não mudou")
+            # O plano é o mesmo e a fonte é outra: só o SHA-256 do conteúdo percebe.
+            self.assertEqual(self.await_approval(client, "stale")["approved_at"], None)
+
+    def test_an_obsolete_or_corrupted_record_is_stale(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            version_one = {
+                "schema_version": 1, "approved_at": "2026-10-01T10:00:00Z", "plan_sha256": "a" * 64,
+                "preview_sha256": "b" * 64, "sources": [],
+            }
+            nested = "[" * 30000 + "]" * 30000  # estoura a recursão do decodificador de JSON
+            for name, content in (
+                ("v1", json.dumps(version_one)), ("JSON inválido", "{ nada"), ("lista", "[1, 2, 3, 4, 5, 6, 7, 8]"),
+                ("aninhado", nested),
+            ):
+                with self.subTest(name):
+                    self.approval_path.write_text(content, encoding="utf-8")
+                    self.assertEqual(self.approval(client), {"state": "stale", "approved_at": None})
+            self.approval_path.unlink()
+            self.assertEqual(self.approval(client), {"state": "none", "approved_at": None})
+
+    def test_the_state_stays_responsive_while_the_sources_are_being_checked(self) -> None:
+        entered, release = threading.Event(), threading.Event()
+        real = ui_approval.verify_approval
+
+        def slow(*arguments: Any, **options: Any) -> dict[str, Any]:
+            """A conferência real, retida até o teste liberar."""
+
+            entered.set()
+            release.wait(timeout=20)
+            return real(*arguments, **options)
+
+        with patch.object(ui_approval, "verify_approval", slow), serving(self.workdir) as harness:
+            client = harness.client()
+            published = approve_workdir(self.workdir)
+            started = time.monotonic()
+            self.assertEqual(self.approval(client), {"state": "checking", "approved_at": None})
+            self.assertTrue(entered.wait(timeout=10))
+            # Com a conferência em andamento o estado continua respondendo e só uma conferência roda.
+            for _ in range(3):
+                self.assertEqual(self.approval(client)["state"], "checking")
+            self.assertLess(time.monotonic() - started, 10)
+            release.set()
+            self.assertEqual(self.await_approval(client, "current")["approved_at"], published["approved_at"])
+
+    def test_the_page_declares_the_accessible_approval_dialog_and_its_module(self) -> None:
+        with serving(self.workdir) as harness:
+            client = harness.client()
+            page = client.get("/").body.decode("utf-8")
+            self.assertRegex(
+                page,
+                r'<dialog id="approve-dialog"[^>]*role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="approve-title"',
+            )
+            for marker in ('id="btn-approve"', 'id="approve-title"', 'id="approve-cancel"', 'id="approve-confirm"', 'id="approval-seal"'):
+                self.assertIn(marker, page)
+            module = client.get("/static/approval.js")
+            self.assertEqual((module.status, module.headers["content-type"].split(";")[0]), (200, "text/javascript"))
+            self.assertIn('import "./approval.js"', client.get("/static/app.js").body.decode("utf-8"))
 
 
 if __name__ == "__main__":

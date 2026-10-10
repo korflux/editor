@@ -26,6 +26,8 @@ export const state = {
   connectionLost: false,
   resolutions: [],
   plan: null, // última versão válida do plano (visão pública de `ui/state.py::build_view`)
+  approval: null, // { state: none|checking|current|stale, approved_at } de `GET /api/state` (selo; null antes da primeira leitura)
+  approvalNotice: null, // { code, message } da última tentativa de aprovar recusada (faixa de estado), até a próxima ação
   mode: "assembly", // "assembly" (Montagem) ou "source" (Fonte)
   sourceId: null, // fonte aberta no modo Fonte (null: nenhuma escolhida)
   playing: false, // intenção de reprodução (inclui o carregamento do primeiro quadro)

@@ -5,6 +5,8 @@
 // cursor no mesmo tempo (limitado à nova duração), descarta a seleção e avisa por toast. Plano inválido: a
 // faixa de estado mostra o erro e a última versão válida continua na tela, marcada como desatualizada. No modo
 // Fonte vale o mesmo para o tempo da fonte aberta (e a fonte que saiu do plano é fechada); ver `reconcileViews`.
+// A resposta também traz a situação da aprovação (`state.approval`, o selo da barra superior), e `refreshNow` é a
+// consulta fora de hora que a recusa de uma aprovação pede para recarregar a versão atual (F8, passo 3).
 
 import * as api from "./api.js";
 import * as player from "./player.js";
@@ -19,6 +21,8 @@ const LOST_POLL_MS = 2000;
 function loadPlan(plan) {
   const first = state.plan === null;
   state.plan = plan;
+  // Uma recusa de aprovação fica na faixa de estado até a próxima ação; um plano novo a torna obsoleta.
+  if (!first) state.approvalNotice = null;
   reconcileViews();
   // As marcas já foram limpas; o aviso faz o painel e a timeline largarem o trecho que mostravam.
   if (!first) emit("selection", { commit: true });
@@ -45,6 +49,9 @@ function apply(data) {
   if (firstRead) emit("workdir");
   state.status = data.state;
   state.error = data.error;
+  state.approval = data.approval ?? null;
+  // A recusa de uma aprovação é notícia da versão que estava na tela: um plano inválido a substitui (e ela não volta).
+  if (data.state !== "ready") state.approvalNotice = null;
   const plan = data.plan;
   if (plan !== null) {
     if (!sameVersion(plan)) {
@@ -80,6 +87,15 @@ async function cycle() {
     delay = LOST_POLL_MS;
   }
   setTimeout(cycle, delay);
+}
+
+/** Consulta o estado agora, fora do ritmo da consulta periódica (e aplica o resultado como ela faria). */
+export async function refreshNow() {
+  try {
+    apply(await api.getState());
+  } catch (error) {
+    fail(error);
+  }
 }
 
 /** Inicia a consulta periódica (a primeira acontece na hora). */

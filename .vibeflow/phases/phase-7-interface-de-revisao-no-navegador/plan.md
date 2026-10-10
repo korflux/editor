@@ -144,19 +144,22 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
 
 ### T6: Aprovar a versão exibida pela interface
 
-- [ ] T6 concluída
+- [x] T6 concluída
 - **Spec:** A9 (F8 passos 1 a 4; design: popup de aprovação)
 - **O quê:**
   - **Servidor:** `POST` de aprovação com corpo `{plan_sha256, sources_fingerprint}` (até 1 KiB, `Origin` e cookie obrigatórios), chamando a aprovação condicionada da T2 com o hash e a impressão da versão exibida.
   - **Interface:** botão "Aprovar esta versão" e popup com hash, duração e nota de proxy. Selo "Aprovado às HH:MM" e "Aprovação desatualizada". Recusa por mudança na faixa de estado, seguida de recarga. O botão fica desabilitado com o plano inválido ou desatualizado.
 - **Aceite:**
-  - [ ] A aprovação pela interface grava `approval.json` v2, e o `render full` seguinte a aceita.
-  - [ ] Com o plano ou uma fonte alterados depois do carregamento, a recusa é `APPROVAL_PLAN_CHANGED`, sem arquivo novo.
-  - [ ] POST sem `Origin` próprio, sem cookie ou com corpo fora da allowlist é recusado.
-  - [ ] O popup prende o foco, o Esc fecha e o foco volta ao botão.
+  - [x] A aprovação pela interface grava `approval.json` v2, e o `render full` seguinte a aceita.
+  - [x] Com o plano ou uma fonte alterados depois do carregamento, a recusa é `APPROVAL_PLAN_CHANGED`, sem arquivo novo.
+  - [x] POST sem `Origin` próprio, sem cookie ou com corpo fora da allowlist é recusado.
+  - [x] O popup prende o foco, o Esc fecha e o foco volta ao botão.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server tests.test_approval -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server tests.test_approval -v`
 - **Visual:** necessária. Popup, selo e recusa são julgados renderizados: abrir e cancelar, aprovar e alterar o plano com o popup aberto, em 1440x900.
+- **Prova:** `unittest tests.test_ui_server tests.test_approval` -> 82 testes OK; suíte completa com o código final -> 458 testes OK. HTTP, CLI e FFmpeg reais: aprovação grava v2 e `render full` aceita; plano, fonte (mtime), plano inválido e fonte ausente depois do carregamento -> 409 sem alterar `approval.json`; sem cookie 401, sem `Origin` ou alheia 403, corpo fora da allowlist 400, GET 405; estado `none|checking|current|stale`. Visual no navegador integrado, 1440x900: popup com hash, duração e nota; foco preso entre Cancelar e Aprovar, Esc e Cancelar devolvem o foco ao botão; aprovar mostra "Aprovado às HH:MM" e a full é aceita; editar o plano mostra "Aprovação desatualizada" e a full passa a `APPROVAL_STALE`; plano ou fonte alterados com o popup aberto -> faixa `APPROVAL_PLAN_CHANGED`, recarga e `approval.json` idêntico; botão desabilitado com plano inválido; nota de proxy em 1/4; 900x700 sem overflow; console sem exceção nem CSP (só os 409 intencionais).
+- **API nova:** `POST /api/approve` (corpo `{plan_sha256, sources_fingerprint}`, resposta `{approved_at, plan_sha256}`); `/api/state` ganha `approval: {state, approved_at}` (aditivo).
+- **Notas:** `integrity/approval.py` ganhou `read_approval` público (aditivo). `ApprovalTracker` em `ui/approval.py` só refaz SHA-256 das fontes quando o `plan_sha256` do registro é o vigente, uma vez por versão e fora do pedido de estado; `ponytail`: aprovação pela CLI ou servidor reiniciado mostram "Verificando aprovação…" pelo tempo do hash completo.
 - **Deps:** T2, T4
 - **Decisões:** APPROVAL-01 (botão da interface)
 - **Arquivos:** `src/editor/ui/` (rota de aprovação e estáticos do popup e do selo), `tests/test_ui_server.py`

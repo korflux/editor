@@ -8,7 +8,8 @@
 // teclas dele (Espaço no botão, setas no slider). Quem o focou com o mouse volta a usar as teclas da edição,
 // para que Espaço continue a ser play/pausa e as setas continuem a mudar de quadro depois de um clique no
 // seletor de resolução, por exemplo. (`:focus-visible` não serve: o navegador o liga na primeira tecla.)
-// Campo de texto e `<select>` sempre ficam com a tecla.
+// Campo de texto e `<select>` sempre ficam com a tecla. Com um popup modal aberto (a aprovação) nenhum atalho
+// da edição vale: as teclas são do popup (Tab, Esc, Espaço e Enter nos botões dele).
 
 import { copySelection, setPanelOpen, togglePanel } from "./panel.js";
 import * as player from "./player.js";
@@ -74,7 +75,7 @@ let spaceHandled = false;
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Tab") pointerControl = null;
-  if (event.defaultPrevented) return;
+  if (event.defaultPrevented || document.querySelector("dialog[open]") !== null) return;
   if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "c") {
     if (state.selection !== null) {
       event.preventDefault();

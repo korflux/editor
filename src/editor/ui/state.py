@@ -83,7 +83,7 @@ def _error_dict(error: CliError) -> dict[str, str]:
     return {"code": error.code, "message": error.message}
 
 
-def _stat_key(path: str | Path) -> tuple[int, int] | None:
+def stat_key(path: str | Path) -> tuple[int, int] | None:
     """Tamanho e `mtime_ns` sem seguir links, ou `None` se o arquivo não existe (ou não pode ser lido)."""
 
     try:
@@ -300,7 +300,7 @@ class PlanState:
     def _signature(self) -> tuple[Any, Any]:
         """Assinatura barata do que o plano depende: `plan.json` e as fontes da última versão válida."""
 
-        return _stat_key(self._plan_path), tuple(_stat_key(path) for path in self._source_paths)
+        return stat_key(self._plan_path), tuple(stat_key(path) for path in self._source_paths)
 
     def refresh(self) -> None:
         """Um ciclo da vigia: revalida se a assinatura mudou e ficou estável por dois ciclos seguidos.

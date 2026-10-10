@@ -1,5 +1,5 @@
-// Cliente da API local da interface (`ui/server.py`): estado, seleção, quadro de scrub e URL do stream, da
-// montagem e (modo Fonte) de cada fonte inteira.
+// Cliente da API local da interface (`ui/server.py`): estado, seleção, quadro de scrub, URL do stream, da
+// montagem e (modo Fonte) de cada fonte inteira, e a aprovação da versão exibida.
 //
 // Todas as rotas exigem o cookie de sessão (`credentials: same-origin`) e respondem no envelope padrão
 // `{ ok, data | error: { code, message } }`. O vídeo é consumido direto pelo `<video>` (URL do stream);
@@ -34,7 +34,7 @@ async function getJson(path, signal) {
   return (await response.json()).data;
 }
 
-/** Estado do trabalho: `{ workdir_name, state, error, resolutions, plan }`. */
+/** Estado do trabalho: `{ workdir_name, state, error, resolutions, plan, approval }`. */
 export function getState() {
   return getJson("/api/state");
 }
@@ -58,6 +58,23 @@ export async function getFrame(t, res, fps, signal) {
   });
   if (!response.ok) throw await failure(response);
   return response.blob();
+}
+
+/**
+ * Aprova a versão que o operador viu: devolve o hash do plano e a impressão das fontes do carregamento, e o
+ * servidor recusa com `APPROVAL_PLAN_CHANGED` se qualquer um deles já não for o do disco. A origem própria que a
+ * rota exige é a que o navegador envia sozinho em todo POST do mesmo site. Devolve `{ approved_at, plan_sha256 }`.
+ */
+export async function approve(planSha256, sourcesFingerprint) {
+  const response = await fetch("/api/approve", {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan_sha256: planSha256, sources_fingerprint: sourcesFingerprint }),
+  });
+  if (!response.ok) throw await failure(response);
+  return (await response.json()).data;
 }
 
 // --- Modo Fonte: o mesmo conjunto de chamadas, sobre uma fonte inteira (`source_id` do plano) ---
