@@ -99,7 +99,7 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
 
 ### T4: Revisar a montagem no navegador com player, timeline, seleção e recarga
 
-- [ ] T4 concluída
+- [x] T4 concluída
 - **Spec:** A4, A5, A6, A8 (F3, F4, F5, F7; design: tela Revisão modo Montagem)
 - **O quê:** a tela Montagem do design sobre a API da T3, em HTML, CSS e JS puros, com o kit de tokens do design:
   - **Barra superior:** hash e alternância de modo (Fonte desabilitado até a T5); a aprovação entra na T6.
@@ -108,14 +108,16 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
   - **Painel do trecho:** recolhível, com "Copiar para IA". Usa a área de transferência e, sem permissão dela, mostra campo selecionável.
   - **Recarga e estados:** recarga automática que mantém o cursor e descarta a seleção com toast; faixa de estado de plano inválido; atalhos do Premiere; estados vazios e de erro do design.
 - **Aceite:**
-  - [ ] Play em vários pontos começa no tempo certo, com timecode da montagem. Pausa, quadro a quadro, salto de corte e troca de resolução seguem F3, e o selo "Proxy" aparece nas frações com proxy.
-  - [ ] A timeline mostra as faixas com J/L e legendas. A seleção pelos três gestos preenche o painel com os intervalos de `plan validate`.
-  - [ ] Editar o `plan.json` por fora recarrega com toast e cursor mantido. O plano quebrado mostra a faixa de erro.
-  - [ ] "Copiar para IA" coloca o texto da T3 na área de transferência.
-  - [ ] Navegação inteira por teclado com foco visível; console sem erro e sem violação de CSP; nenhum pedido externo.
+  - [x] Play em vários pontos começa no tempo certo, com timecode da montagem. Pausa, quadro a quadro, salto de corte e troca de resolução seguem F3, e o selo "Proxy" aparece nas frações com proxy.
+  - [x] A timeline mostra as faixas com J/L e legendas. A seleção pelos três gestos preenche o painel com os intervalos de `plan validate`.
+  - [x] Editar o `plan.json` por fora recarrega com toast e cursor mantido. O plano quebrado mostra a faixa de erro.
+  - [x] "Copiar para IA" coloca o texto da T3 na área de transferência.
+  - [x] Navegação inteira por teclado com foco visível; console sem erro e sem violação de CSP; nenhum pedido externo.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server -v`
 - **Visual:** necessária. O aceite depende de player, timeline, painel, toast e faixa renderizados e interagidos. Rota `/`, viewports 1440x900 e 1024x700, com fixture 16:9 e 9:16 (as provas listadas no design para o modo Montagem), registradas com screenshots.
+- **Prova:** `unittest tests.test_ui_server` -> 46 testes OK com os estáticos finais (nenhum Python alterado). `timecode.js` contra `format_timecode`/`snap_start` em 5.607 casos (7 taxas), 0 divergências. Visual no navegador integrado, rota `/`: 16:9 (fonte 1080p com proxy, J/L, 3 camadas, 3 legendas, trilha extra) e 9:16 (reframe, sem proxy), em 1440x900 e 1024x700. Play em 0, 11,8 e 12,84 s com quadro e timecode corretos; pausa e retomada sem novo stream; quadro a quadro, salto de corte, Home/End; selo Proxy em 1/2 e 1/4 (stream 480x270 em 1/4), ausente em Full e no 9:16 sem proxy; seleção por Alt+clique, I/O e Shift+arraste (este por PointerEvents sintéticos, a ferramenta não aplica modificadores) com painel igual ao servidor; Copiar para IA entrega a `writeText` o texto de `/api/selection` e cai no campo manual com o clipboard negado; edição externa recarrega com toast e cursor mantido; plano quebrado mostra a faixa `PLAN_INVALID` com a última versão válida; Tab com foco visível; 1024x700 com painel sobreposto e sem rolagem horizontal; console sem erro de CSP; rede só em 127.0.0.1.
+- **Notas:** o stream não aceita `Range`, então quadro a quadro, salto e scrub mostram o quadro composto e o play seguinte reinicia no cursor (`ponytail` em `player.js`). Cópia real ao clipboard não lida no navegador integrado (permissão negada); conferir uma vez em Chrome normal. Fora do escopo: `.erros-encontrados/2026-10-09-preferencias-da-interface-se-perdem-a-cada-ui-start.md`.
 - **Deps:** T3
 - **Decisões:** UI-03 (lado da interface: HTML, CSS e JS sem build, timeline em canvas)
 - **Arquivos:** `src/editor/ui/static/` (HTML, CSS, JS e sprite SVG)

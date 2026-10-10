@@ -1,5 +1,9 @@
-/* Tokens e grade da interface de revisão (design.md, "Kit mínimo"). Tema escuro único, valores finais.
-   Esqueleto da T3: a T4 acrescenta os componentes (player, transporte, timeline, painel) sobre estes tokens. */
+/* Interface de revisão, modo Montagem (design.md): tokens, grade e componentes.
+   Tema escuro único, valores finais do kit. Sem fonte nem recurso externo (a CSP só aceita /static/).
+   Ordem do arquivo: tokens, base, shell, barra superior, controles, palco, transporte, timeline, painel,
+   toast e responsivo. */
+
+/* --- Tokens (design.md, "Kit mínimo") --- */
 :root {
   color-scheme: dark;
   --bg-base: #121214;
@@ -24,9 +28,12 @@
   --lane-discarded: #3a3a42;
   --font-ui: system-ui, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /* Altura da timeline: 34% da janela, mínimo 220px (também referência do toast). */
+  --timeline-h: max(220px, 34vh);
 }
 
-html, body { height: 100%; margin: 0; }
+/* --- Base --- */
+html, body { height: 100%; margin: 0; overflow: hidden; }
 
 body {
   background: var(--bg-base);
@@ -34,11 +41,22 @@ body {
   font: 13px/1.4 var(--font-ui);
 }
 
-/* Janela inteira sem rolagem da página (100dvh): barra superior, faixa de estado, área central e timeline. */
+h1, h2, p { margin: 0; }
+button, input, textarea { font: inherit; color: inherit; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.grow { flex: 1 1 auto; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon { width: 20px; height: 20px; display: block; }
+[hidden] { display: none !important; }
+
+/* Foco visível em todo controle: anel de 2px na cor de ação. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* --- Shell: janela inteira sem rolagem da página (100dvh) --- */
 .shell {
   display: grid;
-  grid-template-columns: 1fr 320px;
-  grid-template-rows: 44px auto 1fr minmax(220px, 34vh);
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: 44px auto minmax(0, 1fr) var(--timeline-h);
   grid-template-areas:
     "topbar topbar"
     "status status"
@@ -46,9 +64,170 @@ body {
     "timeline timeline";
   height: 100dvh;
 }
+.shell[data-panel="closed"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "topbar" "status" "stage" "timeline";
+}
+.shell[data-panel="closed"] .zone-panel { display: none; }
 
+.zone { min-width: 0; min-height: 0; }
 .zone-topbar { grid-area: topbar; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
 .zone-status { grid-area: status; }
-.zone-stage { grid-area: stage; background: var(--bg-base); }
-.zone-timeline { grid-area: timeline; background: var(--bg-panel); border-top: 1px solid var(--border); }
-.zone-panel { grid-area: panel; background: var(--bg-panel); border-left: 1px solid var(--border); }
+.zone-stage { grid-area: stage; background: var(--bg-base); display: grid; grid-template-rows: minmax(0, 1fr) 40px; }
+.zone-timeline { grid-area: timeline; background: var(--bg-panel); border-top: 1px solid var(--border);
+  display: grid; grid-template-rows: 28px minmax(0, 1fr); position: relative; }
+.zone-panel { grid-area: panel; background: var(--bg-panel); border-left: 1px solid var(--border);
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+
+/* --- Barra superior --- */
+.zone-topbar { display: flex; align-items: center; gap: 12px; padding: 0 12px; }
+.workdir { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; }
+.hash { color: var(--text-muted); font-size: 12px; }
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
+.badge-warn { color: var(--warn); }
+.slot:empty { display: none; }
+
+/* Grupo segmentado (modo e resolução): radios nativos, estilizados como botões unidos. */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; height: 28px; }
+.seg-item { position: relative; display: block; }
+.seg-item + .seg-item { border-left: 1px solid var(--border); }
+.seg-item input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.seg-item span { display: block; padding: 0 12px; line-height: 26px; color: var(--text-muted); white-space: nowrap; }
+.seg-item input:checked + span { background: var(--bg-hover); color: var(--text); font-weight: 600; }
+.seg-item input:disabled { cursor: not-allowed; }
+.seg-item input:disabled + span { opacity: 0.55; }
+.seg-item input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* --- Botões --- */
+.btn {
+  height: 28px; padding: 0 12px; border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; cursor: pointer; white-space: nowrap;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-small { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn-wide { width: 100%; }
+.icon-btn {
+  width: 32px; height: 32px; padding: 0; border: 0; border-radius: 4px; background: transparent;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text);
+}
+.icon-btn:disabled, .icon-btn[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+.range { accent-color: var(--accent); }
+@media (hover: hover) and (pointer: fine) {
+  .btn:not(:disabled):hover, .icon-btn:not(:disabled):not([aria-disabled="true"]):hover { background: var(--bg-hover); }
+  .seg-item:hover input:not(:checked):not(:disabled) + span { background: var(--bg-raised); color: var(--text); }
+}
+
+/* --- Faixa de estado e aviso de tela pequena --- */
+.statusbar {
+  display: flex; align-items: center; gap: 8px; min-height: 32px; box-sizing: border-box; padding: 0 12px;
+  background: color-mix(in srgb, var(--danger) 16%, var(--bg-panel)); border-bottom: 1px solid var(--danger);
+}
+.statusbar .status-code { color: var(--danger); font-family: var(--font-mono); font-weight: 600; white-space: nowrap; }
+.statusbar .status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.narrow-note { display: none; padding: 4px 12px; font-size: 12px; background: var(--bg-raised); color: var(--text-muted); }
+
+/* --- Palco: player e quadro de scrub --- */
+.player { position: relative; min-height: 0; overflow: hidden; background: var(--bg-base); }
+.player video, .player .scrub {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--bg-base);
+}
+.proxy-badge {
+  position: absolute; top: 8px; left: 8px; padding: 1px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;
+  color: var(--warn); background: var(--bg-raised); border: 1px solid var(--warn);
+}
+.spinner {
+  position: absolute; top: 50%; left: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; box-sizing: border-box;
+  border: 3px solid rgb(255 255 255 / 25%); border-top-color: var(--text); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.overlay-msg {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 80%; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.empty-state { color: var(--text-muted); }
+#player-error { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+
+/* --- Transporte --- */
+.transport {
+  display: flex; align-items: center; gap: 4px; padding: 0 8px; box-sizing: border-box;
+  background: var(--bg-panel); border-top: 1px solid var(--border); min-width: 0;
+}
+.timecode { font-size: 20px; margin: 0 12px; white-space: nowrap; }
+.tc-total, .tc-sep { color: var(--text-muted); }
+.transport .range { width: 96px; }
+
+/* --- Timeline --- */
+.tl-toolbar { display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--border); min-width: 0; }
+.tl-title { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.tl-hint { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tl-toolbar .range { width: 120px; }
+.tl-scroller { position: relative; overflow: auto; min-height: 0; scrollbar-color: var(--bg-hover) var(--bg-panel); }
+.tl-scroller canvas { position: sticky; top: 0; left: 0; display: block; touch-action: none; }
+/* O canvas ocupa o scroller inteiro: o anel de foco fica por dentro, senão o overflow o cortaria. */
+.tl-scroller canvas:focus-visible { outline-offset: -2px; }
+.tl-spacer { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; }
+.tl-tip {
+  position: absolute; z-index: 4; max-width: 360px; padding: 4px 8px; border-radius: 4px; pointer-events: none;
+  background: var(--bg-raised); border: 1px solid var(--border); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* --- Painel do trecho --- */
+.panel-title { font-size: 14px; font-weight: 600; padding: 12px 12px 8px; }
+.panel-body { overflow: auto; padding: 0 12px 12px; min-height: 0; }
+.panel-foot { padding: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.panel-empty { color: var(--text-muted); }
+.range-box { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin-bottom: 12px; }
+.range-box dt { color: var(--text-muted); }
+.range-box dd { margin: 0; }
+.panel-section h3 { font-size: 12px; font-weight: 600; margin: 12px 0 4px; color: var(--text-muted); text-transform: none; }
+.panel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.panel-item { background: var(--bg-raised); border-radius: 4px; padding: 4px 8px; overflow-wrap: anywhere; }
+.panel-item .item-head { font-weight: 600; }
+.panel-item .item-detail { color: var(--text-muted); font-size: 12px; }
+.panel-none { color: var(--text-muted); }
+.manual-copy p { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.manual-copy textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; background: var(--bg-base); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px; font: 12px/1.4 var(--font-mono);
+}
+
+/* --- Toast: canto inferior direito, acima da timeline e da barra de transporte (40px) --- */
+.toast {
+  position: fixed; right: 16px; bottom: calc(var(--timeline-h) + 40px + 16px); z-index: 20; max-width: 360px;
+  padding: 8px 12px; border-radius: 8px; background: var(--bg-raised); border: 1px solid var(--border);
+  opacity: 0; transform: translateY(8px); pointer-events: none; visibility: hidden;
+  transition: opacity 180ms ease-out, transform 180ms ease-out, visibility 0s linear 180ms;
+}
+/* Com o painel aberto (ao lado ou sobreposto) o toast recua para não cobrir o botão "Copiar para IA". */
+.shell[data-panel="open"] ~ .toast { right: calc(320px + 16px); }
+.toast.show { opacity: 1; transform: none; visibility: visible; transition: opacity 180ms ease-out, transform 180ms ease-out; }
+
+/* --- Responsivo (design.md, "Responsivo e estados") --- */
+/* 1024px a 1279px: o painel vira sobreposição ao abrir, sobre o palco. */
+@media (max-width: 1279px) {
+  .shell, .shell[data-panel="closed"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "topbar" "status" "stage" "timeline";
+  }
+  .shell[data-panel="open"] .zone-panel {
+    grid-area: stage; justify-self: end; width: 320px; z-index: 6; box-shadow: none;
+  }
+  .tl-hint { display: none; }
+}
+/* Abaixo de 1024px: a timeline mantém a altura mínima e o player encolhe. */
+@media (max-width: 1023px) {
+  .workdir { max-width: 14ch; }
+  .zone-topbar { gap: 8px; padding: 0 8px; }
+  .seg-item span { padding: 0 8px; }
+}
+/* Abaixo de 720px: aviso de tela de computador, a interface segue usável. */
+@media (max-width: 719px) {
+  .narrow-note { display: block; }
+  .hash { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast, .toast.show { transition: none; transform: none; }
+  .spinner { animation: none; border-top-color: rgb(255 255 255 / 25%); border-right-color: var(--text); }
+}
