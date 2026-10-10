@@ -1,4 +1,4 @@
-// Ponto de entrada da interface de revisão, modo Montagem (phase 7, T4).
+// Ponto de entrada da interface de revisão, modos Montagem (phase 7, T4) e Fonte (T5).
 //
 // Cada módulo cuida de uma responsabilidade e conversa pelos eventos de `store.js`:
 //   store      estado e preferências por trabalho      api        cliente da API local (`ui/server.py`)
@@ -6,15 +6,16 @@
 //   player     stream ao vivo, scrub e transporte       timeline   canvas: faixas, zoom, scrub e seleção
 //   selection  marcas I/O e trecho selecionado          panel      painel do trecho e "Copiar para IA"
 //   reload     recarga quando o plano muda              shortcuts  atalhos do Premiere
+//   sources    modo Fonte: alternância, lista de fontes e a ida e volta entre fonte e montagem
 // Aqui só se liga o que depende do nome do trabalho (resolução salva e seletor) e se inicia a recarga.
 //
-// Pontos de extensão: T5 habilita o modo Fonte (grupo `#mode-group`) e T6 ocupa `#approval-slot` e
-// `#approve-slot` da barra superior.
+// Pontos de extensão: T6 ocupa `#approval-slot` e `#approve-slot` da barra superior.
 
 import "./status.js";
 import * as player from "./player.js";
 import "./selection.js";
 import { initPanelLayout } from "./panel.js";
+import "./sources.js";
 import "./timeline.js";
 import "./shortcuts.js";
 import { startReload } from "./reload.js";

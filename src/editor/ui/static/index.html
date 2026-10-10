@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-mode="assembly">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,9 +8,10 @@
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<!-- Tela de revisão, modo Montagem (design.md). Sem script em linha: a CSP só aceita /static/. A ordem do
-     DOM é a ordem de leitura e de Tab do design: barra superior, transporte (dentro do palco), timeline,
-     painel do trecho. O CSS posiciona o painel à direita do palco sem alterar essa ordem. -->
+<!-- Tela de revisão, modos Montagem e Fonte (design.md). Sem script em linha: a CSP só aceita /static/. A ordem
+     do DOM é a ordem de leitura e de Tab do design: barra superior, lista de fontes (só no modo Fonte), transporte
+     (dentro do palco), timeline ou barra de uso, painel do trecho. O CSS posiciona a lista à esquerda e o painel à
+     direita do palco sem alterar essa ordem. -->
 
 <!-- Sprite de ícones local (sem biblioteca): só os controles universais do player e o recolher do painel. -->
 <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
@@ -22,6 +23,8 @@
   <symbol id="i-frame-next" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5zM15.5 9a4 4 0 010 6M18 6.5a8 8 0 010 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-volume-off" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5zM16 9.5l5 5M21 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><path d="M3.5 7h11v10h-11zM14.5 10.5l6-3v9l-6-3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 12h2M8 8v8M12 5v14M16 8v8M20 12h-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-panel" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM15 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -36,8 +39,7 @@
     <span id="approval-slot" class="slot" aria-hidden="true"></span>
     <div id="mode-group" class="seg" role="radiogroup" aria-label="Modo de revisão">
       <label class="seg-item"><input type="radio" name="mode" value="assembly" checked><span>Montagem</span></label>
-      <!-- T5 habilita o modo Fonte; até lá o controle fica desabilitado. -->
-      <label class="seg-item" title="O modo Fonte chega na próxima entrega"><input type="radio" name="mode" value="source" disabled><span>Fonte</span></label>
+      <label class="seg-item" title="Conferir cada fonte inteira, com o que a montagem usa e descarta"><input type="radio" name="mode" value="source"><span>Fonte</span></label>
     </div>
     <div id="res-group" class="seg" role="radiogroup" aria-label="Resolução do player"></div>
     <span class="grow"></span>
@@ -55,12 +57,28 @@
     <p class="narrow-note">Esta interface foi feita para tela de computador.</p>
   </div>
 
+  <!-- Lista de fontes (modo Fonte, a partir de 1280px): uma linha por fonte de vídeo ou áudio do plano. -->
+  <nav id="sources" class="zone zone-sources" aria-label="Fontes do plano">
+    <h2 class="panel-title">Fontes</h2>
+    <ul id="source-list" class="source-list"></ul>
+    <p id="source-list-empty" class="panel-empty source-list-empty" hidden>Este plano não tem fontes de vídeo nem de áudio.</p>
+  </nav>
+
   <!-- Palco: player (vídeo e quadro de scrub sobrepostos) e barra de transporte colada embaixo. -->
   <main id="stage" class="zone zone-stage">
+    <!-- Abaixo de 1280px a lista de fontes vira este seletor, acima do player. -->
+    <div class="source-picker">
+      <label for="source-select" class="sr-only">Fonte</label>
+      <select id="source-select" class="select"></select>
+    </div>
     <div id="player" class="player">
       <video id="video" playsinline preload="auto"></video>
       <img id="scrub" class="scrub" alt="Quadro composto na posição do cursor" hidden>
       <span id="proxy-badge" class="proxy-badge" hidden title="Esta resolução lê a cópia leve (proxy) das fontes">Proxy</span>
+      <div id="player-audio-label" class="audio-label" hidden>
+        <span id="player-audio-name" class="audio-name"></span>
+        <span class="audio-note">Fonte de áudio, sem imagem</span>
+      </div>
       <div id="spinner" class="spinner" role="status" aria-label="Carregando" hidden></div>
       <div id="player-error" class="overlay-msg" role="alert" hidden>
         <p id="player-error-text"></p>
@@ -84,7 +102,7 @@
       <button id="btn-cut-next" class="icon-btn" type="button" aria-label="Corte seguinte (↓)" title="Corte seguinte (↓)">
         <svg class="icon" aria-hidden="true"><use href="#i-cut-next"/></svg>
       </button>
-      <span class="timecode mono" role="timer" aria-label="Posição na montagem">
+      <span id="timecode" class="timecode mono" role="timer" aria-label="Posição na montagem">
         <span id="tc-current">00:00:00:00</span><span class="tc-sep"> / </span><span id="tc-total" class="tc-total">00:00:00:00</span>
       </span>
       <button id="btn-play-selection" class="btn" type="button" hidden title="Reproduzir só o trecho selecionado">Reproduzir seleção</button>
@@ -96,11 +114,12 @@
     </div>
   </main>
 
-  <!-- Timeline em canvas: o scroller dá a barra de rolagem nativa e o canvas só desenha o que está visível. -->
+  <!-- Timeline em canvas (no modo Fonte, a barra de uso da fonte): o scroller dá a barra de rolagem nativa e o
+       canvas só desenha o que está visível. -->
   <section id="timeline" class="zone zone-timeline" aria-label="Linha do tempo">
     <div class="tl-toolbar">
-      <span class="tl-title">Linha do tempo</span>
-      <span class="tl-hint">Clique: mover cursor · Shift+arraste, I e O: selecionar · Alt+clique: bloco</span>
+      <span id="tl-title" class="tl-title">Linha do tempo</span>
+      <span id="tl-hint" class="tl-hint">Clique: mover cursor · Shift+arraste, I e O: selecionar · Alt+clique: bloco</span>
       <span class="grow"></span>
       <input id="zoom" class="range" type="range" min="0" max="100" step="1" value="0" aria-label="Zoom da linha do tempo" title="Zoom da linha do tempo (Ctrl+roda)">
       <button id="zoom-fit" class="btn btn-small" type="button" title="Ajustar a montagem inteira à largura">Ajustar</button>
@@ -115,7 +134,7 @@
 
   <!-- Painel do trecho (320px, recolhível): lista o que há na seleção e copia o contexto para a IA. -->
   <aside id="panel" class="zone zone-panel" aria-label="Trecho">
-    <h2 class="panel-title">Trecho</h2>
+    <h2 id="panel-title" class="panel-title">Trecho</h2>
     <div id="panel-body" class="panel-body"></div>
     <div class="panel-foot">
       <div id="manual-copy" class="manual-copy" hidden>

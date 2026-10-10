@@ -8,7 +8,11 @@ Prova em quatro frentes, todas com HTTP e FFmpeg reais:
   cookies), allowlists de rota, método, query e corpo, cabeçalhos e ausência do token em log e stderr;
 - estado do plano: revalidação em até 2 s, plano inválido com a última versão válida mantida, impressão das fontes;
 - API de mídia e seleção: o stream é o comando do núcleo da T1 e termina com o cliente, o scrub devolve JPEG
-  e o texto "Copiar para IA" confere com `plan validate` (segmentos, J e L, camadas, legendas, timecode e segundos).
+  e o texto "Copiar para IA" confere com `plan validate` (segmentos, J e L, camadas, legendas, timecode e segundos);
+- modo Fonte (T5): uso de cada fonte conferido contra o plano e `source_intervals`, seleção na fonte (usado,
+  descartado, parcial e posição na montagem) conferida contra `plan validate`, stream e quadro da fonte inteira
+  (comando do núcleo, original em `full` e proxy nas frações, fonte só de áudio, termina com o cliente),
+  `SOURCE_INVALID` para fonte ausente e as recusas da allowlist.
 """
 
 from __future__ import annotations
@@ -43,6 +47,8 @@ from uuid import uuid4
 from editor.contracts import CliError
 from editor.plan.validation import load_validated_plan, validate_plan
 from editor.render import live
+from editor.render.proxy import build_proxies
+from editor.render.windows import source_intervals
 from editor.ui import instance as ui_instance
 from editor.ui import server as ui_server
 from editor.ui.limits import (
@@ -61,6 +67,7 @@ from editor.ui.state import PlanState
 from tests.support import remove_tree
 from tests.test_decode_windows import create_gop_source, plan as base_plan, segment, track
 from tests.test_live_stream import probe, run_ffmpeg, top_level_boxes
+from tests.test_proxy_build import make_source
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -332,8 +339,53 @@ def simple_plan() -> dict[str, Any]:
     return base_plan([segment(1, 5), segment(7, 10)])
 
 
+SOURCE_NAMES = ("main.mp4", "logo.png", "voice.wav")
+"""Fontes que `source_plan` declara, na ordem de `UiTestCase.install(names=...)`."""
+
+EXPECTED_MAIN_USES = [
+    # (tipo, índice, fonte de, fonte até, montagem de, montagem até, loop), na ordem de `usage.source_uses`.
+    ("segment", 4, 2.0, 4.0, 8.0, 10.0, False),
+    ("segment", 1, 2.0, 6.0, 0.0, 4.0, False),
+    ("audio", 1, 2.0, 6.0, 0.0, 4.0, False),
+    ("audio", 4, 5.0, 6.0, 8.0, 10.0, True),
+    ("audio", 2, 11.7, 14.5, 3.7, 6.5, False),
+    ("segment", 2, 12.0, 14.0, 4.0, 6.0, False),
+    ("segment", 3, 22.0, 24.0, 6.0, 8.0, False),
+    ("layer", 3, 24.0, 26.0, 5.0, 7.0, False),
+]
+"""Usos de `main` em `source_plan`, calculados à mão a partir do docstring dele."""
+
+
+def source_plan() -> dict[str, Any]:
+    """Plano do modo Fonte, com J e L, camadas, uma trilha declarada além do que se ouve e uma em loop.
+
+    Montagem: S1 em [0, 4] (main 2 a 6), S2 em [4, 6] (main 12 a 14, áudio 3,7 a 6,5 pelos cortes J de 0,3 s e L
+    de 0,5 s), S3 em [6, 8] (main 22 a 24, com a trilha `voice` 0 a 10 sobre uma janela de 2 s) e S4 em [8, 10]
+    (main 2 a 4, com a trilha `main` 5 a 6 em loop). A camada de vídeo mostra main 24 a 26 em [5, 7].
+    """
+
+    return base_plan(
+        [
+            segment(2, 6),
+            segment(12, 14, [track(11.7, 14.5)]),
+            segment(22, 24, [track(0, 10, source_id="voice")], mode="replace"),
+            segment(2, 4, [track(5, 6, loop=True)], mode="replace"),
+        ],
+        cuts=[
+            {"after_segment": 1, "type": "j", "duration_s": 0.3},
+            {"after_segment": 2, "type": "l", "duration_s": 0.5},
+        ],
+        layers=[TEXT_LAYER, IMAGE_LAYER, VIDEO_LAYER],
+        sources=[
+            {"id": "main", "kind": "video", "path": "sources/main.mp4"},
+            {"id": "logo", "kind": "image", "path": "sources/logo.png"},
+            {"id": "voice", "kind": "audio", "path": "sources/voice.wav"},
+        ],
+    )
+
+
 class UiTestCase(unittest.TestCase):
-    """Fontes sintéticas compartilhadas: vídeo H.264/AAC de 30 s, logo PNG e um vídeo grande de 20 s."""
+    """Fontes sintéticas compartilhadas: vídeo H.264/AAC de 30 s, logo PNG e um áudio WAV de 10 s."""
 
     cache: Path
 
@@ -347,6 +399,10 @@ class UiTestCase(unittest.TestCase):
         run_ffmpeg(
             ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=1:duration=1",
              "-frames:v", "1", "-y", str(cls.cache / "logo.png")]
+        )
+        run_ffmpeg(
+            ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=330:duration=10:sample_rate=48000",
+             "-ac", "2", "-c:a", "pcm_s16le", "-y", str(cls.cache / "voice.wav")]
         )
 
     @classmethod
@@ -1509,6 +1565,19 @@ class SelectionTests(UiTestCase):
 # --- Stream e quadro de scrub ---------------------------------------------------------------------
 
 
+def open_slow_stream(harness: Harness, client: Client, path: str) -> socket.socket:
+    """Abre um stream com buffer de recepção de 1 KiB e não o lê: a pressão do pipe prende o servidor na escrita."""
+
+    connection = socket.socket()
+    connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
+    connection.settimeout(30)
+    connection.connect(("127.0.0.1", harness.port))
+    connection.sendall(
+        f"GET {path} HTTP/1.0\r\nHost: 127.0.0.1:{harness.port}\r\nCookie: {client.cookie}\r\n\r\n".encode()
+    )
+    return connection
+
+
 class RecordedProcesses:
     """Registra os FFmpeg que o servidor cria (e só eles), sem alterar o que `subprocess.Popen` faz."""
 
@@ -1642,14 +1711,7 @@ class MediaApiTests(BigSourceTestCase):
     def open_stream(self, harness: Harness, client: Client, path: str) -> socket.socket:
         """Abre um stream com um buffer de recepção minúsculo e o deixa sem ler, para o servidor ficar preso na escrita."""
 
-        connection = socket.socket()
-        connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
-        connection.settimeout(30)
-        connection.connect(("127.0.0.1", harness.port))
-        connection.sendall(
-            f"GET {path} HTTP/1.0\r\nHost: 127.0.0.1:{harness.port}\r\nCookie: {client.cookie}\r\n\r\n".encode()
-        )
-        return connection
+        return open_slow_stream(harness, client, path)
 
     def test_the_scrub_frame_is_a_jpeg_of_the_requested_resolution(self) -> None:
         with ui_workdir() as workdir:
@@ -1701,6 +1763,447 @@ class MediaApiTests(BigSourceTestCase):
                     response = client.get("/api/stream?t=0&res=full")
                 self.assertEqual((response.status, response.code), (503, "DEPENDENCY_MISSING"))
                 self.assertNotIn(str(workdir), response.body.decode("utf-8"))
+
+
+# --- Modo Fonte (T5): uso, seleção na fonte, stream e quadro --------------------------------------
+
+
+class SourceUsageTests(UiTestCase):
+    """O uso de cada fonte que o estado entrega confere com o plano, com `plan validate` e com `source_intervals`."""
+
+    def sources(self, client: Client) -> dict[str, dict[str, Any]]:
+        """Fontes de `GET /api/state` por id."""
+
+        response = client.get("/api/state")
+        self.assertEqual(response.status, 200, response.body)
+        return {item["id"]: item for item in response.json["data"]["plan"]["sources"]}
+
+    @staticmethod
+    def as_tuples(uses: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+        """Usos na forma `(tipo, índice, fonte de, fonte até, montagem de, montagem até, loop)`."""
+
+        return [
+            (u["kind"], u["index"], u["source_in_s"], u["source_out_s"], u["start_s"], u["end_s"], u["loop"])
+            for u in uses
+        ]
+
+    def test_the_usage_bar_data_matches_the_plan_and_plan_validate(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            document, validation = load_validated_plan(workdir)
+            with serving(workdir) as harness:
+                client = harness.client()
+                sources = self.sources(client)
+                raw = client.get("/api/state").body.decode("utf-8")
+            self.assertEqual(self.as_tuples(sources["main"]["uses"]), EXPECTED_MAIN_USES)
+            self.assertEqual(self.as_tuples(sources["voice"]["uses"]), [("audio", 3, 0.0, 2.0, 6.0, 8.0, False)])
+            self.assertEqual((sources["logo"]["uses"], sources["logo"]["used_count"]), ([], 0))
+            # Segmentos e camadas de cada uso saem da timeline de `plan validate`, não de conta própria.
+            timeline = {item["index"]: item for item in validation["timeline"]["segments"]}
+            for use in sources["main"]["uses"] + sources["voice"]["uses"]:
+                if use["kind"] == "segment":
+                    self.assertEqual((use["start_s"], use["end_s"]), (timeline[use["index"]]["start_s"], timeline[use["index"]]["end_s"]))
+                elif use["kind"] == "audio" and not use["loop"]:
+                    self.assertEqual(use["start_s"], timeline[use["index"]]["audio_start_s"])
+                    self.assertLessEqual(use["end_s"], timeline[use["index"]]["audio_end_s"] + 1e-9)
+                elif use["kind"] == "audio":
+                    self.assertEqual((use["start_s"], use["end_s"]), (timeline[use["index"]]["audio_start_s"], timeline[use["index"]]["audio_end_s"]))
+                else:
+                    layer = document["layers"][use["index"] - 1]
+                    self.assertEqual((use["start_s"], use["end_s"]), (layer["start_s"], layer["end_s"]))
+            # Os intervalos da fonte são os de `source_intervals`, com um refinamento: a trilha `voice` declara 0 a
+            # 10 s sob uma janela de 2 s e a barra mostra só o que se ouve (a música inteira não é "usada").
+            planned = source_intervals(document)
+            self.assertEqual(
+                sorted((u["source_in_s"], u["source_out_s"]) for u in sources["main"]["uses"]), sorted(planned["main"])
+            )
+            self.assertEqual(planned["voice"], [(0.0, 10.0)])
+            self.assertEqual([(u["source_in_s"], u["source_out_s"]) for u in sources["voice"]["uses"]], [(0.0, 2.0)])
+            # Fontes: tipo, duração, taxa própria (25 sem vídeo) e quantas vezes cada uma é usada.
+            self.assertEqual(
+                {key: (item["kind"], item["duration_s"], item["frame_rate"], item["used_count"]) for key, item in sources.items()},
+                {
+                    "main": ("video", 30.0, 25.0, 5),   # S1, S2, S3, S4 e a camada 3 (vídeo e áudio do mesmo segmento contam uma vez)
+                    "logo": ("image", None, None, 0),
+                    "voice": ("audio", 10.0, 25.0, 1),
+                },
+            )
+            for forbidden in (str(workdir), "sources/", "voice.wav"):
+                self.assertNotIn(forbidden, raw)
+
+    def test_a_track_longer_than_the_audible_window_uses_only_what_is_heard(self) -> None:
+        with ui_workdir() as workdir:
+            # Música declarada com 0 a 8 s sob um segmento de 3 s, e a mesma música em loop de 1 s.
+            document = base_plan(
+                [segment(2, 5, [track(0, 8, source_id="voice")], mode="replace"), segment(6, 8, [track(2, 3, loop=True, source_id="voice")], mode="replace")],
+                sources=[
+                    {"id": "main", "kind": "video", "path": "sources/main.mp4"},
+                    {"id": "voice", "kind": "audio", "path": "sources/voice.wav"},
+                ],
+            )
+            self.install(workdir, document, names=("main.mp4", "voice.wav"))
+            with serving(workdir) as harness:
+                voice = self.sources(harness.client())["voice"]
+            # Primeira trilha: heard = min(8, 3) = 3 s, de 0 a 3 na fonte, na montagem de 0 a 3. A segunda repete
+            # 2 a 3 em loop numa janela de 2 s: a fonte usada é 2 a 3 e a montagem aponta a janela inteira.
+            self.assertEqual(
+                self.as_tuples(voice["uses"]),
+                [("audio", 1, 0.0, 3.0, 0.0, 3.0, False), ("audio", 2, 2.0, 3.0, 3.0, 5.0, True)],
+            )
+            self.assertEqual(voice["used_count"], 2)
+
+    def test_a_source_that_vanished_is_marked_unavailable_with_the_public_error(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            with serving(workdir) as harness:
+                client = harness.client()
+                before = self.sources(client)
+                self.assertTrue(all(item["available"] and item["error"] is None for item in before.values()))
+                with patch.object(PlanState, "refresh", lambda self: None):
+                    (workdir / "sources" / "voice.wav").rename(workdir / "sources" / "movida.wav")
+                    after = self.sources(client)
+                self.assertEqual((after["voice"]["available"], after["main"]["available"]), (False, True))
+                self.assertEqual(
+                    after["voice"]["error"], {"code": "SOURCE_INVALID", "message": "Não foi possível ler uma fonte do plano."}
+                )
+                self.assertNotIn(str(workdir), json.dumps(after["voice"]))
+                # A vigia revalida e a faixa de estado traz o erro do plano; a última versão válida segue na tela.
+                broken = wait_until(
+                    lambda: (lambda data: data if data["error"] else None)(client.get("/api/state").json["data"]), timeout_s=10
+                )
+                self.assertEqual((broken["state"], broken["plan"] is not None), ("outdated", True))
+                self.assertEqual(broken["error"]["code"], "PLAN_INVALID")
+
+
+class SourceSelectionTests(UiTestCase):
+    """O texto e a situação da seleção na fonte conferem com `plan validate` e com o plano."""
+
+    def selection(self, client: Client, source_id: str, start: float, end: float) -> dict[str, Any]:
+        """`data` de `GET /api/source/selection` para o trecho dado."""
+
+        response = client.get(f"/api/source/selection?source_id={source_id}&start={start}&end={end}")
+        self.assertEqual(response.status, 200, response.body)
+        return response.json["data"]
+
+    @staticmethod
+    def parts(data: dict[str, Any]) -> list[tuple[Any, ...]]:
+        """Partes na forma `(tipo, índice, fonte de, fonte até, montagem de, montagem até, loop)`."""
+
+        return [
+            (p["kind"], p["index"], p["source_in_s"], p["source_out_s"], p["start_s"], p["end_s"], p["loop"])
+            for p in data["parts"]
+        ]
+
+    def test_used_discarded_and_partial_selections_with_their_places_in_the_assembly(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            validation = validate_plan(workdir)
+            segments = {item["index"]: item for item in validation["timeline"]["segments"]}
+            with serving(workdir) as harness:
+                client = harness.client()
+                # Usado: 3 a 5 s de main cabem em S1 (e, em 3 a 4 s, também em S4), vídeo e áudio de S1.
+                used = self.selection(client, "main", 3, 5)
+                self.assertEqual(used["status"], "used")
+                self.assertEqual(
+                    self.parts(used),
+                    [
+                        ("segment", 4, 3.0, 4.0, 9.0, 10.0, False),
+                        ("segment", 1, 3.0, 5.0, 1.0, 3.0, False),
+                        ("audio", 1, 3.0, 5.0, 1.0, 3.0, False),
+                    ],
+                )
+                # A posição na montagem sai da timeline do plano: início do segmento mais o deslocamento na fonte.
+                self.assertEqual(used["parts"][1]["start_s"], segments[1]["start_s"] + (3 - 2))
+                self.assertEqual(used["parts"][0]["start_s"], segments[4]["start_s"] + (3 - 2))
+                # Parcial: 5 a 8 s só cobre 5 a 6 s (S1 e a trilha em loop de S4); o resto não é usado.
+                partial = self.selection(client, "main", 5, 8)
+                self.assertEqual(partial["status"], "partial")
+                self.assertEqual(
+                    self.parts(partial),
+                    [
+                        ("segment", 1, 5.0, 6.0, 3.0, 4.0, False),
+                        ("audio", 1, 5.0, 6.0, 3.0, 4.0, False),
+                        ("audio", 4, 5.0, 6.0, 8.0, 10.0, True),
+                    ],
+                )
+                self.assertEqual(
+                    partial["text"],
+                    "\n".join(
+                        [
+                            "Trecho da fonte",
+                            f"Trabalho: {workdir.name}",
+                            f"Plano (SHA-256): {validation['plan_sha256']}",
+                            'Fonte: "main" (vídeo)',
+                            "Intervalo: 00:00:05:00 a 00:00:08:00 (5.000 s a 8.000 s), duração 3.000 s (00:00:03:00)",
+                            "Situação: parcialmente usado",
+                            "Partes usadas:",
+                            "- Segmento 1: 5.000 s a 6.000 s da fonte, na montagem de 00:00:03:00 a 00:00:04:00 (3.000 s a 4.000 s)",
+                            "- Áudio do segmento 1: 5.000 s a 6.000 s da fonte, na montagem de 00:00:03:00 a 00:00:04:00 (3.000 s a 4.000 s)",
+                            "- Áudio do segmento 4: 5.000 s a 6.000 s da fonte, na montagem, em loop, de 00:00:08:00 a 00:00:10:00 (8.000 s a 10.000 s)",
+                            "Pedido:",
+                        ]
+                    ),
+                )
+                self.assertEqual((partial["start_timecode"], partial["end_timecode"], partial["duration_timecode"]),
+                                 ("00:00:05:00", "00:00:08:00", "00:00:03:00"))
+                # Descartado: 7 a 10 s de main não aparece na montagem.
+                discarded = self.selection(client, "main", 7, 10)
+                self.assertEqual((discarded["status"], discarded["parts"]), ("discarded", []))
+                self.assertIn("Situação: descartado\nPartes usadas:\n- nenhum\nPedido:", discarded["text"])
+                self.assertTrue(discarded["text"].endswith("Pedido:"))
+                # O áudio J de S2 vem da fonte antes do vídeo dela e aparece na montagem antes de S2 começar.
+                joint = self.selection(client, "main", 11.7, 12.0)
+                self.assertEqual(joint["status"], "used")
+                self.assertEqual(self.parts(joint), [("audio", 2, 11.7, 12.0, 3.7, 4.0, False)])
+                self.assertEqual(
+                    (joint["parts"][0]["start_timecode"], joint["parts"][0]["end_timecode"]), ("00:00:03:17", "00:00:04:00")
+                )
+                # A camada de vídeo e o segmento 3 usam trechos vizinhos da mesma fonte: tocar-se não é usar mais.
+                tail = self.selection(client, "main", 22, 26)
+                self.assertEqual((tail["status"], [p[:2] for p in self.parts(tail)]), ("used", [("segment", 3), ("audio", 3)][:1] + [("layer", 3)]))
+                # Fonte só de áudio: situação e tipo no texto; a parte de `voice` usada é a janela ouvida.
+                voice = self.selection(client, "voice", 0, 5)
+                self.assertEqual((voice["status"], self.parts(voice)), ("partial", [("audio", 3, 0.0, 2.0, 6.0, 8.0, False)]))
+                self.assertIn('Fonte: "voice" (áudio)', voice["text"])
+                self.assertEqual(self.selection(client, "voice", 3, 5)["status"], "discarded")
+                self.assertEqual(self.selection(client, "voice", 0, 2)["status"], "used")
+
+    def test_the_text_has_no_absolute_path_and_no_token(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            with serving(workdir) as harness:
+                client = harness.client()
+                data = self.selection(client, "main", 0, 30)
+            blob = json.dumps(data)
+            for forbidden in (str(workdir), str(PROJECT_ROOT), "sources/", ".mp4", harness.token, "\\\\"):
+                self.assertNotIn(forbidden, blob)
+
+    def test_requests_outside_the_allowlist_are_refused(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            with serving(workdir) as harness:
+                client = harness.client()
+                refused = {
+                    "fonte fora do plano": "source_id=outra&start=0&end=1",
+                    "fonte de imagem": "source_id=logo&start=0&end=1",
+                    "maiúsculas": "source_id=Main&start=0&end=1",
+                    "caminho": "source_id=..%2Fmain&start=0&end=1",
+                    "barra invertida": "source_id=sources%5Cmain&start=0&end=1",
+                    "id com 65 caracteres": f"source_id={'a' * 65}&start=0&end=1",
+                    "sem source_id": "start=0&end=1",
+                    "source_id repetido": "source_id=main&source_id=voice&start=0&end=1",
+                    "campo a mais": "source_id=main&start=0&end=1&res=full",
+                    "invertida": "source_id=main&start=3&end=2",
+                    "vazia": "source_id=main&start=2&end=2",
+                    "depois do fim da fonte": "source_id=main&start=2&end=30.5",
+                    "voice depois do fim": "source_id=voice&start=0&end=10.5",
+                    "expoente": "source_id=main&start=1e0&end=2",
+                    "negativa": "source_id=main&start=-1&end=2",
+                }
+                for name, query in refused.items():
+                    with self.subTest(name):
+                        response = client.get(f"/api/source/selection?{query}")
+                        self.assertEqual((response.status, response.code), (400, "ARGUMENT_INVALID"), response.body)
+                        for secret in (str(workdir), "outra", "Main"):
+                            self.assertNotIn(secret, response.body.decode("utf-8"))
+                # O limite exato da fonte é aceito.
+                self.assertEqual(self.selection(client, "main", 0, 30)["status"], "partial")
+                self.assertEqual(client.request("POST", "/api/source/selection?source_id=main&start=0&end=1",
+                                                headers={"Origin": f"http://127.0.0.1:{harness.port}"}).status, 405)
+
+
+class SourceMediaApiTests(BigSourceTestCase):
+    """Stream e quadro da fonte inteira pela API: comando do núcleo, proxy, áudio, término e `SOURCE_INVALID`."""
+
+    def setUp(self) -> None:
+        self.recorder = RecordedProcesses()
+        self.addCleanup(self.recorder.kill_all)
+
+    def expected_arguments(self, workdir: Path, source_id: str, start_s: float, resolution: str) -> list[str]:
+        """Argumentos do núcleo para o mesmo pedido de stream."""
+
+        _, validation = load_validated_plan(workdir)
+        return live.source_stream_arguments(live.prepare_source_live(workdir, validation, source_id, start_s, resolution))
+
+    def test_the_source_stream_is_the_core_command_and_a_valid_fragmented_mp4(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            with patch.object(subprocess, "Popen", self.recorder), serving(workdir) as harness:
+                client = harness.client()
+                for resolution, canvas in (("1/2", (80, 44)), ("full", (160, 90))):
+                    with self.subTest(resolution=resolution):
+                        before = len(self.recorder.arguments)
+                        response = client.get(f"/api/source/stream?source_id=main&t=10.04&res={resolution}")
+                        self.assertEqual(response.status, 200)
+                        self.assertEqual(response.headers["content-type"], "video/mp4")
+                        self.assertEqual(response.headers["x-editor-start-s"], "10.040000")
+                        self.assertNotIn("content-length", response.headers)
+                        self.assertEqual(len(self.recorder.arguments) - before, 1)
+                        self.assertEqual(self.recorder.arguments[-1][1:], self.expected_arguments(workdir, "main", 10.04, resolution))
+                        boxes = [kind for kind, _ in top_level_boxes(response.body)]
+                        self.assertEqual(boxes[:2], ["ftyp", "moov"])
+                        self.assertGreater(boxes.count("moof"), 1)
+                        path = workdir / f"source-{resolution.replace('/', '-')}.mp4"
+                        path.write_bytes(response.body)
+                        info = probe(path)
+                        streams = {item["codec_type"]: item for item in info["streams"]}
+                        self.assertEqual((streams["video"]["codec_name"], streams["audio"]["codec_name"]), ("h264", "aac"))
+                        self.assertEqual((streams["video"]["width"], streams["video"]["height"]), canvas)
+                        # A fonte vai inteira (30 s) a partir de T, não só o que a montagem usa.
+                        self.assertAlmostEqual(float(info["format"]["duration"]), 30.0 - 10.04, delta=0.2)
+                # Não há script de filtro nem outro arquivo temporário: a fonte é uma transcodificação simples.
+                self.assertEqual(list((workdir / ".tmp").glob(f"{LIVE_FILTER_PREFIX}*")), [])
+            wait_until(lambda: all(p.poll() is not None for p in self.recorder.processes))
+
+    def test_an_audio_only_source_is_served_without_image_and_has_no_frame(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            with serving(workdir) as harness:
+                client = harness.client()
+                response = client.get("/api/source/stream?source_id=voice&t=2&res=full")
+                self.assertEqual((response.status, response.headers["content-type"]), (200, "video/mp4"))
+                path = workdir / "voice.mp4"
+                path.write_bytes(response.body)
+                info = probe(path)
+                self.assertEqual([(item["codec_type"], item["codec_name"]) for item in info["streams"]], [("audio", "aac")])
+                self.assertAlmostEqual(float(info["format"]["duration"]), 8.0, delta=0.2)
+                frame = client.get("/api/source/frame?source_id=voice&t=2&res=full")
+                self.assertEqual((frame.status, frame.code), (400, "ARGUMENT_INVALID"))
+
+    def test_the_source_frame_is_a_jpeg_of_the_source_at_t(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            with serving(workdir) as harness:
+                client = harness.client()
+                for resolution, canvas in (("full", (160, 90)), ("1/2", (80, 44)), ("1/4", (40, 22))):
+                    with self.subTest(resolution=resolution):
+                        response = client.get(f"/api/source/frame?source_id=main&t=20.5&res={resolution}")
+                        self.assertEqual((response.status, response.headers["content-type"]), (200, "image/jpeg"))
+                        self.assertEqual(response.headers["x-editor-start-s"], "20.480000")
+                        self.assertTrue(response.body.startswith(b"\xff\xd8"))
+                        path = workdir / f"source-frame-{resolution.replace('/', '-')}.jpg"
+                        path.write_bytes(response.body)
+                        video = probe(path)["streams"][0]
+                        self.assertEqual((video["codec_name"], video["width"], video["height"]), ("mjpeg", *canvas))
+
+    def test_fractions_read_the_proxy_and_full_reads_the_original_through_the_api(self) -> None:
+        with ui_workdir() as workdir:
+            make_source(workdir / "sources" / "main.mp4", "1920x1080")
+            self.write_plan(workdir, {**simple_plan(), "segments": [segment(0, 1), segment(1, 2)]})
+            self.assertEqual([item["status"] for item in build_proxies(workdir)["proxies"]], ["created"])
+            with patch.object(subprocess, "Popen", self.recorder), serving(workdir) as harness:
+                client = harness.client()
+                state = client.get("/api/state").json["data"]["plan"]["sources"][0]
+                self.assertTrue(state["proxy"])
+                for resolution in ("full", "1/2"):
+                    with self.subTest(resolution=resolution):
+                        response = client.get(f"/api/source/stream?source_id=main&t=0.5&res={resolution}")
+                        self.assertEqual(response.status, 200)
+                        used = self.recorder.arguments[-1]
+                        read = Path(used[used.index("-i") + 1])
+                        if resolution == "full":
+                            self.assertEqual(read.name, "main.mp4")
+                            self.assertEqual(read.parent.name, "sources")
+                        else:
+                            self.assertEqual(read.parent.name, "proxy")
+
+    def test_closing_the_connection_ends_the_ffmpeg_process(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, self.big_plan(), names=("big.mp4",))
+            with patch.object(subprocess, "Popen", self.recorder), serving(workdir) as harness:
+                client = harness.client()
+                connection = open_slow_stream(harness, client, "/api/source/stream?source_id=main&t=0&res=full")
+                try:
+                    self.assertIn(b"200", connection.recv(128))
+                    process = wait_until(lambda: self.recorder.processes[-1:] and self.recorder.processes[-1])
+                    time.sleep(1.0)
+                    self.assertIsNone(process.poll(), "o FFmpeg terminou sem o cliente consumir o stream")
+                finally:
+                    connection.close()
+                wait_until(lambda: process.poll() is not None, timeout_s=15, message="o FFmpeg não terminou com a conexão")
+                self.assertEqual(client.get("/api/state").status, 200)
+
+    def test_one_source_stream_per_session_and_it_lives_beside_the_assembly_stream(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, self.big_plan(), names=("big.mp4",))
+            with patch.object(subprocess, "Popen", self.recorder), serving(workdir) as harness:
+                client = harness.client()
+                assembly = open_slow_stream(harness, client, "/api/stream?t=0&res=full")
+                first = second = None
+                try:
+                    self.assertIn(b"200", assembly.recv(128))
+                    montage = wait_until(lambda: self.recorder.processes[-1:] and self.recorder.processes[-1])
+                    first = open_slow_stream(harness, client, "/api/source/stream?source_id=main&t=0&res=full")
+                    self.assertIn(b"200", first.recv(128))
+                    older = wait_until(lambda: len(self.recorder.processes) >= 2 and self.recorder.processes[-1])
+                    second = open_slow_stream(harness, client, "/api/source/stream?source_id=main&t=5&res=full")
+                    self.assertIn(b"200", second.recv(128))
+                    newer = wait_until(lambda: len(self.recorder.processes) >= 3 and self.recorder.processes[-1])
+                    # O segundo pedido de fonte encerra o primeiro; o stream da montagem é de outro tipo e segue vivo.
+                    wait_until(lambda: older.poll() is not None, timeout_s=15, message="o stream anterior da fonte não foi encerrado")
+                    self.assertIsNone(newer.poll())
+                    self.assertIsNone(montage.poll())
+                finally:
+                    for connection in (assembly, first, second):
+                        if connection is not None:
+                            connection.close()
+                wait_until(lambda: newer.poll() is not None and montage.poll() is not None, timeout_s=15)
+
+    def test_a_missing_source_file_is_source_invalid_without_starting_ffmpeg(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            with patch.object(subprocess, "Popen", self.recorder), serving(workdir) as harness:
+                client = harness.client()
+                with patch.object(PlanState, "refresh", lambda self: None):
+                    (workdir / "sources" / "main.mp4").rename(workdir / "sources" / "movida.mp4")
+                    stream = client.get("/api/source/stream?source_id=main&t=1&res=full")
+                    frame = client.get("/api/source/frame?source_id=main&t=1&res=full")
+                    selection = client.get("/api/source/selection?source_id=main&start=0&end=1")
+                for response in (stream, frame):
+                    self.assertEqual((response.status, response.code), (409, "SOURCE_INVALID"))
+                    self.assertEqual(response.json["error"]["message"], "Não foi possível ler uma fonte do plano.")
+                    for secret in (str(workdir), "main.mp4", "movida"):
+                        self.assertNotIn(secret, response.body.decode("utf-8"))
+                self.assertEqual(self.recorder.arguments, [])
+                # O texto da seleção só lê o plano: segue disponível para a fonte indisponível.
+                self.assertEqual(selection.status, 200)
+
+    def test_stream_and_frame_requests_outside_the_allowlist_never_start_ffmpeg(self) -> None:
+        with ui_workdir() as workdir:
+            self.install(workdir, source_plan(), names=SOURCE_NAMES)
+            with patch.object(subprocess, "Popen", self.recorder), serving(workdir) as harness:
+                client = harness.client()
+                refused = {
+                    "fonte fora do plano": "source_id=outra&t=1&res=full",
+                    "fonte de imagem": "source_id=logo&t=0&res=full",
+                    "maiúsculas": "source_id=MAIN&t=1&res=full",
+                    "caminho": "source_id=..%2F..%2Fplan.json&t=1&res=full",
+                    "caminho absoluto": "source_id=C%3A%5Cx&t=1&res=full",
+                    "sem source_id": "t=1&res=full",
+                    "sem t": "source_id=main&res=full",
+                    "sem res": "source_id=main&t=1",
+                    "campo a mais": "source_id=main&t=1&res=full&x=1",
+                    "resolução inválida": "source_id=main&t=1&res=1/5",
+                    "t negativo": "source_id=main&t=-1&res=full",
+                    "t depois do fim": "source_id=main&t=30.5&res=full",
+                    "t de voice depois do fim": "source_id=voice&t=10.5&res=full",
+                    "t com expoente": "source_id=main&t=1e1&res=full",
+                    "t NaN": "source_id=main&t=nan&res=full",
+                    "t com 33 caracteres": f"source_id=main&t={'1' * 33}&res=full",
+                }
+                for route in ("stream", "frame"):
+                    for name, query in refused.items():
+                        with self.subTest(route=route, caso=name):
+                            response = client.get(f"/api/source/{route}?{query}")
+                            self.assertEqual((response.status, response.code), (400, "ARGUMENT_INVALID"), response.body)
+                            for secret in (str(workdir), "outra", "MAIN", "plan.json"):
+                                self.assertNotIn(secret, response.body.decode("utf-8"))
+                self.assertEqual(client.request("POST", "/api/source/stream?source_id=main&t=1&res=full",
+                                                headers={"Origin": f"http://127.0.0.1:{harness.port}"}).status, 405)
+                self.assertEqual(self.recorder.arguments, [])
+                # O limite exato da fonte é aceito, no último quadro.
+                response = client.get("/api/source/frame?source_id=main&t=30&res=full")
+                self.assertEqual((response.status, response.headers["x-editor-start-s"]), (200, "29.960000"))
 
 
 if __name__ == "__main__":

@@ -71,7 +71,11 @@ IDLE_TIMEOUT_S = 2 * 60 * 60
 
 # --- Processos ---
 PROCESS_KINDS = ("stream", "source", "frame")
-"""Tipos de FFmpeg por sessão (stream do player, stream da fonte da T5, extração de quadro): um de cada."""
+"""Tipos de FFmpeg por sessão: stream da montagem, stream da fonte inteira (modo Fonte) e extração de quadro.
+
+Há um de cada por sessão; o quadro de scrub da montagem e o da fonte dividem o tipo `frame`, pois a tela só
+mostra um modo por vez.
+"""
 
 MAX_PROCESSES_PER_SESSION = len(PROCESS_KINDS)
 """No máximo três FFmpeg por sessão; um pedido novo do mesmo tipo encerra o anterior."""
@@ -91,6 +95,8 @@ STREAM_CHUNK_BYTES = 64 * 1024
 # --- Entrada HTTP (allowlist da spec) ---
 QUERY_MAX_BYTES = 2048
 QUERY_VALUE_MAX_CHARS = 32
+SOURCE_ID_MAX_CHARS = 64
+"""Teto do `source_id` da query do modo Fonte: o padrão de `workdir.validate_source_id` aceita até 64 caracteres."""
 BODY_MAX_BYTES = 1024
 BODY_DRAIN_MAX_BYTES = 64 * 1024
 """Corpo recusado é lido (até este teto) antes da resposta, para o fechamento da conexão não virar RST."""

@@ -20,7 +20,12 @@ Formato do texto: PT-BR, uma linha por item, textos entre aspas em JSON (uma lin
 conhecidos), segundos com 3 casas e timecode `HH:MM:SS:FF` na taxa de saída; sem caminho absoluto
 (só o nome da pasta do trabalho) e sem token. O bloco termina em `Pedido:` para o operador completar.
 
-Pontos de extensão: a T5 acrescenta a seleção na fonte (usado, descartado ou parcial) ao lado desta.
+Seleção na fonte (T5, F6 e F7): `describe_source_selection` é a contraparte para um intervalo `[start_s, end_s]`
+de uma fonte inteira. Diz se o trecho é usado, descartado ou parcialmente usado pela montagem e lista cada
+parte usada com o intervalo da montagem em que ela aparece (o mapeamento fonte para montagem é o de
+`usage.source_uses`, lido da visão do plano, sem recalcular). O texto "Copiar para IA" segue o mesmo formato:
+cabeçalho com trabalho e hash, `Fonte:`, intervalo, `Situação:`, partes e `Pedido:`. O timecode do intervalo da
+fonte é o da própria fonte; o da montagem, o da saída.
 """
 
 from __future__ import annotations
@@ -40,6 +45,12 @@ TEXT_PREVIEW_CHARS = 60
 
 LAYER_TYPE_LABELS = {"text": "texto", "image": "imagem", "video": "vídeo"}
 """Tipo da camada como aparece no texto copiado."""
+
+SOURCE_STATUS_LABELS = {"used": "usado", "partial": "parcialmente usado", "discarded": "descartado"}
+"""Situação do trecho da fonte como aparece no texto copiado."""
+
+SOURCE_KIND_LABELS = {"video": "vídeo", "audio": "áudio"}
+"""Tipo da fonte como aparece no texto copiado."""
 
 _TIMECODE_EPSILON = 1e-6
 
@@ -242,4 +253,143 @@ def describe_selection(
         "captions": _captions(snapshot, start_s, end_s),
     }
     selection["text"] = _text(selection)
+    return selection
+
+
+# --- Seleção na fonte (T5) ------------------------------------------------------------------------
+
+
+def _merged(ranges: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Une intervalos que se cruzam ou se tocam (uma barra de uso sem sobreposição entre vídeo e áudio do mesmo trecho)."""
+
+    merged: list[list[float]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1] + EPSILON_S:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(start, end) for start, end in merged]
+
+
+def _source_status(uses: list[dict[str, Any]], start_s: float, end_s: float) -> str:
+    """`used` se os usos cobrem o trecho inteiro, `discarded` se não tocam nele, `partial` no meio termo."""
+
+    covered = 0.0
+    for use_start, use_end in _merged([(use["source_in_s"], use["source_out_s"]) for use in uses]):
+        part = _overlap(use_start, use_end, start_s, end_s)
+        if part is not None:
+            covered += part[1] - part[0]
+    if covered <= EPSILON_S:
+        return "discarded"
+    return "used" if end_s - start_s - covered <= EPSILON_S else "partial"
+
+
+def _source_parts(
+    uses: list[dict[str, Any]], start_s: float, end_s: float, frame_rate: float
+) -> list[dict[str, Any]]:
+    """Cada uso que cruza o trecho, com a parte da fonte e a posição correspondente na montagem.
+
+    A ordem é a de `usage.source_uses` (início na fonte, depois vídeo, áudio e camada). Trecho linear
+    (segmento, camada, trilha sem repetição): a posição acompanha a parte. Trilha em `loop`: a janela
+    de áudio inteira, com `loop` verdadeiro, porque a parte toca em cada repetição.
+    """
+
+    parts: list[dict[str, Any]] = []
+    for use in uses:
+        part = _overlap(use["source_in_s"], use["source_out_s"], start_s, end_s)
+        if part is None:
+            continue
+        if use["loop"]:
+            montage = (use["start_s"], use["end_s"])
+        else:
+            offset = use["start_s"] - use["source_in_s"]
+            montage = (_round(part[0] + offset), _round(part[1] + offset))
+        parts.append(
+            {
+                "kind": use["kind"],
+                "index": use["index"],
+                "loop": use["loop"],
+                "source_in_s": _round(part[0]),
+                "source_out_s": _round(part[1]),
+                "start_s": montage[0],
+                "end_s": montage[1],
+                "start_timecode": format_timecode(montage[0], frame_rate),
+                "end_timecode": format_timecode(montage[1], frame_rate),
+            }
+        )
+    return parts
+
+
+def _part_label(part: dict[str, Any]) -> str:
+    """Nome da parte usada: segmento, áudio do segmento ou camada de vídeo, com o índice de base 1."""
+
+    return {
+        "segment": f'Segmento {part["index"]}',
+        "audio": f'Áudio do segmento {part["index"]}',
+        "layer": f'Camada {part["index"]} (vídeo)',
+    }[part["kind"]]
+
+
+def _source_text(selection: dict[str, Any]) -> str:
+    """Monta o bloco "Copiar para IA" da seleção na fonte (F7, conteúdo do bloco da fonte)."""
+
+    source_rate = selection["source_frame_rate"]
+    start_s, end_s, duration_s = selection["start_s"], selection["end_s"], selection["duration_s"]
+    part_lines = []
+    for part in selection["parts"]:
+        where = (
+            f'{part["start_timecode"]} a {part["end_timecode"]} ({part["start_s"]:.3f} s a {part["end_s"]:.3f} s)'
+        )
+        placement = f"na montagem, em loop, de {where}" if part["loop"] else f"na montagem de {where}"
+        part_lines.append(
+            f'- {_part_label(part)}: {part["source_in_s"]:.3f} s a {part["source_out_s"]:.3f} s da fonte, {placement}'
+        )
+    lines = [
+        "Trecho da fonte",
+        f'Trabalho: {selection["workdir_name"]}',
+        f'Plano (SHA-256): {selection["plan_sha256"]}',
+        f'Fonte: "{selection["source_id"]}" ({SOURCE_KIND_LABELS[selection["source_kind"]]})',
+        (
+            f'Intervalo: {format_timecode(start_s, source_rate)} a {format_timecode(end_s, source_rate)} '
+            f"({start_s:.3f} s a {end_s:.3f} s), duração {duration_s:.3f} s "
+            f"({format_timecode(duration_s, source_rate)})"
+        ),
+        f'Situação: {SOURCE_STATUS_LABELS[selection["status"]]}',
+        "Partes usadas:",
+        *_bullets(part_lines),
+        "Pedido:",
+    ]
+    return "\n".join(lines)
+
+
+def describe_source_selection(
+    snapshot: PlanSnapshot, workdir_name: str, source_id: str, start_s: float, end_s: float
+) -> dict[str, Any]:
+    """Mapeia `[start_s, end_s]` de uma fonte para a situação de uso e as partes usadas, e monta o texto para a IA.
+
+    O chamador já validou que `source_id` é uma fonte de vídeo ou áudio do plano e que
+    `0 <= start_s < end_s <= duração da fonte`. Devolve a forma que `GET /api/source/selection` entrega:
+    o painel desenha `status` e `parts` e o botão copia `text`.
+    """
+
+    source = next(item for item in snapshot.view["sources"] if item["id"] == source_id)
+    source_rate = float(source["frame_rate"])
+    uses = source["uses"]
+    selection: dict[str, Any] = {
+        "workdir_name": workdir_name,
+        "plan_sha256": snapshot.plan_sha256,
+        "source_id": source_id,
+        "source_kind": source["kind"],
+        "frame_rate": snapshot.frame_rate,
+        "source_frame_rate": source_rate,
+        "start_s": _round(start_s),
+        "end_s": _round(end_s),
+        "duration_s": _round(end_s - start_s),
+        "start_timecode": format_timecode(start_s, source_rate),
+        "end_timecode": format_timecode(end_s, source_rate),
+        "duration_timecode": format_timecode(end_s - start_s, source_rate),
+        "status": _source_status(uses, start_s, end_s),
+        "parts": _source_parts(uses, start_s, end_s, snapshot.frame_rate),
+    }
+    selection["text"] = _source_text(selection)
     return selection

@@ -15,6 +15,13 @@ Pontos de extensão: `RESOLUTIONS` (frações do canvas), as constantes `LIVE_*`
 fora dos presets da full) e `live_arguments`, que aceita qualquer saída no lugar do encoder (a prova
 troca o encoder por `framemd5` para comparar antes de qualquer perda).
 
+Fonte inteira (phase 7, T5): o modo Fonte da interface confere cada fonte de vídeo ou áudio do plano
+fora da montagem. `prepare_source_live`, `source_stream_arguments` e `source_frame_arguments` fazem
+uma transcodificação simples (um `-i`, sem grafo) da fonte a partir de T, com o mesmo encoder de
+transmissão (`LIVE_*`) e a mesma seleção de proxy (`proxy.lookup_proxy`): `full` lê o original e as
+frações, o proxy válido. O canvas é o da própria fonte (`source_canvas`), nunca o do perfil, porque a
+conferência mostra o quadro inteiro, sem corte nem barras do `fit` da montagem.
+
 Limitações conhecidas (o que `tests/test_live_stream.py` prova e o que não):
 ponytail: a igualdade quadro a quadro com a full foi provada com fontes na taxa da saída (a do primeiro
 segmento), em 25 e em 29,97 quadros; misturando taxas (medido com fontes de 25 e de 29,97 quadros) um
@@ -42,13 +49,16 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 import math
+import os
 from pathlib import Path
+import stat
 import subprocess
 from types import MappingProxyType
 from typing import Any
 
 from .. import dependencies
 from ..contracts import EXIT_CODES, CliError
+from ..plan.schema import MAX_MAX_FULL_WIDTH
 from ..workdir import PreviewLayout, _ensure_directory, validate_workdir
 from .ffmpeg_graph import FfmpegGraph, build_ffmpeg_graph
 from .preview import (
@@ -58,6 +68,7 @@ from .preview import (
     _number,
     _select_proxies,
 )
+from .proxy import lookup_proxy
 from .windows import TimeWindow
 
 
@@ -93,6 +104,24 @@ SCRUB_JPEG_QUALITY = 3
 SCRUB_TIMEOUT_S = 30.0
 """Prazo da extração de um quadro; passado isso o FFmpeg é encerrado e o pedido falha."""
 
+SOURCE_VIEW_KINDS = ("video", "audio")
+"""Tipos de fonte que o modo Fonte confere: imagem estática não tem tempo nem som e fica fora."""
+
+SOURCE_SEEK_SLACK_S = 0.001
+"""Recuo do `-ss` da fonte antes do quadro pedido.
+
+O primeiro quadro do stream da fonte é o primeiro com `pts` a partir do `-ss`. Pedir exatamente a posição
+`n / fps` deixaria o `pts` real, que a taxa arredondada dos metadados nunca reproduz por inteiro, cair
+um microssegundo antes e descartar o quadro n; 1 ms é muito menos que um quadro e muito mais que esse erro.
+"""
+
+SOURCE_MAX_SIDE = MAX_MAX_FULL_WIDTH
+"""Maior lado da imagem do stream da fonte em `full`: o teto de canvas que o produto já gera (UHD).
+
+As fontes aceitas chegam a 8.192 pixels; transcodificar 8K ao vivo não acompanha o tempo real e
+navegador nenhum decodifica H.264 desse tamanho, então `full` reduz a fonte maior que isso (sem corte).
+"""
+
 _FRAME_EPSILON = 1e-9
 """Folga contra erro de ponto flutuante ao converter segundos em índice de quadro."""
 
@@ -123,6 +152,13 @@ class LiveRender:
     proxy_sources: tuple[str, ...]
 
 
+def source_frame_rate(record: Mapping[str, Any]) -> float:
+    """Taxa de quadros de uma fonte validada: a medida pelo FFprobe, ou 25 sem vídeo (fonte só de áudio)."""
+
+    rate = record.get("video_frame_rate")
+    return float(rate) if rate is not None else DEFAULT_FRAME_RATE
+
+
 def output_frame_rate(document: Mapping[str, Any], validation: Mapping[str, Any]) -> float:
     """Taxa de quadros da saída: a da fonte do primeiro segmento, o `-r` que preview e full já aplicam.
 
@@ -131,24 +167,32 @@ def output_frame_rate(document: Mapping[str, Any], validation: Mapping[str, Any]
 
     first_source_id = str(document["segments"][0]["video"]["source_id"])
     record = next(item for item in validation["sources"] if str(item["id"]) == first_source_id)
-    rate = record.get("video_frame_rate")
-    return float(rate) if rate is not None else DEFAULT_FRAME_RATE
+    return source_frame_rate(record)
 
 
-def live_canvas(validation: Mapping[str, Any], resolution: str) -> tuple[int, int]:
-    """Dimensões do canvas na resolução pedida: o da full dividido e arredondado para baixo a par (mínimo 2)."""
+def _resolution_divisor(resolution: object) -> int:
+    """Divisor das dimensões para a resolução pedida; fora da allowlist é `ARGUMENT_INVALID`."""
 
     divisor = RESOLUTION_DIVISORS.get(resolution) if isinstance(resolution, str) else None
     if divisor is None:
         raise _error(
             "ARGUMENT_INVALID", "A resolução informada não é suportada.", EXIT_CODES["ARGUMENT"]
         )
+    return divisor
+
+
+def _reduced(size: int, divisor: int) -> int:
+    """Lado dividido e arredondado para baixo a par (o `yuv420p` exige par), com mínimo de 2 pixels."""
+
+    return max(2, size // divisor // 2 * 2)
+
+
+def live_canvas(validation: Mapping[str, Any], resolution: str) -> tuple[int, int]:
+    """Dimensões do canvas na resolução pedida: o da full dividido e arredondado para baixo a par (mínimo 2)."""
+
+    divisor = _resolution_divisor(resolution)
     profile = validation["profile"]
-
-    def reduced(full_size: int) -> int:
-        return max(2, full_size // divisor // 2 * 2)
-
-    return reduced(int(profile["full_width"])), reduced(int(profile["full_height"]))
+    return _reduced(int(profile["full_width"]), divisor), _reduced(int(profile["full_height"]), divisor)
 
 
 def snap_start(start_s: object, duration_s: float, frame_rate: float) -> float:
@@ -282,6 +326,25 @@ def live_arguments(live: LiveRender, filter_script: Path, output_arguments: Sequ
     return [*inputs, filter_option, str(filter_script), *output_arguments]
 
 
+def _transmission_video_arguments(frame_rate: float) -> list[str]:
+    """Codec de vídeo do encoder de transmissão, com o quadro-chave a cada meio segundo na taxa dada.
+
+    Fonte única para o stream da montagem e o da fonte inteira: os dois entregam o mesmo formato ao `<video>`.
+    """
+
+    keyframe_interval = max(1, round(frame_rate * LIVE_KEYFRAME_INTERVAL_S))
+    return [
+        "-c:v", LIVE_VIDEO_ENCODER, "-preset", LIVE_VIDEO_PRESET, "-tune", LIVE_VIDEO_TUNE,
+        "-crf", str(LIVE_VIDEO_CRF), "-g", str(keyframe_interval), "-pix_fmt", "yuv420p",
+    ]
+
+
+def _transmission_audio_arguments() -> list[str]:
+    """Codec de áudio do encoder de transmissão (AAC 48 kHz), comum ao stream da montagem e ao da fonte."""
+
+    return ["-c:a", "aac", "-b:a", LIVE_AUDIO_BITRATE, "-ar", "48000"]
+
+
 def stream_output_arguments(live: LiveRender) -> list[str]:
     """Saída do stream: MP4 fragmentado H.264/AAC no stdout, com o encoder de transmissão.
 
@@ -289,20 +352,13 @@ def stream_output_arguments(live: LiveRender) -> list[str]:
     Sem grupo de áudio de T ao fim o stream sai sem áudio (`-an`).
     """
 
-    keyframe_interval = max(1, round(live.frame_rate * LIVE_KEYFRAME_INTERVAL_S))
     arguments = [
         "-map", f"[{live.graph.video_label}]", "-map_metadata", "-1",
-        "-c:v", LIVE_VIDEO_ENCODER, "-preset", LIVE_VIDEO_PRESET, "-tune", LIVE_VIDEO_TUNE,
-        "-crf", str(LIVE_VIDEO_CRF), "-g", str(keyframe_interval), "-pix_fmt", "yuv420p",
+        *_transmission_video_arguments(live.frame_rate),
         "-r", _number(live.frame_rate),
     ]
     if live.graph.audio_label:
-        arguments.extend(
-            [
-                "-map", f"[{live.graph.audio_label}]", "-c:a", "aac",
-                "-b:a", LIVE_AUDIO_BITRATE, "-ar", "48000",
-            ]
-        )
+        arguments.extend(["-map", f"[{live.graph.audio_label}]", *_transmission_audio_arguments()])
     else:
         arguments.append("-an")
     arguments.extend(["-movflags", LIVE_MOVFLAGS, "-t", _number(live.duration_s), "-f", "mp4", "pipe:1"])
@@ -375,3 +431,172 @@ def extract_frame(
     if result.returncode != 0 or not result.stdout.startswith(b"\xff\xd8"):
         raise failure
     return result.stdout
+
+
+# --- Fonte inteira (phase 7, T5) ------------------------------------------------------------------
+
+
+def source_unavailable() -> CliError:
+    """Erro público de fonte do plano que sumiu ou deixou de ser arquivo regular, sem caminho na mensagem.
+
+    `exit_code` de mídia, como o `SOURCE_INVALID` do restante do produto (a interface o mostra como 409).
+    """
+
+    return _error("SOURCE_INVALID", "Não foi possível ler uma fonte do plano.", EXIT_CODES["MEDIA"])
+
+
+@dataclass(frozen=True)
+class SourceLive:
+    """Uma fonte inteira pronta para virar comando: arquivo lido (original ou proxy), canvas e instante.
+
+    `start_s` é o primeiro quadro do stream, colado na grade de quadros da própria fonte, e `seek_s` o
+    `-ss` que o alcança (`SOURCE_SEEK_SLACK_S` antes). `width` e `height` são `None` na fonte só de
+    áudio, que o stream entrega sem imagem. `proxy` indica que o arquivo lido é o proxy da fonte.
+    """
+
+    source_id: str
+    kind: str
+    read_path: Path
+    resolution: str
+    width: int | None
+    height: int | None
+    frame_rate: float
+    start_s: float
+    seek_s: float
+    proxy: bool
+
+    @property
+    def has_video(self) -> bool:
+        """Se o stream tem imagem: só a fonte de vídeo, e só ela tem canvas."""
+
+        return self.width is not None
+
+
+def source_record(validation: Mapping[str, Any], source_id: object) -> Mapping[str, Any]:
+    """Registro validado da fonte de vídeo ou áudio com esse id; qualquer outro valor é `ARGUMENT_INVALID`.
+
+    Imagem estática não entra no modo Fonte. A mensagem é fixa e não ecoa o id recebido.
+    """
+
+    for record in validation["sources"]:
+        if str(record["id"]) == source_id and record["kind"] in SOURCE_VIEW_KINDS:
+            return record
+    raise _error("ARGUMENT_INVALID", "A fonte informada não está no plano.", EXIT_CODES["ARGUMENT"])
+
+
+def source_canvas(record: Mapping[str, Any], resolution: str) -> tuple[int, int]:
+    """Dimensões da imagem do stream da fonte: as dela, reduzidas a `SOURCE_MAX_SIDE`, divididas e pares.
+
+    Mantém a proporção da fonte (nada é cortado nem ganha barras) e vale igual com o original ou o proxy
+    (o proxy cabe em 1280x720 e é ampliado quando a fração pede mais, sem mudar o tamanho do stream).
+    ponytail: a rotação gravada no metadado da fonte (celular na vertical) não é lida, o produto inteiro
+    parte das dimensões codificadas, tratar a rotação em `media.py` quando uma fonte real chegar rodada.
+    """
+
+    divisor = _resolution_divisor(resolution)
+    width, height = int(record["video_width"]), int(record["video_height"])
+    longest = max(width, height)
+    if longest > SOURCE_MAX_SIDE:
+        width, height = width * SOURCE_MAX_SIDE // longest, height * SOURCE_MAX_SIDE // longest
+    return _reduced(width, divisor), _reduced(height, divisor)
+
+
+def prepare_source_live(
+    workdir: str | Path,
+    validation: Mapping[str, Any],
+    source_id: str,
+    start_s: float,
+    resolution: str,
+) -> SourceLive:
+    """Monta a leitura da fonte inteira a partir de T na resolução pedida.
+
+    `full` lê sempre o original; as frações de uma fonte de vídeo leem o proxy válido (`lookup_proxy`, só
+    por metadados) e o original quando ele não existe ou está obsoleto, como `render preview --proxy auto`.
+    Fonte que sumiu depois da validação é `SOURCE_INVALID`. T é colado na grade de quadros da fonte
+    (`snap_start`) e T fora de `[0, duração]` é `ARGUMENT_INVALID`.
+    """
+
+    record = source_record(validation, source_id)
+    has_video = record["kind"] == "video"
+    # A resolução é validada mesmo na fonte só de áudio, que a ignora: o pedido é o mesmo nos dois casos.
+    _resolution_divisor(resolution)
+    width, height = source_canvas(record, resolution) if has_video else (None, None)
+    frame_rate = source_frame_rate(record)
+    start = snap_start(start_s, float(record["duration_seconds"]), frame_rate)
+    root = validate_workdir(workdir)
+    path = Path(str(record["path"]))
+    try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            raise source_unavailable()
+    except OSError as error:
+        raise source_unavailable() from error
+    proxy = False
+    if has_video and resolution != "full":
+        status = lookup_proxy(root, str(record["id"]), path)
+        if status.state == "valid":
+            path, proxy = status.path, True
+    return SourceLive(
+        source_id=str(record["id"]),
+        kind=str(record["kind"]),
+        read_path=path,
+        resolution=resolution,
+        width=width,
+        height=height,
+        frame_rate=frame_rate,
+        start_s=start,
+        seek_s=max(0.0, round(start - SOURCE_SEEK_SLACK_S, 6)) if start > 0 else 0.0,
+        proxy=proxy,
+    )
+
+
+def _source_input_arguments(live: SourceLive) -> list[str]:
+    """Entrada única da fonte: `-ss` de entrada (seek preciso) só quando T não é o início, e o arquivo lido."""
+
+    arguments = ["-hide_banner", "-nostdin", "-loglevel", "error"]
+    if live.seek_s > 0:
+        arguments.extend(["-ss", _number(live.seek_s)])
+    return [*arguments, "-i", str(live.read_path)]
+
+
+def _source_scale(live: SourceLive) -> str:
+    """Filtro de imagem do stream: o canvas da fonte e pixel quadrado, como todo ramo da montagem."""
+
+    return f"scale={live.width}:{live.height},setsar=1"
+
+
+def source_stream_arguments(live: SourceLive) -> list[str]:
+    """Comando do FFmpeg (sem o executável) que transmite a fonte de `live.start_s` ao fim, em MP4 fragmentado.
+
+    Mesmo encoder de transmissão da montagem. A fonte de vídeo leva `0:a:0?` (áudio opcional: o vídeo
+    sem som segue sem faixa); a de áudio sai só com AAC, e o `<video>` a toca sem imagem. O áudio vai
+    sempre a estéreo, o que o navegador aceita de qualquer layout de origem.
+    """
+
+    arguments = _source_input_arguments(live)
+    if live.has_video:
+        arguments.extend(
+            ["-map", "0:v:0", "-vf", _source_scale(live), *_transmission_video_arguments(live.frame_rate)]
+        )
+        audio_map = "0:a:0?"
+    else:
+        audio_map = "0:a:0"
+    arguments.extend(
+        [
+            "-map", audio_map, *_transmission_audio_arguments(), "-ac", "2",
+            "-map_metadata", "-1", "-movflags", LIVE_MOVFLAGS, "-f", "mp4", "pipe:1",
+        ]
+    )
+    return arguments
+
+
+def source_frame_arguments(live: SourceLive) -> list[str]:
+    """Comando do FFmpeg do quadro de scrub da fonte em `live.start_s`, como JPEG no stdout (só fonte de vídeo)."""
+
+    if not live.has_video:
+        raise _error("ARGUMENT_INVALID", "Esta fonte não tem imagem.", EXIT_CODES["ARGUMENT"])
+    return [
+        *_source_input_arguments(live),
+        "-map", "0:v:0", "-vf", _source_scale(live), "-frames:v", "1", "-an",
+        "-c:v", "mjpeg", "-q:v", str(SCRUB_JPEG_QUALITY), "-pix_fmt", "yuvj420p",
+        "-f", "image2pipe", "pipe:1",
+    ]

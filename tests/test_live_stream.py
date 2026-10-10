@@ -7,6 +7,11 @@ amostra a amostra. Os cenários cobrem T no início, no meio de um segmento, num
 trilha com `loop`. Depois vêm as dimensões por resolução, o proxy só nas frações, o stream
 codificado (H.264/AAC em MP4 fragmentado), o quadro de scrub e a janela de tempo do planejador.
 O desempenho (C3) é medido por `scripts/bench_render.py --scenario live`.
+
+O stream da fonte inteira (T5, modo Fonte) tem a própria seção, `SourceStreamTests`: o canvas da fonte (proporção
+mantida, par, teto de UHD), o primeiro quadro igual ao quadro n da fonte decodificada inteira (`framemd5`),
+o MP4 fragmentado H.264/AAC do instante pedido ao fim da fonte, o encoder igual ao do stream da montagem, o
+original em `full` e o proxy válido nas frações, a fonte só de áudio sem imagem e as recusas na borda.
 """
 
 from __future__ import annotations
@@ -713,6 +718,189 @@ class TimeWindowPlannerTests(unittest.TestCase):
     def test_window_without_timeline_is_refused(self) -> None:
         with self.assertRaises(ValueError):
             source_intervals(self.DOCUMENT, None, TimeWindow(3.0))
+
+
+# --- Fonte inteira (T5): o stream do modo Fonte -------------------------------------------------
+
+
+class SourceStreamTests(LiveStreamTestCase):
+    """Stream e quadro da fonte inteira: canvas da própria fonte, original ou proxy, T, fonte só de áudio e recusas."""
+
+    def install_voice(self, workdir: Path) -> None:
+        """Fonte só de áudio: WAV PCM estéreo de 10 s a 48 kHz em `sources/voice.wav`."""
+
+        run_ffmpeg(
+            ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=330:duration=10:sample_rate=48000",
+             "-ac", "2", "-c:a", "pcm_s16le", "-y", str(workdir / "sources" / "voice.wav")]
+        )
+
+    def main_plan(self, workdir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Plano de dois segmentos sobre `main` (a fonte de 30 s) e o logo, já validado."""
+
+        self.install_sources(workdir)
+        return load(workdir, SCENARIOS["camada_de_imagem"][0])
+
+    def test_source_canvas_keeps_the_aspect_divides_to_even_and_caps_the_long_side(self) -> None:
+        def canvas(width: int, height: int, resolution: str) -> tuple[int, int]:
+            return live.source_canvas({"video_width": width, "video_height": height}, resolution)
+
+        for resolution, expected in {"full": (160, 90), "1/2": (80, 44), "1/3": (52, 30), "1/4": (40, 22)}.items():
+            with self.subTest(resolucao=resolution):
+                self.assertEqual(canvas(160, 90, resolution), expected)
+        self.assertEqual(canvas(161, 91, "full"), (160, 90), "lado ímpar vira par para baixo")
+        self.assertEqual(canvas(3840, 2160, "full"), (3840, 2160))
+        self.assertEqual(canvas(3840, 2160, "1/2"), (1920, 1080))
+        # Acima do teto de UHD a fonte é reduzida sem cortar nem mudar a proporção, em qualquer orientação.
+        self.assertEqual(canvas(7680, 4320, "full"), (3840, 2160))
+        self.assertEqual(canvas(4320, 7680, "full"), (2160, 3840))
+        self.assertEqual(canvas(8192, 4320, "1/2"), (1920, 1012))  # 4320 * 3840 // 8192 = 2025, metade 1012
+        self.assertEqual(canvas(2, 2, "1/4"), (2, 2), "mínimo de 2 pixels")
+        with self.assertRaises(CliError) as caught:
+            canvas(160, 90, "1/5")
+        self.assertEqual(caught.exception.code, "ARGUMENT_INVALID")
+
+    def test_the_source_stream_starts_at_the_requested_frame_and_is_fragmented_h264_aac(self) -> None:
+        with live_workdir() as workdir:
+            _, validation = self.main_plan(workdir)
+            reference = parse_framemd5(
+                run_ffmpeg(["-hide_banner", "-loglevel", "error", "-i", str(workdir / "sources" / "main.mp4"),
+                            "-map", "0:v:0", "-f", "framemd5", "-"]).decode()
+            )
+            for start, first_frame in ((0, 0), (10.0, 250), (17.04, 426), (17.05, 426), (29.9, 747)):
+                with self.subTest(t=start):
+                    state = live.prepare_source_live(workdir, validation, "main", start, "full")
+                    self.assertEqual((state.start_s, state.proxy, state.has_video), (first_frame / 25, False, True))
+                    self.assertEqual((state.width, state.height), (160, 90))
+                    # O primeiro quadro do stream é o quadro n da fonte inteira (antes do encoder, em `framemd5`).
+                    frame_arguments = live.source_frame_arguments(state)
+                    raw = frame_arguments[: frame_arguments.index("-frames:v")] + ["-frames:v", "1", "-f", "framemd5", "-"]
+                    self.assertEqual(
+                        [digest for _, _, digest in parse_framemd5(run_ffmpeg(raw).decode())],
+                        [reference[first_frame][2]],
+                    )
+                    stream = run_ffmpeg(live.source_stream_arguments(state))
+                    kinds = [kind for kind, _ in top_level_boxes(stream)]
+                    self.assertEqual(kinds[:2], ["ftyp", "moov"])
+                    self.assertGreaterEqual(kinds.count("moof"), 1)
+                    path = workdir / "stream.mp4"
+                    path.write_bytes(stream)
+                    info = probe(path)
+                    streams = {item["codec_type"]: item for item in info["streams"]}
+                    self.assertEqual((streams["video"]["codec_name"], streams["audio"]["codec_name"]), ("h264", "aac"))
+                    self.assertEqual((streams["video"]["width"], streams["video"]["height"]), (160, 90))
+                    # A fonte vai inteira, do instante pedido ao fim (30 s), sem o corte de `-t` da montagem.
+                    self.assertAlmostEqual(float(info["format"]["duration"]), 30.0 - state.start_s, delta=0.15)
+
+    def test_the_stream_reuses_the_encoder_of_the_assembly_stream(self) -> None:
+        with live_workdir() as workdir:
+            document, validation = self.main_plan(workdir)
+            assembly = live.prepare_live(workdir, document, validation, 1.0, "full")
+            with live.filter_script(workdir, assembly) as script:
+                shared = live.stream_arguments(assembly, script)
+            source = live.source_stream_arguments(live.prepare_source_live(workdir, validation, "main", 1.0, "full"))
+            for option in ("-c:v", "-preset", "-tune", "-crf", "-pix_fmt", "-c:a", "-b:a", "-ar", "-movflags", "-g"):
+                self.assertEqual(source[source.index(option) + 1], shared[shared.index(option) + 1], option)
+            self.assertEqual(source[-3:], ["-f", "mp4", "pipe:1"])
+
+    def test_the_source_reads_the_original_in_full_and_the_valid_proxy_in_fractions(self) -> None:
+        with live_workdir() as workdir:
+            make_source(workdir / "sources" / "main.mp4", "1920x1080")
+            _, validation = load(workdir, plan([segment(0, 1), segment(1, 2)]))
+            original = str(validation["sources"][0]["path"])
+
+            def read_path(resolution: str) -> tuple[live.SourceLive, str]:
+                state = live.prepare_source_live(workdir, validation, "main", 0.5, resolution)
+                arguments = live.source_stream_arguments(state)
+                return state, arguments[arguments.index("-i") + 1]
+
+            for resolution in live.RESOLUTIONS:
+                state, path = read_path(resolution)
+                self.assertEqual((state.proxy, path), (False, original), "sem proxy toda resolução lê o original")
+            created = build_proxies(workdir)["proxies"]
+            self.assertEqual([item["status"] for item in created], ["created"])
+            _, validation = load_validated_plan(workdir)
+            expected = {"full": (1920, 1080), "1/2": (960, 540), "1/3": (640, 360), "1/4": (480, 270)}
+            for resolution, dimensions in expected.items():
+                with self.subTest(resolucao=resolution):
+                    state, path = read_path(resolution)
+                    self.assertEqual((state.width, state.height), dimensions)
+                    if resolution == "full":
+                        self.assertEqual((state.proxy, path), (False, original))
+                    else:
+                        self.assertTrue(state.proxy)
+                        self.assertEqual(Path(path).parent.name, "proxy")
+                    (workdir / "o.mp4").write_bytes(run_ffmpeg(live.source_stream_arguments(state)))
+                    video = next(item for item in probe(workdir / "o.mp4")["streams"] if item["codec_type"] == "video")
+                    self.assertEqual((video["width"], video["height"]), dimensions)
+
+    def test_an_audio_only_source_streams_aac_without_image(self) -> None:
+        with live_workdir() as workdir:
+            self.install_sources(workdir)
+            self.install_voice(workdir)
+            document = plan(
+                [segment(2, 6, [track(0, 4, source_id="voice")], mode="replace")],
+                sources=[
+                    {"id": "main", "kind": "video", "path": "sources/main.mp4"},
+                    {"id": "voice", "kind": "audio", "path": "sources/voice.wav"},
+                ],
+            )
+            _, validation = load(workdir, document)
+            state = live.prepare_source_live(workdir, validation, "voice", 2.0, "1/2")
+            self.assertEqual((state.has_video, state.width, state.height, state.kind), (False, None, None, "audio"))
+            self.assertEqual((state.frame_rate, state.start_s, state.proxy), (live.DEFAULT_FRAME_RATE, 2.0, False))
+            arguments = live.source_stream_arguments(state)
+            self.assertNotIn("0:v:0", arguments)
+            self.assertNotIn("-vf", arguments)
+            stream = run_ffmpeg(arguments)
+            (workdir / "voice.mp4").write_bytes(stream)
+            info = probe(workdir / "voice.mp4")
+            self.assertEqual([(item["codec_type"], item["codec_name"]) for item in info["streams"]], [("audio", "aac")])
+            self.assertAlmostEqual(float(info["format"]["duration"]), 8.0, delta=0.15)
+            self.assertGreater(len(top_level_boxes(stream)), 2)
+            # Sem imagem não há quadro de scrub, e a resolução inválida continua recusada.
+            with self.assertRaises(CliError) as caught:
+                live.source_frame_arguments(state)
+            self.assertEqual(caught.exception.code, "ARGUMENT_INVALID")
+            with self.assertRaises(CliError) as caught:
+                live.prepare_source_live(workdir, validation, "voice", 2.0, "1/5")
+            self.assertEqual(caught.exception.code, "ARGUMENT_INVALID")
+
+    def test_the_source_frame_is_a_jpeg_with_the_canvas_of_the_source(self) -> None:
+        with live_workdir() as workdir:
+            _, validation = self.main_plan(workdir)
+            for resolution, dimensions in (("full", (160, 90)), ("1/2", (80, 44)), ("1/4", (40, 22))):
+                with self.subTest(resolucao=resolution):
+                    state = live.prepare_source_live(workdir, validation, "main", 12.5, resolution)
+                    image = run_ffmpeg(live.source_frame_arguments(state))
+                    self.assertTrue(image.startswith(b"\xff\xd8"))
+                    (workdir / "frame.jpg").write_bytes(image)
+                    video = probe(workdir / "frame.jpg")["streams"][0]
+                    self.assertEqual((video["codec_name"], video["width"], video["height"]), ("mjpeg", *dimensions))
+
+    def test_invalid_source_requests_are_refused_and_a_missing_file_is_source_invalid(self) -> None:
+        with live_workdir() as workdir:
+            _, validation = self.main_plan(workdir)
+            cases: list[tuple[str, Any, Any, str]] = [
+                ("fonte fora do plano", "outra", 1.0, "full"),
+                ("fonte de imagem", "logo", 1.0, "full"),
+                ("id não textual", 7, 1.0, "full"),
+                ("resolução fora da allowlist", "main", 1.0, "1/5"),
+                ("T negativo", "main", -0.04, "full"),
+                ("T depois do fim", "main", 30.5, "full"),
+                ("T não finito", "main", float("inf"), "full"),
+                ("T booleano", "main", True, "full"),
+            ]
+            for name, source_id, start, resolution in cases:
+                with self.subTest(name), self.assertRaises(CliError) as caught:
+                    live.prepare_source_live(workdir, validation, source_id, start, resolution)
+                self.assertEqual(caught.exception.code, "ARGUMENT_INVALID")
+                self.assertNotIn(str(workdir), caught.exception.message)
+            (workdir / "sources" / "main.mp4").unlink()
+            with self.assertRaises(CliError) as caught:
+                live.prepare_source_live(workdir, validation, "main", 1.0, "full")
+            self.assertEqual((caught.exception.code, caught.exception.exit_code), ("SOURCE_INVALID", 3))
+            self.assertNotIn(str(workdir), caught.exception.message)
+            self.assertNotIn("main.mp4", caught.exception.message)
 
 
 if __name__ == "__main__":

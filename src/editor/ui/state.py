@@ -12,8 +12,9 @@ máximo cerca de 1 s de atraso, fora o tempo do próprio FFprobe. A primeira car
 então `ui start` responde na hora e a tela vê o estado `loading` até o plano ser validado.
 
 A visão (`build_view`) é o que `GET /api/state` entrega: só dados editoriais derivados da validação
-(timeline, camadas, legendas, fontes com impressão). Caminho de fonte, `plan_path`, JSON canônico e
-arquivo de fonte tipográfica nunca entram nela.
+(timeline, camadas, legendas, fontes com impressão e uso na montagem, ver `usage.py`). Caminho de fonte,
+`plan_path`, JSON canônico e arquivo de fonte tipográfica nunca entram nela. O que muda sem o plano mudar
+(proxy válido, fonte que sumiu do disco) é acrescentado a cada consulta pelo servidor.
 
 ponytail: a resposta de estado leva a visão inteira a cada consulta (planos de mil segmentos pesam
 centenas de KB), enviar só o hash e buscar a visão quando ele mudar se o uso real mostrar peso.
@@ -26,15 +27,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import stat
 import threading
 from typing import Any
 
 from ..contracts import EXIT_CODES, CliError
 from ..integrity.approval import sources_fingerprint
 from ..plan.validation import load_validated_plan
-from ..render.live import output_frame_rate
+from ..render.live import output_frame_rate, source_frame_rate, source_unavailable
 from ..render.proxy import lookup_proxy
 from .limits import STATE_POLL_INTERVAL_S
+from .usage import source_uses, used_count
 
 
 @dataclass(frozen=True)
@@ -99,16 +102,14 @@ def build_view(
     (`layers[]` e `captions.items`). Levanta `SOURCE_INVALID` se uma fonte sumiu entre a validação e agora.
     """
 
+    uses = source_uses(document, validation)
     sources = []
     for record in validation["sources"]:
         try:
             metadata = os.stat(record["path"])
         except OSError as error:
-            raise CliError(
-                code="SOURCE_INVALID",
-                message="Não foi possível ler uma fonte do plano.",
-                exit_code=EXIT_CODES["MEDIA"],
-            ) from error
+            raise source_unavailable() from error
+        source_list = uses.get(str(record["id"]), [])
         sources.append(
             {
                 "id": record["id"],
@@ -116,6 +117,10 @@ def build_view(
                 "duration_s": record["duration_seconds"],
                 "size_bytes": metadata.st_size,
                 "mtime_ns": metadata.st_mtime_ns,
+                # Taxa da própria fonte (timecode do modo Fonte); a imagem não tem tempo nem taxa.
+                "frame_rate": None if record["kind"] == "image" else source_frame_rate(record),
+                "uses": source_list,
+                "used_count": used_count(source_list),
             }
         )
 
@@ -214,6 +219,23 @@ def proxy_source_ids(root: Path, validation: dict[str, Any]) -> set[str]:
         if record["kind"] == "video"
         and lookup_proxy(root, str(record["id"]), Path(str(record["path"]))).state == "valid"
     }
+
+
+def unavailable_source_ids(validation: dict[str, Any]) -> set[str]:
+    """IDs das fontes do plano que não são mais arquivo regular legível agora (a linha "Indisponível" do modo Fonte).
+
+    Consultado a cada resposta de estado: a fonte pode sumir sem o plano mudar (disco removido, arquivo
+    movido), e a vigia só o percebe um ciclo depois, quando a revalidação falha.
+    """
+
+    missing: set[str] = set()
+    for record in validation["sources"]:
+        try:
+            if not stat.S_ISREG(os.stat(record["path"]).st_mode):
+                missing.add(str(record["id"]))
+        except OSError:
+            missing.add(str(record["id"]))
+    return missing
 
 
 class PlanState:

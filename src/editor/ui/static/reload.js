@@ -3,25 +3,25 @@
 // O servidor revalida `plan.json` e as fontes sozinho (até ~1 s de atraso); aqui só se consulta `GET /api/state`
 // a cada segundo. Plano com hash ou impressão de fontes novos: recarrega timeline, painel e player, mantém o
 // cursor no mesmo tempo (limitado à nova duração), descarta a seleção e avisa por toast. Plano inválido: a
-// faixa de estado mostra o erro e a última versão válida continua na tela, marcada como desatualizada.
+// faixa de estado mostra o erro e a última versão válida continua na tela, marcada como desatualizada. No modo
+// Fonte vale o mesmo para o tempo da fonte aberta (e a fonte que saiu do plano é fechada); ver `reconcileViews`.
 
 import * as api from "./api.js";
 import * as player from "./player.js";
-import * as selection from "./selection.js";
-import { emit, state } from "./store.js";
+import { emit, reconcileViews, state } from "./store.js";
 import { toast } from "./status.js";
-import { snap } from "./timecode.js";
 
 const POLL_MS = 1000;
 const LOADING_POLL_MS = 400; // primeira carga: o servidor ainda valida o plano
 const LOST_POLL_MS = 2000;
 
-/** Instala a versão nova do plano: cursor mantido e limitado, seleção descartada, player refeito. */
+/** Instala a versão nova do plano: cursores mantidos e limitados, seleções descartadas, player refeito. */
 function loadPlan(plan) {
   const first = state.plan === null;
   state.plan = plan;
-  state.cursor = first ? 0 : snap(state.cursor, plan.frame_rate, plan.duration_s);
-  if (!first) selection.clearSelection();
+  reconcileViews();
+  // As marcas já foram limpas; o aviso faz o painel e a timeline largarem o trecho que mostravam.
+  if (!first) emit("selection", { commit: true });
   emit("plan");
   player.reloadForPlan();
   if (!first) toast("Plano atualizado");

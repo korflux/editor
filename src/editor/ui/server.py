@@ -17,15 +17,21 @@ Rotas (a forma é escolha do plano; a interface não é contrato externo):
 - `GET /api/state`: estado do plano (visão, erro seguro, impressão das fontes);
 - `GET /api/stream?t=&res=`: MP4 fragmentado H.264/AAC da montagem a partir de `t` (núcleo da T1);
 - `GET /api/frame?t=&res=`: JPEG do quadro composto de `t` (scrub);
-- `GET /api/selection?start=&end=`: segmentos, camadas e legendas do trecho e o texto "Copiar para IA".
+- `GET /api/selection?start=&end=`: segmentos, camadas e legendas do trecho e o texto "Copiar para IA";
+- `GET /api/source/stream?source_id=&t=&res=`: MP4 fragmentado da fonte inteira a partir de `t` (modo Fonte, T5);
+- `GET /api/source/frame?source_id=&t=&res=`: JPEG do quadro da fonte em `t` (scrub do modo Fonte);
+- `GET /api/source/selection?source_id=&start=&end=`: situação (usado, descartado, parcial), partes usadas e a
+  posição de cada uma na montagem, mais o texto "Copiar para IA" da fonte.
 
 Respostas JSON usam o envelope padrão de `contracts`; todas levam CSP, `nosniff` e `Referrer-Policy`.
 Erros nunca carregam token, caminho nem detalhe interno, e o log do servidor registra só método, rota
 casada e status (a query, onde viaja o token, nunca é registrada).
 
-Pontos de extensão: a T5 acrescenta a rota do stream da fonte (tipo de processo `source`) e a seleção na
-fonte; a T6, `POST /api/approve` (`Route.body_fields`, já validado aqui: JSON só com esses campos, cada um
-com 64 hexadecimais minúsculos, até 1 KiB) sobre `approve_workdir_if_unchanged`.
+A fonte do modo Fonte (T5) é sempre um `source_id` de vídeo ou áudio do plano, validado pelo padrão do
+trabalho e contra o plano antes de abrir arquivo ou processo; o arquivo vem do plano, nunca do navegador.
+
+Pontos de extensão: a T6 acrescenta `POST /api/approve` (`Route.body_fields`, já validado aqui: JSON só com
+esses campos, cada um com 64 hexadecimais minúsculos, até 1 KiB) sobre `approve_workdir_if_unchanged`.
 
 ponytail: HTTP/1.0 sem keep-alive (cada pedido abre uma conexão local), troque por HTTP/1.1 com
 `Content-Length` se o custo de conexão aparecer no scrub.
@@ -52,6 +58,7 @@ from pathlib import Path
 import re
 import secrets
 import socketserver
+import subprocess
 import sys
 import threading
 import time
@@ -67,7 +74,7 @@ from ..contracts import (
     success_envelope,
 )
 from ..render import live
-from ..workdir import validate_workdir
+from ..workdir import validate_source_id, validate_workdir
 from . import playback
 from .instance import Instance, remove_instance, write_instance
 from .limits import (
@@ -84,6 +91,7 @@ from .limits import (
     QUERY_VALUE_MAX_CHARS,
     REFERRER_POLICY,
     SESSION_ACTIVE_S,
+    SOURCE_ID_MAX_CHARS,
     STATE_POLL_INTERVAL_S,
     STATIC_NAME_PATTERN,
     STREAM_STALL_TIMEOUT_S,
@@ -91,9 +99,9 @@ from .limits import (
     TOKEN_MAX_CHARS,
     TOKEN_PATTERN,
 )
-from .selection import describe_selection
+from .selection import describe_selection, describe_source_selection
 from .sessions import Session, SessionStore, cookie_name, read_cookie, token_invalid
-from .state import PlanState, proxy_source_ids
+from .state import PlanState, proxy_source_ids, unavailable_source_ids
 
 
 _STATIC_ROOT = importlib.resources.files("editor.ui").joinpath("static")
@@ -155,6 +163,9 @@ ROUTES = (
     Route("/api/stream", ("GET",), "_serve_stream", query=("t", "res")),
     Route("/api/frame", ("GET",), "_serve_frame", query=("t", "res")),
     Route("/api/selection", ("GET",), "_serve_selection", query=("start", "end")),
+    Route("/api/source/stream", ("GET",), "_serve_source_stream", query=("source_id", "t", "res")),
+    Route("/api/source/frame", ("GET",), "_serve_source_frame", query=("source_id", "t", "res")),
+    Route("/api/source/selection", ("GET",), "_serve_source_selection", query=("source_id", "start", "end")),
 )
 """Allowlist de rotas dinâmicas; os estáticos entram por `/static/<nome>` com a própria allowlist de nomes."""
 
@@ -688,15 +699,27 @@ class UiRequestHandler(BaseHTTPRequestHandler):
         self._send(200, found[0], found[1])
 
     def _serve_state(self, route: Route, raw_query: str) -> None:
-        """`GET /api/state`: estado do plano, com o indicador de proxy atualizado a cada consulta."""
+        """`GET /api/state`: estado do plano, com proxy e disponibilidade de cada fonte atualizados a cada consulta."""
 
         parse_query(raw_query, route.query)
         reading = self.server.plan_state.read()
         plan = None
         if reading.snapshot is not None:
             proxies = proxy_source_ids(self.server.root, reading.snapshot.validation)
+            missing = unavailable_source_ids(reading.snapshot.validation)
+            failure = live.source_unavailable()
+            unavailable = {"code": failure.code, "message": failure.message}
             plan = dict(reading.snapshot.view)
-            plan["sources"] = [{**source, "proxy": source["id"] in proxies} for source in plan["sources"]]
+            plan["sources"] = [
+                {
+                    **source,
+                    "proxy": source["id"] in proxies,
+                    # Fonte que sumiu do disco: a linha do modo Fonte vira "Indisponível" com o erro público.
+                    "available": source["id"] not in missing,
+                    "error": unavailable if source["id"] in missing else None,
+                }
+                for source in plan["sources"]
+            ]
         data = {
             "workdir_name": self.server.root.name,
             "state": reading.status,
@@ -718,34 +741,43 @@ class UiRequestHandler(BaseHTTPRequestHandler):
         start_s, resolution = _decimal(params["t"]), _resolution(params["res"])
         snapshot = self.server.plan_state.require_snapshot()
         render = live.prepare_live(self.server.root, snapshot.document, snapshot.validation, start_s, resolution)
-        assert self._session is not None
         with live.filter_script(self.server.root, render) as script:
             try:
                 process = playback.spawn_ffmpeg(live.stream_arguments(render, script))
             except OSError as error:
                 raise playback.playback_failed() from error
+            # O script do filtro precisa existir enquanto o FFmpeg lê o grafo, então o relé fica dentro do `with`.
+            self._relay_stream("stream", process, render.start_s)
 
-            def send_headers() -> None:
-                """Cabeçalho de sucesso, enviado só depois do primeiro byte do FFmpeg."""
+    def _relay_stream(self, kind: str, process: subprocess.Popen[bytes], start_s: float) -> None:
+        """Repassa o stdout do FFmpeg ao cliente como `video/mp4`, no espaço `kind` da sessão.
 
-                self.send_response(200)
-                self.send_header("Content-Type", "video/mp4")
-                self.send_header("X-Editor-Start-S", f"{render.start_s:.6f}")
-                self._send_security_headers()
-                self.end_headers()
+        O cabeçalho de sucesso, com `X-Editor-Start-S` (instante do primeiro quadro, base do timecode do
+        player), só sai depois do primeiro byte do FFmpeg: antes disso uma falha ainda vira `PLAYBACK_FAILED`.
+        Comum ao stream da montagem e ao da fonte inteira.
+        """
 
-            try:
-                playback.relay_stream(
-                    self._session.slots,
-                    "stream",
-                    process,
-                    send_headers=send_headers,
-                    write=self.wfile.write,
-                    touch=self.server.touch,
-                )
-            except OSError:
-                # O cliente fechou a conexão (ou parou de consumir): o relé já encerrou o FFmpeg.
-                self.close_connection = True
+        assert self._session is not None
+
+        def send_headers() -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("X-Editor-Start-S", f"{start_s:.6f}")
+            self._send_security_headers()
+            self.end_headers()
+
+        try:
+            playback.relay_stream(
+                self._session.slots,
+                kind,
+                process,
+                send_headers=send_headers,
+                write=self.wfile.write,
+                touch=self.server.touch,
+            )
+        except OSError:
+            # O cliente fechou a conexão (ou parou de consumir): o relé já encerrou o FFmpeg.
+            self.close_connection = True
 
     def _serve_frame(self, route: Route, raw_query: str) -> None:
         """`GET /api/frame`: JPEG do quadro composto de `t`, o primeiro quadro do mesmo grafo do stream."""
@@ -773,6 +805,57 @@ class UiRequestHandler(BaseHTTPRequestHandler):
             raise _argument_error()
         data = describe_selection(snapshot, self.server.root.name, start_s, end_s)
         self._send_json(200, success_envelope("ui selection", data))
+
+    # --- Rotas do modo Fonte (T5) ---
+
+    def _source_params(self, route: Route, raw_query: str) -> tuple[dict[str, str], str]:
+        """Query da rota do modo Fonte e o `source_id` dela, validado pelo padrão do trabalho (a existência no plano vem depois)."""
+
+        params = parse_query(raw_query, route.query, max_chars={"source_id": SOURCE_ID_MAX_CHARS})
+        return params, validate_source_id(params["source_id"])
+
+    def _serve_source_stream(self, route: Route, raw_query: str) -> None:
+        """`GET /api/source/stream`: MP4 fragmentado da fonte inteira de `t` ao fim (original em `full`, proxy nas frações).
+
+        Mesmas garantias do stream da montagem (tudo validado antes do FFmpeg, falha antes do primeiro byte
+        é `PLAYBACK_FAILED`, o cliente que fecha encerra o processo), no espaço `source` da sessão.
+        """
+
+        params, source_id = self._source_params(route, raw_query)
+        start_s, resolution = _decimal(params["t"]), _resolution(params["res"])
+        snapshot = self.server.plan_state.require_snapshot()
+        render = live.prepare_source_live(self.server.root, snapshot.validation, source_id, start_s, resolution)
+        try:
+            process = playback.spawn_ffmpeg(live.source_stream_arguments(render))
+        except OSError as error:
+            raise playback.playback_failed() from error
+        self._relay_stream("source", process, render.start_s)
+
+    def _serve_source_frame(self, route: Route, raw_query: str) -> None:
+        """`GET /api/source/frame`: JPEG do quadro da fonte de vídeo em `t` (fonte só de áudio não tem imagem: 400)."""
+
+        params, source_id = self._source_params(route, raw_query)
+        start_s, resolution = _decimal(params["t"]), _resolution(params["res"])
+        snapshot = self.server.plan_state.require_snapshot()
+        render = live.prepare_source_live(self.server.root, snapshot.validation, source_id, start_s, resolution)
+        assert self._session is not None
+        jpeg = playback.capture_frame(self._session.slots, live.source_frame_arguments(render))
+        self._send(200, jpeg, "image/jpeg", headers={"X-Editor-Start-S": f"{render.start_s:.6f}"})
+
+    def _serve_source_selection(self, route: Route, raw_query: str) -> None:
+        """`GET /api/source/selection`: o trecho `[start, end]` da fonte: situação, partes usadas e texto "Copiar para IA".
+
+        Só lê o plano (não abre a fonte), então responde também com a fonte indisponível no disco.
+        """
+
+        params, source_id = self._source_params(route, raw_query)
+        start_s, end_s = _decimal(params["start"]), _decimal(params["end"])
+        snapshot = self.server.plan_state.require_snapshot()
+        record = live.source_record(snapshot.validation, source_id)
+        if not 0 <= start_s < end_s <= float(record["duration_seconds"]) + _DURATION_EPSILON_S:
+            raise _argument_error()
+        data = describe_source_selection(snapshot, self.server.root.name, source_id, start_s, end_s)
+        self._send_json(200, success_envelope("ui source selection", data))
 
 
 # --- Processo do servidor ---------------------------------------------------------------------------

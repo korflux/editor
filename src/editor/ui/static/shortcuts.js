@@ -1,7 +1,8 @@
 // Atalhos de teclado no padrão do Premiere (spec, suposição 12; design, "Acessibilidade").
 //
 // Espaço = play/pausa; ← → = quadro; ↑ ↓ = corte anterior/seguinte; I e O = início e fim da seleção; Esc =
-// limpa a seleção; `\` = painel; Ctrl+Shift+C = copiar o trecho; Home/End = início e fim; M = mudo.
+// limpa a seleção; `\` = painel; Ctrl+Shift+C = copiar o trecho; Home/End = início e fim; M = mudo. Valem igual
+// nos dois modos (Montagem e Fonte): os módulos de baixo leem o tempo, a taxa e a seleção do modo que está na tela.
 //
 // Convivência com os controles nativos: quem chegou a um botão, slider ou rádio por teclado (Tab) mantém as
 // teclas dele (Espaço no botão, setas no slider). Quem o focou com o mouse volta a usar as teclas da edição,
@@ -12,7 +13,7 @@
 import { copySelection, setPanelOpen, togglePanel } from "./panel.js";
 import * as player from "./player.js";
 import * as selection from "./selection.js";
-import { duration, fps, state } from "./store.js";
+import { duration, fps, hasContext, state } from "./store.js";
 import { lastFrameIndex } from "./timecode.js";
 
 const SLIDER_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
@@ -62,8 +63,8 @@ const ACTIONS = {
   ArrowDown: () => player.jumpCut(1),
   Home: () => player.scrubTo(0),
   End: () => player.scrubTo(lastFrameIndex(duration(), fps()) / fps()),
-  i: () => state.plan && selection.markIn(state.cursor),
-  o: () => state.plan && selection.markOut(state.cursor),
+  i: () => hasContext() && selection.markIn(state.cursor),
+  o: () => hasContext() && selection.markOut(state.cursor),
   m: () => player.toggleMute(),
   Escape: escape,
   "\\": togglePanel,
@@ -85,7 +86,7 @@ document.addEventListener("keydown", (event) => {
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   const action = ACTIONS[key];
   if (!action || targetOwnsKey(event)) return;
-  if (!state.plan && key !== "\\" && key !== "Escape") return;
+  if (!hasContext() && key !== "\\" && key !== "Escape") return;
   event.preventDefault();
   if (key === " ") spaceHandled = true;
   action();

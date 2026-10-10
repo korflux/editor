@@ -1,4 +1,5 @@
-// Cliente da API local da interface (`ui/server.py`): estado, seleção, quadro de scrub e URL do stream.
+// Cliente da API local da interface (`ui/server.py`): estado, seleção, quadro de scrub e URL do stream, da
+// montagem e (modo Fonte) de cada fonte inteira.
 //
 // Todas as rotas exigem o cookie de sessão (`credentials: same-origin`) e respondem no envelope padrão
 // `{ ok, data | error: { code, message } }`. O vídeo é consumido direto pelo `<video>` (URL do stream);
@@ -55,6 +56,31 @@ export async function getFrame(t, res, fps, signal) {
     cache: "no-store",
     signal,
   });
+  if (!response.ok) throw await failure(response);
+  return response.blob();
+}
+
+// --- Modo Fonte: o mesmo conjunto de chamadas, sobre uma fonte inteira (`source_id` do plano) ---
+
+/** Trecho `[start, end]` da fonte: situação (usado, descartado, parcial), partes usadas e o texto "Copiar para IA". */
+export function getSourceSelection(sourceId, start, end, signal) {
+  const id = encodeURIComponent(sourceId);
+  return getJson(`/api/source/selection?source_id=${id}&start=${selectionParam(start)}&end=${selectionParam(end)}`, signal);
+}
+
+/** URL do stream MP4 da fonte inteira a partir de `t` (colado na grade da fonte pelo servidor) na resolução `res`. */
+export function sourceStreamUrl(sourceId, t, res, fps) {
+  const id = encodeURIComponent(sourceId);
+  return `/api/source/stream?source_id=${id}&t=${frameRequestTime(t, fps)}&res=${encodeURIComponent(res)}`;
+}
+
+/** JPEG do quadro da fonte de vídeo em `t` na resolução `res`, como Blob. */
+export async function getSourceFrame(sourceId, t, res, fps, signal) {
+  const id = encodeURIComponent(sourceId);
+  const response = await fetch(
+    `/api/source/frame?source_id=${id}&t=${frameRequestTime(t, fps)}&res=${encodeURIComponent(res)}`,
+    { credentials: "same-origin", cache: "no-store", signal },
+  );
   if (!response.ok) throw await failure(response);
   return response.blob();
 }

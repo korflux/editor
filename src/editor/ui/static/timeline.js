@@ -1,5 +1,10 @@
 // Timeline em canvas (F4): régua, faixas, blocos com J/L hachurado, zoom, playhead, scrub e seleção.
 //
+// No modo Fonte (F6) o mesmo canvas vira a barra de uso da fonte aberta: uma faixa com a duração inteira dela em
+// "descartado" e, por cima, os trechos que a montagem usa (`source.uses`, já mesclados quando se cruzam). A régua,
+// o zoom, o scrub e a seleção são os mesmos; o Alt+clique num trecho usado leva à montagem no ponto correspondente,
+// e o balão de um trecho usado diz onde ele aparece ("Montagem 00:00:04:00, segmento 2").
+//
 // Estrutura: o `#tl-scroller` dá a rolagem nativa (barra horizontal e vertical) e o canvas fica colado
 // (`position: sticky`) no canto visível, desenhando só o que cabe na janela; o rótulo das faixas (à esquerda)
 // e a régua (no topo) não rolam. Faixas, de cima para baixo: Legendas, Texto, Camadas (imagem e vídeo), V1
@@ -14,7 +19,8 @@
 
 import * as player from "./player.js";
 import * as selection from "./selection.js";
-import { duration, emit, fps, on, state } from "./store.js";
+import { goToUsedPart, montageTime, usesAt } from "./sources.js";
+import { activeSource, duration, emit, fps, hasContext, on, state } from "./store.js";
 import { timecode } from "./timecode.js";
 
 const RULER_H = 26;
@@ -27,6 +33,10 @@ const HANDLE_HIT_PX = 6;
 const MIN_PPS = 0.5;
 const MAX_FRAME_PX = 48; // zoom máximo: 48 px por quadro
 const HATCH_PX = 8;
+const USAGE_ROW_H = 36; // a barra de uso é uma faixa só e mais alta que as da montagem
+const ASSEMBLY_HINT = "Clique: mover cursor · Shift+arraste, I e O: selecionar · Alt+clique: bloco";
+const SOURCE_HINT =
+  "Clique: mover cursor · Shift+arraste, I e O: selecionar · Alt+clique num trecho usado: ir para a montagem · claro: usado, escuro: descartado";
 
 const dom = {
   zone: document.getElementById("timeline"),
@@ -36,6 +46,8 @@ const dom = {
   zoom: document.getElementById("zoom"),
   zoomFit: document.getElementById("zoom-fit"),
   tip: document.getElementById("tl-tip"),
+  title: document.getElementById("tl-title"),
+  hint: document.getElementById("tl-hint"),
 };
 const ctx = dom.canvas.getContext("2d");
 const narrowQuery = window.matchMedia("(max-width: 1023px)");
@@ -90,6 +102,7 @@ function readColors() {
     textLane: lane("--lane-text"),
     layer: lane("--lane-layer"),
     caption: lane("--lane-caption"),
+    discarded: lane("--lane-discarded"),
   };
 }
 
@@ -224,6 +237,72 @@ function buildLanes(plan) {
   });
 }
 
+// --- Barra de uso da fonte aberta (modo Fonte) ---
+
+/** Nome curto do lugar da montagem que usa a fonte: o segmento (vídeo ou áudio dele) ou a camada. */
+function placeShort(use) {
+  return use.kind === "layer" ? `Cam. ${use.index}` : `Seg. ${use.index}`;
+}
+
+function placeLong(use) {
+  const base =
+    use.kind === "segment" ? `segmento ${use.index}` : use.kind === "audio" ? `áudio do segmento ${use.index}` : `camada ${use.index} (vídeo)`;
+  return use.loop ? `${base}, em loop` : base;
+}
+
+/** Une os usos que se cruzam (o vídeo e o áudio do mesmo segmento): a barra mostra onde há uso, não quantos. */
+function mergeUses(uses) {
+  const merged = [];
+  for (const use of [...uses].sort((a, b) => a.source_in_s - b.source_in_s)) {
+    const last = merged[merged.length - 1];
+    if (last && use.source_in_s <= last.end + 1e-6) {
+      last.end = Math.max(last.end, use.source_out_s);
+      last.uses.push(use);
+    } else {
+      merged.push({ start: use.source_in_s, end: use.source_out_s, uses: [use] });
+    }
+  }
+  return merged;
+}
+
+/** Uma faixa: o fundo "descartado" na duração inteira e os trechos usados por cima, na cor do tipo da fonte. */
+function buildSourceLanes(source) {
+  const rate = state.plan.frame_rate;
+  const height = LANE_PAD * 2 + USAGE_ROW_H;
+  contentHeight = height + LANE_GAP;
+  const base = {
+    start: 0,
+    end: source.duration_s,
+    row: 0,
+    color: colors.discarded,
+    label: "",
+    tip: "Descartado: este trecho da fonte não aparece na montagem.",
+  };
+  const used = mergeUses(source.uses).map((range) => ({
+    start: range.start,
+    end: range.end,
+    row: 0,
+    label: [...new Set(range.uses.map(placeShort))].join(" · "),
+    tip: "",
+    // O balão depende do ponto sob o ponteiro: cada uso que cobre o instante diz onde ele cai na montagem.
+    tipAt: (seconds) =>
+      usesAt({ uses: range.uses }, seconds)
+        .map((use) => `Montagem ${timecode(montageTime(use, seconds), rate)}, ${placeLong(use)}`)
+        .join("\n"),
+  }));
+  const color = source.kind === "video" ? colors.video : colors.audio;
+  return [{ key: "usage", label: "Uso", short: "U", color, rows: 1, rowH: USAGE_ROW_H, y: 0, h: height, blocks: [base, ...used] }];
+}
+
+/** Faixas do contexto atual: a montagem inteira, ou a barra de uso da fonte aberta (vazia sem fonte escolhida). */
+function currentLanes() {
+  contentHeight = 0;
+  if (!state.plan) return [];
+  if (state.mode === "assembly") return buildLanes(state.plan);
+  const source = activeSource();
+  return source === null ? [] : buildSourceLanes(source);
+}
+
 // --- Zoom e rolagem ---
 
 function fitPps() {
@@ -331,27 +410,29 @@ function drawBlock(lane, block, laneTop) {
   const x1 = xOf(block.start);
   const x2 = xOf(block.end);
   const width = Math.max(1, x2 - x1);
-  const y = laneTop + LANE_PAD + block.row * (ROW_H + ROW_GAP);
+  const rowH = lane.rowH ?? ROW_H;
+  const color = block.color ?? lane.color;
+  const y = laneTop + LANE_PAD + block.row * (rowH + ROW_GAP);
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(x1, y, width, ROW_H, 4);
+  ctx.roundRect(x1, y, width, rowH, 4);
   if (block.muted) {
     ctx.setLineDash([4, 3]);
-    ctx.strokeStyle = lane.color.fill;
+    ctx.strokeStyle = color.fill;
     ctx.lineWidth = 1;
     ctx.stroke();
   } else {
     ctx.clip();
-    ctx.fillStyle = lane.color.fill;
-    ctx.fillRect(x1, y, width, ROW_H);
+    ctx.fillStyle = color.fill;
+    ctx.fillRect(x1, y, width, rowH);
     for (const [from, to] of [[block.start, block.solidStart], [block.solidEnd, block.end]]) {
       if (to - from <= 1e-6) continue;
       const a = xOf(from);
       const b = xOf(to);
       ctx.fillStyle = "rgba(18, 18, 20, 0.5)";
-      ctx.fillRect(a, y, b - a, ROW_H);
+      ctx.fillRect(a, y, b - a, rowH);
       ctx.fillStyle = hatch;
-      ctx.fillRect(a, y, b - a, ROW_H);
+      ctx.fillRect(a, y, b - a, rowH);
     }
   }
   ctx.restore();
@@ -360,7 +441,7 @@ function drawBlock(lane, block, laneTop) {
     ctx.strokeStyle = colors.text;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(x1 + 0.5, y + 0.5, width - 1, ROW_H - 1, 4);
+    ctx.roundRect(x1 + 0.5, y + 0.5, width - 1, rowH - 1, 4);
     ctx.stroke();
     ctx.restore();
   }
@@ -370,9 +451,9 @@ function drawBlock(lane, block, laneTop) {
   const textLeft = Math.max(xOf(solidStart), left) + 6;
   const textRight = Math.min(xOf(solidEnd), viewW) - 4;
   if (textRight - textLeft > 18) {
-    ctx.fillStyle = block.muted ? colors.muted : lane.color.text;
+    ctx.fillStyle = block.muted ? colors.muted : color.text;
     const label = fitText(block.label, textRight - textLeft);
-    if (label) ctx.fillText(label, textLeft, y + ROW_H / 2 + 0.5);
+    if (label) ctx.fillText(label, textLeft, y + rowH / 2 + 0.5);
   }
 }
 
@@ -497,7 +578,7 @@ function drawLabels(scrollTop) {
   const short = narrowQuery.matches;
   for (const lane of lanes) {
     const top = RULER_H + lane.y - scrollTop;
-    ctx.fillText(short ? lane.short : lane.label, 8, top + LANE_PAD + ROW_H / 2);
+    ctx.fillText(short ? lane.short : lane.label, 8, top + LANE_PAD + (lane.rowH ?? ROW_H) / 2);
   }
   ctx.restore();
   ctx.strokeStyle = colors.border;
@@ -513,12 +594,12 @@ function draw() {
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.fillStyle = colors.panel;
   ctx.fillRect(0, 0, viewW, viewH);
-  if (!state.plan) {
+  if (!state.plan || lanes.length === 0) {
     ctx.fillStyle = colors.muted;
     ctx.font = "13px system-ui, 'Segoe UI', sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("Sem plano para mostrar.", viewW / 2, viewH / 2);
+    ctx.fillText(state.plan ? "Escolha uma fonte para ver o uso dela." : "Sem plano para mostrar.", viewW / 2, viewH / 2);
     return;
   }
   const left = labelWidth();
@@ -553,6 +634,7 @@ function draw() {
 // --- Acessibilidade do canvas (rótulo, valor do "slider" do cursor) ---
 
 function updateAria() {
+  dom.canvas.setAttribute("aria-label", state.mode === "source" ? "Posição na fonte" : "Posição na montagem");
   dom.canvas.setAttribute("aria-valuemax", String(duration()));
   dom.canvas.setAttribute("aria-valuenow", state.cursor.toFixed(3));
   dom.canvas.setAttribute("aria-valuetext", timecode(state.cursor, fps()));
@@ -570,15 +652,17 @@ function timeAt(x) {
   return Math.min(duration(), Math.max(0, seconds));
 }
 
+/** Bloco sob o ponteiro: o de cima quando há sobreposição (na barra de uso, o trecho usado sobre o fundo descartado). */
 function hitBlock(x, y) {
-  if (y < RULER_H || x < labelWidth() || !state.plan) return null;
+  if (y < RULER_H || x < labelWidth() || !hasContext()) return null;
   const seconds = (x - labelWidth() + dom.scroller.scrollLeft) / pps;
   const inner = y - RULER_H + dom.scroller.scrollTop;
   for (const lane of lanes) {
     if (inner < lane.y || inner >= lane.y + lane.h) continue;
-    const row = Math.floor((inner - lane.y - LANE_PAD) / (ROW_H + ROW_GAP));
-    if (row < 0 || inner - lane.y - LANE_PAD - row * (ROW_H + ROW_GAP) > ROW_H) return null;
-    return lane.blocks.find((block) => block.row === row && seconds >= block.start && seconds <= block.end) ?? null;
+    const rowH = lane.rowH ?? ROW_H;
+    const row = Math.floor((inner - lane.y - LANE_PAD) / (rowH + ROW_GAP));
+    if (row < 0 || inner - lane.y - LANE_PAD - row * (rowH + ROW_GAP) > rowH) return null;
+    return lane.blocks.findLast((block) => block.row === row && seconds >= block.start && seconds <= block.end) ?? null;
   }
   return null;
 }
@@ -597,11 +681,12 @@ function hitHandle(x, y) {
 }
 
 function showTip(event, block) {
-  if (block === null) {
+  const text = block === null ? "" : block.tipAt ? block.tipAt(timeAt(pointerPosition(event).x)) : block.tip;
+  if (!text) {
     dom.tip.hidden = true;
     return;
   }
-  dom.tip.textContent = block.tip;
+  dom.tip.textContent = text;
   dom.tip.hidden = false;
   const zone = dom.zone.getBoundingClientRect();
   const left = Math.min(event.clientX - zone.left + 12, zone.width - dom.tip.offsetWidth - 8);
@@ -611,7 +696,7 @@ function showTip(event, block) {
 }
 
 function onPointerDown(event) {
-  if (event.button !== 0 || !state.plan) return;
+  if (event.button !== 0 || !hasContext()) return;
   const { x, y } = pointerPosition(event);
   dom.canvas.focus({ preventScroll: true });
   event.preventDefault();
@@ -621,6 +706,10 @@ function onPointerDown(event) {
   if (handle) {
     drag = { type: "handle", which: handle };
   } else if (event.altKey) {
+    if (state.mode === "source") {
+      goToUsedPart(timeAt(x));
+      return;
+    }
     const block = hitBlock(x, y);
     if (block) selection.selectRange(block.select[0], block.select[1], { exact: true });
     return;
@@ -682,7 +771,7 @@ dom.canvas.addEventListener("pointerleave", () => {
 dom.canvas.addEventListener(
   "wheel",
   (event) => {
-    if (!state.plan) return;
+    if (!hasContext()) return;
     if (event.ctrlKey) {
       event.preventDefault();
       zoomFit = false;
@@ -713,8 +802,7 @@ dom.zoomFit.addEventListener("click", () => {
 
 /** Plano novo: refaz as faixas e o tamanho do conteúdo, mantendo o zoom escolhido (ou o ajuste à largura). */
 function onPlan() {
-  contentHeight = 0;
-  lanes = state.plan ? buildLanes(state.plan) : [];
+  lanes = currentLanes();
   hover = null;
   dom.canvas.setAttribute("aria-valuemax", String(duration()));
   if (zoomFit || !state.plan) pps = fitPps();
@@ -725,7 +813,17 @@ function onPlan() {
   requestDraw();
 }
 
+/** Trocou o modo ou a fonte aberta: outro tempo e outras faixas, então volta ao ajuste à largura e ao início. */
+function onContext() {
+  zoomFit = true;
+  dom.scroller.scrollLeft = 0;
+  dom.title.textContent = state.mode === "source" ? "Uso da fonte" : "Linha do tempo";
+  dom.hint.textContent = state.mode === "source" ? SOURCE_HINT : ASSEMBLY_HINT;
+  onPlan();
+}
+
 on("plan", onPlan);
+on("context", onContext);
 on("cursor", () => {
   updateAria();
   keepCursorVisible();

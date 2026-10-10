@@ -1,7 +1,7 @@
-/* Interface de revisão, modo Montagem (design.md): tokens, grade e componentes.
+/* Interface de revisão, modos Montagem e Fonte (design.md): tokens, grade e componentes.
    Tema escuro único, valores finais do kit. Sem fonte nem recurso externo (a CSP só aceita /static/).
    Ordem do arquivo: tokens, base, shell, barra superior, controles, palco, transporte, timeline, painel,
-   toast e responsivo. */
+   modo Fonte, toast e responsivo. O modo vem de `<html data-mode>` ("assembly" ou "source"). */
 
 /* --- Tokens (design.md, "Kit mínimo") --- */
 :root {
@@ -47,6 +47,9 @@ button, input, textarea { font: inherit; color: inherit; }
 .grow { flex: 1 1 auto; }
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .icon { width: 20px; height: 20px; display: block; }
+.icon-small { width: 16px; height: 16px; flex: none; }
+/* Texto só para leitor de tela (rótulo do seletor de fontes). */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 [hidden] { display: none !important; }
 
 /* Foco visível em todo controle: anel de 2px na cor de ação. */
@@ -73,7 +76,10 @@ button, input, textarea { font: inherit; color: inherit; }
 .zone { min-width: 0; min-height: 0; }
 .zone-topbar { grid-area: topbar; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
 .zone-status { grid-area: status; }
-.zone-stage { grid-area: stage; background: var(--bg-base); display: grid; grid-template-rows: minmax(0, 1fr) 40px; }
+.zone-stage { grid-area: stage; background: var(--bg-base); display: grid; grid-template-rows: auto minmax(0, 1fr) 40px; }
+.zone-stage .source-picker { grid-row: 1; }
+.zone-stage .player { grid-row: 2; }
+.zone-stage .transport { grid-row: 3; }
 .zone-timeline { grid-area: timeline; background: var(--bg-panel); border-top: 1px solid var(--border);
   display: grid; grid-template-rows: 28px minmax(0, 1fr); position: relative; }
 .zone-panel { grid-area: panel; background: var(--bg-panel); border-left: 1px solid var(--border);
@@ -192,6 +198,57 @@ button, input, textarea { font: inherit; color: inherit; }
   border-radius: 4px; padding: 8px; font: 12px/1.4 var(--font-mono);
 }
 
+/* --- Modo Fonte (F6): lista de fontes, seletor, fonte só de áudio, partes usadas --- */
+:root[data-mode="source"] { --timeline-h: max(150px, 24vh); }
+
+.zone-sources {
+  grid-area: sources; display: none; grid-template-rows: auto minmax(0, 1fr); min-height: 0;
+  background: var(--bg-panel); border-right: 1px solid var(--border);
+}
+.source-list { list-style: none; margin: 0; padding: 0 0 8px; overflow: auto; min-height: 0; }
+.source-list-empty { padding: 0 12px; }
+.source-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; box-sizing: border-box; text-align: left;
+  padding: 6px 12px 6px 9px; border: 0; border-left: 3px solid transparent; background: transparent; cursor: pointer;
+}
+.source-row[aria-current="true"] { background: var(--bg-hover); border-left-color: var(--accent); }
+/* A lista rola e cortaria o anel de foco nas bordas: o anel fica por dentro da linha. */
+.source-row:focus-visible { outline-offset: -2px; }
+.source-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.source-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-detail { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.source-row.is-unavailable .source-name, .source-row.is-unavailable .source-detail { color: var(--danger); }
+@media (hover: hover) and (pointer: fine) {
+  .source-row:hover { background: var(--bg-hover); }
+}
+
+/* Abaixo de 1280px a lista vira este seletor, acima do player. */
+.source-picker { display: none; padding: 8px 12px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.select {
+  width: 100%; height: 28px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-raised); color: var(--text);
+}
+
+/* Fonte só de áudio: sem imagem, o nome da fonte no centro do player. */
+.audio-label {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; pointer-events: none;
+}
+.audio-name { font-size: 20px; font-weight: 600; max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audio-note { color: var(--text-muted); }
+
+/* Painel da fonte: situação do trecho e ação de cada parte usada. */
+.source-status { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-weight: 600; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px var(--border); }
+.dot-used-video { background: var(--lane-video); }
+.dot-used-audio { background: var(--lane-audio); }
+.dot-partial { background: var(--warn); }
+.dot-discarded { background: var(--lane-discarded); }
+.link-btn {
+  margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+
 /* --- Toast: canto inferior direito, acima da timeline e da barra de transporte (40px) --- */
 .toast {
   position: fixed; right: 16px; bottom: calc(var(--timeline-h) + 40px + 16px); z-index: 20; max-width: 360px;
@@ -204,8 +261,25 @@ button, input, textarea { font: inherit; color: inherit; }
 .toast.show { opacity: 1; transform: none; visibility: visible; transition: opacity 180ms ease-out, transform 180ms ease-out; }
 
 /* --- Responsivo (design.md, "Responsivo e estados") --- */
-/* 1024px a 1279px: o painel vira sobreposição ao abrir, sobre o palco. */
+/* A partir de 1280px o modo Fonte ganha a coluna da lista de fontes (240px) à esquerda do palco. */
+@media (min-width: 1280px) {
+  :root[data-mode="source"] .shell {
+    grid-template-columns: 240px minmax(0, 1fr) 320px;
+    grid-template-areas:
+      "topbar topbar topbar"
+      "status status status"
+      "sources stage panel"
+      "timeline timeline timeline";
+  }
+  :root[data-mode="source"] .shell[data-panel="closed"] {
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-areas: "topbar topbar" "status status" "sources stage" "timeline timeline";
+  }
+  :root[data-mode="source"] .zone-sources { display: grid; }
+}
+/* 1024px a 1279px: o painel vira sobreposição ao abrir, sobre o palco; a lista de fontes vira o seletor. */
 @media (max-width: 1279px) {
+  :root[data-mode="source"] .source-picker { display: block; }
   .shell, .shell[data-panel="closed"] {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "topbar" "status" "stage" "timeline";

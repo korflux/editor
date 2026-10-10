@@ -1,10 +1,14 @@
-// Player e transporte da montagem (F3 e parte de F4): stream ao vivo, quadro de scrub e controles.
+// Player e transporte (F3, parte de F4 e F6): stream ao vivo, quadro de scrub e controles.
 //
 // Dois modos de mostrar a imagem, sobrepostos na mesma área:
 // - `<video>`: o MP4 fragmentado de `GET /api/stream`, que o servidor produz do instante pedido em diante
 //   (um stream por sessão; um pedido novo mata o anterior). Cursor = início do stream + tempo do vídeo;
 // - `<img>` (overlay): o quadro composto de `GET /api/frame` (scrub, saltos e qualquer instante fora do
 //   que já foi transmitido). Um pedido em voo por vez e só o último pendente é atendido.
+//
+// Os dois contextos (Montagem e Fonte, ver `store.js`) usam este mesmo player: no modo Fonte as URLs são as de
+// `/api/source/stream` e `/api/source/frame` da fonte aberta, e o tempo, a taxa e a duração são os dela (a fonte
+// só de áudio toca sem imagem e não tem quadro de scrub). Trocar de modo ou de fonte (`context`) para o stream.
 //
 // Regras do stream: `<video>` não lê cabeçalhos, então o instante inicial é calculado aqui com a mesma
 // grade do servidor (`timecode.snap`) e o tempo do vídeo conta a partir dele (o MP4 do stream nasce em 0).
@@ -19,7 +23,19 @@
 // servidor para buscar dentro do que já foi transmitido se o passo a passo precisar ser instantâneo.
 
 import * as api from "./api.js";
-import { duration, emit, fps, on, readPref, state, writePref } from "./store.js";
+import {
+  activeSource,
+  cutPoints,
+  duration,
+  emit,
+  fps,
+  hasContext,
+  on,
+  readPref,
+  sourceList,
+  state,
+  writePref,
+} from "./store.js";
 import {
   frameIndex,
   lastFrameIndex,
@@ -37,11 +53,14 @@ const dom = {
   video: document.getElementById("video"),
   scrub: document.getElementById("scrub"),
   proxyBadge: document.getElementById("proxy-badge"),
+  audioLabel: document.getElementById("player-audio-label"),
+  audioName: document.getElementById("player-audio-name"),
   spinner: document.getElementById("spinner"),
   error: document.getElementById("player-error"),
   errorText: document.getElementById("player-error-text"),
   retry: document.getElementById("player-retry"),
   empty: document.getElementById("player-empty"),
+  timecode: document.getElementById("timecode"),
   tcCurrent: document.getElementById("tc-current"),
   tcTotal: document.getElementById("tc-total"),
   btnPlay: document.getElementById("btn-play"),
@@ -73,7 +92,7 @@ let frameBusy = false;
 let framePending = null; // último instante pedido enquanto um quadro está em voo
 let frameAbort = null;
 let frameUrl = null;
-let errorKind = null; // "playback" ou "frame"
+let errorKind = null; // "playback", "frame" ou "source" (fonte indisponível no disco)
 
 // --- Indicadores: carregamento, erro, selo de proxy, mensagem de estado vazio ---
 
@@ -92,9 +111,24 @@ function clearError() {
   dom.error.hidden = true;
 }
 
-/** Selo "Proxy": aparece nas frações quando alguma fonte de vídeo tem proxy válido (a full nunca lê proxy). */
+/** Fonte aberta que sumiu do disco: o erro público do servidor (`SOURCE_INVALID`), em vez de um pedido que falharia. */
+function sourceProblem() {
+  const source = activeSource();
+  return source !== null && source.available === false ? source.error : null;
+}
+
+function showSourceProblem(problem) {
+  showError("source", `Fonte indisponível. ${problem.message} (${problem.code})`);
+}
+
+/** O contexto tem imagem: a montagem sempre, e no modo Fonte só a fonte de vídeo (a de áudio toca sem imagem). */
+function hasImage() {
+  return state.mode === "source" ? activeSource()?.kind === "video" : state.plan !== null;
+}
+
+/** Selo "Proxy": aparece nas frações quando a fonte lida (a aberta, no modo Fonte) tem proxy válido (a full nunca lê proxy). */
 function renderProxyBadge() {
-  const sources = state.plan?.sources ?? [];
+  const sources = state.mode === "source" ? [activeSource()].filter(Boolean) : (state.plan?.sources ?? []);
   dom.proxyBadge.hidden = !(state.res !== "full" && sources.some((source) => source.kind === "video" && source.proxy));
 }
 
@@ -104,11 +138,27 @@ const EMPTY_MESSAGES = {
   invalid: "Nenhum plano válido para exibir. Peça à IA para corrigir o plano.",
 };
 
-/** Mensagem central quando não há plano; some assim que a primeira versão válida chega. */
-function renderEmpty() {
-  const message = state.plan ? null : (state.connectionLost ? EMPTY_MESSAGES.invalid : EMPTY_MESSAGES[state.status]);
+/** Mensagem central quando não há o que mostrar: sem plano, ou no modo Fonte sem fonte escolhida. */
+function emptyMessage() {
+  if (!state.plan) return state.connectionLost ? EMPTY_MESSAGES.invalid : EMPTY_MESSAGES[state.status];
+  if (state.mode === "source" && activeSource() === null) {
+    return sourceList().length > 0
+      ? "Escolha uma fonte para ver o vídeo inteiro."
+      : "Este plano não tem fontes de vídeo nem de áudio.";
+  }
+  return null;
+}
+
+/** Selo de proxy, mensagem central e rótulo da fonte só de áudio; somem sozinhos quando o contexto muda. */
+function renderContext() {
+  renderProxyBadge();
+  const message = emptyMessage();
   dom.empty.hidden = message == null;
   dom.empty.textContent = message ?? "";
+  const audio = activeSource();
+  dom.audioLabel.hidden = audio === null || audio.kind !== "audio";
+  dom.audioName.textContent = audio?.id ?? "";
+  dom.scrub.alt = state.mode === "source" ? "Quadro da fonte na posição do cursor" : "Quadro composto na posição do cursor";
 }
 
 // --- Transporte: timecode, ícones e disponibilidade dos botões ---
@@ -119,8 +169,9 @@ function setAvailable(button, available) {
 }
 
 function renderTransport() {
-  const plan = state.plan;
+  const context = hasContext();
   const rate = fps();
+  dom.timecode.setAttribute("aria-label", state.mode === "source" ? "Posição na fonte" : "Posição na montagem");
   dom.tcCurrent.textContent = timecode(state.cursor, rate);
   dom.tcTotal.textContent = timecode(duration(), rate);
   dom.playIcon.setAttribute("href", state.playing ? "#i-pause" : "#i-play");
@@ -128,11 +179,11 @@ function renderTransport() {
   dom.btnPlay.setAttribute("aria-label", label);
   dom.btnPlay.title = label;
   const frame = frameIndex(state.cursor, rate);
-  const starts = plan ? plan.segments.map((segment) => segment.start_s) : [];
+  const starts = cutPoints();
   const tolerance = 0.5 / rate;
-  setAvailable(dom.btnPlay, plan !== null);
-  setAvailable(dom.btnFramePrev, plan !== null && frame > 0);
-  setAvailable(dom.btnFrameNext, plan !== null && frame < lastFrameIndex(duration(), rate));
+  setAvailable(dom.btnPlay, context);
+  setAvailable(dom.btnFramePrev, context && frame > 0);
+  setAvailable(dom.btnFrameNext, context && frame < lastFrameIndex(duration(), rate));
   setAvailable(dom.btnCutPrev, starts.some((start) => start < state.cursor - tolerance));
   setAvailable(dom.btnCutNext, starts.some((start) => start > state.cursor + tolerance));
   dom.btnPlaySelection.hidden = state.selection === null;
@@ -147,10 +198,22 @@ function setCursor(seconds) {
 
 // --- Quadro de scrub (overlay) ---
 
-/** Mostra o quadro composto de `t`: um pedido em voo, o último pendente vence (F4, passo 2). */
+/**
+ * Mostra o quadro de `t` (o composto da montagem ou o da fonte aberta): um pedido em voo, o último pendente vence
+ * (F4, passo 2). A fonte só de áudio não tem quadro, e a fonte indisponível mostra o erro público dela.
+ */
 export function showFrame(t) {
-  if (!state.plan) return;
+  if (!hasContext()) return;
+  const problem = sourceProblem();
+  if (problem !== null) {
+    showSourceProblem(problem);
+    return;
+  }
   clearError();
+  if (!hasImage()) {
+    dom.scrub.hidden = true;
+    return;
+  }
   framePending = t;
   if (!frameBusy) void pumpFrames();
 }
@@ -164,7 +227,10 @@ async function pumpFrames() {
     const controller = new AbortController();
     frameAbort = controller;
     try {
-      const blob = await api.getFrame(t, state.res, fps(), controller.signal);
+      const blob =
+        state.mode === "source"
+          ? await api.getSourceFrame(state.sourceId, t, state.res, fps(), controller.signal)
+          : await api.getFrame(t, state.res, fps(), controller.signal);
       if (!controller.signal.aborted) applyFrame(blob);
     } catch (error) {
       if (!controller.signal.aborted && framePending === null) {
@@ -212,6 +278,13 @@ function abandonStream() {
   refreshSpinner();
 }
 
+/** URL do stream do contexto atual: a montagem ou a fonte inteira aberta no modo Fonte. */
+function currentStreamUrl(t) {
+  return state.mode === "source"
+    ? api.sourceStreamUrl(state.sourceId, t, state.res, fps())
+    : api.streamUrl(t, state.res, fps());
+}
+
 /** Pede ao servidor o stream a partir de `t` e toca; o cursor fica em `t` até o primeiro quadro chegar. */
 function startStream(t) {
   const mine = ++generation;
@@ -224,7 +297,7 @@ function startStream(t) {
   state.playing = true;
   emit("play");
   refreshSpinner();
-  video.src = api.streamUrl(streamStart, state.res, fps());
+  video.src = currentStreamUrl(streamStart);
   video.play().catch((error) => {
     // AbortError acontece quando um stream novo troca o `src`: o evento é de um stream antigo.
     if (mine === generation && error?.name !== "AbortError") failPlayback();
@@ -306,7 +379,12 @@ function finishSelectionPlayback() {
 
 /** Início ou retomada da reprodução no cursor (no início se o cursor está no último quadro). */
 export function play() {
-  if (!state.plan || state.playing) return;
+  if (!hasContext() || state.playing) return;
+  const problem = sourceProblem();
+  if (problem !== null) {
+    showSourceProblem(problem);
+    return;
+  }
   retries = 0;
   stopAt = null;
   clearError();
@@ -343,7 +421,7 @@ export function togglePlay() {
 
 /** Move o cursor para `t` sem tocar: quadro composto do instante (scrub). Pausa se estava tocando. */
 export function scrubTo(t) {
-  if (!state.plan) return;
+  if (!hasContext()) return;
   if (state.playing) pause();
   stopAt = null;
   setCursor(snap(t, fps(), duration()));
@@ -358,7 +436,7 @@ function goTo(t) {
 
 /** Quadro a quadro: pausa e mostra o quadro composto do quadro vizinho. */
 export function stepFrame(direction) {
-  if (!state.plan) return;
+  if (!hasContext()) return;
   pause();
   const rate = fps();
   const frame = Math.min(lastFrameIndex(duration(), rate), Math.max(0, frameIndex(state.cursor, rate) + direction));
@@ -367,10 +445,10 @@ export function stepFrame(direction) {
 
 /** Salto de corte: início do segmento anterior ou seguinte; reinicia o stream ali se estava tocando. */
 export function jumpCut(direction) {
-  if (!state.plan) return;
+  if (!hasContext()) return;
   const rate = fps();
   const tolerance = 0.5 / rate;
-  const starts = state.plan.segments.map((segment) => segment.start_s);
+  const starts = cutPoints();
   const target =
     direction < 0
       ? [...starts].reverse().find((start) => start < state.cursor - tolerance)
@@ -388,7 +466,7 @@ export function jumpCut(direction) {
 /** "Reproduzir seleção": toca do início ao fim do trecho selecionado e para. */
 export function playSelection() {
   const selection = state.selection;
-  if (!selection || !state.plan) return;
+  if (!selection || !hasContext()) return;
   if (state.playing) pause();
   retries = 0;
   stopAt = selection.end;
@@ -406,7 +484,7 @@ export function setResolution(res) {
 
 /** O stream ou o quadro carregado deixou de valer (plano ou resolução mudou): refaz a imagem no cursor. */
 export function restartAfterChange() {
-  if (!state.plan) return;
+  if (!hasContext()) return;
   cancelFrames();
   if (state.playing) {
     // Reinicia onde o vídeo está agora (o cursor só anda a cada quadro do laço de reprodução).
@@ -417,9 +495,50 @@ export function restartAfterChange() {
   }
 }
 
-/** Plano novo (ou o primeiro): o cursor já foi limitado à nova duração; descarta o stream antigo. */
+/**
+ * Plano novo (ou o primeiro): o cursor já foi limitado à nova duração; descarta o stream antigo. No modo Fonte,
+ * se a fonte aberta saiu do plano, o contexto inteiro recomeça sem fonte.
+ */
 export function reloadForPlan() {
-  restartAfterChange();
+  if (state.mode === "source" && !hasContext()) resetContext();
+  else restartAfterChange();
+}
+
+/**
+ * Mudou o modo ou a fonte aberta (`context`): para o que estava tocando, descarta o quadro e o erro do contexto
+ * anterior e mostra o quadro do cursor do novo (ou o erro da fonte indisponível).
+ */
+export function resetContext() {
+  stopAt = null;
+  retries = 0;
+  pausedFrame = null;
+  const wasPlaying = state.playing;
+  state.playing = false;
+  abandonStream();
+  cancelFrames();
+  clearError();
+  dom.scrub.hidden = true;
+  renderContext();
+  showFrame(state.cursor);
+  renderTransport();
+  if (wasPlaying) emit("play");
+}
+
+/** A fonte aberta apareceu ou sumiu do disco sem o plano mudar: mostra ou tira o erro e, ao voltar, o quadro. */
+function syncSourceProblem() {
+  const problem = sourceProblem();
+  if (problem !== null && errorKind !== "source") {
+    const wasPlaying = state.playing;
+    state.playing = false;
+    stopAt = null;
+    abandonStream();
+    cancelFrames();
+    showSourceProblem(problem);
+    if (wasPlaying) emit("play");
+  } else if (problem === null && errorKind === "source") {
+    clearError();
+    showFrame(state.cursor);
+  }
 }
 
 // --- Volume (preferência por trabalho) ---
@@ -475,7 +594,7 @@ dom.volume.addEventListener("input", () => {
 dom.retry.addEventListener("click", () => {
   const kind = errorKind;
   clearError();
-  if (kind === "frame") showFrame(state.cursor);
+  if (kind === "frame" || kind === "source") showFrame(state.cursor);
   else play();
 });
 // Clique na imagem alterna play e pausa (como nos players comuns); os avisos sobre ela têm botões próprios.
@@ -532,13 +651,13 @@ on("play", renderTransport);
 on("selection", renderTransport);
 on("plan", () => {
   renderTransport();
-  renderProxyBadge();
-  renderEmpty();
+  renderContext();
 });
 on("status", () => {
-  renderProxyBadge();
-  renderEmpty();
+  renderContext();
+  syncSourceProblem();
 });
 on("res", renderProxyBadge);
+on("context", resetContext);
 renderTransport();
-renderEmpty();
+renderContext();

@@ -13,7 +13,8 @@ Garantias (spec, Contratos e Boundaries):
 - falha antes do primeiro byte vira `PLAYBACK_FAILED` e `FRAME_FAILED`; depois do primeiro byte o
   chamador só encerra a conexão (o cabeçalho de sucesso já saiu).
 
-Pontos de extensão: a T5 reaproveita `relay_stream` com o tipo `source` para a fonte inteira.
+`relay_stream` serve aos dois streams: o da montagem (tipo `stream`) e o da fonte inteira do modo Fonte (tipo
+`source`); `capture_frame`, ao quadro de scrub dos dois modos (tipo `frame`).
 
 ponytail: o novo processo é criado antes de reivindicar o espaço, então por instantes uma sessão tem
 dois do mesmo tipo (o anterior é morto logo na reivindicação), reservar o espaço antes de criar se o

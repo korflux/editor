@@ -124,18 +124,21 @@ Entrega a interface de revisão da spec: um servidor local aberto por `editor ui
 
 ### T5: Conferir cada fonte inteira no modo Fonte
 
-- [ ] T5 concluída
+- [x] T5 concluída
 - **Spec:** A7, parte de A8 (F6, F7 no modo Fonte; design: tela Revisão modo Fonte)
 - **O quê:**
   - **Servidor:** stream da fonte inteira, em transcodificação ao vivo do original em `full` e do proxy válido nas frações, a partir de T; lista de fontes com uso; e texto da seleção na fonte (usado, descartado ou parcial e onde cada parte usada aparece na montagem), a partir de `source_intervals`.
   - **Interface:** lista de fontes (vira `<select>` abaixo de 1280px), barra de uso com usados e descartados, "Ver fonte" a partir de um segmento, Alt+clique e "Ir para a montagem", e painel com "Copiar para IA".
 - **Aceite:**
-  - [ ] A barra de uso de cada fonte de vídeo e áudio coincide com os intervalos do plano. Uma fonte só de áudio toca sem imagem.
-  - [ ] "Ver fonte" abre no `in_s` do segmento, e "Ir para a montagem" volta ao tempo correspondente.
-  - [ ] O texto da seleção na fonte confere com o plano, e a fonte ausente aparece como "Indisponível" com `SOURCE_INVALID`.
+  - [x] A barra de uso de cada fonte de vídeo e áudio coincide com os intervalos do plano. Uma fonte só de áudio toca sem imagem.
+  - [x] "Ver fonte" abre no `in_s` do segmento, e "Ir para a montagem" volta ao tempo correspondente.
+  - [x] O texto da seleção na fonte confere com o plano, e a fonte ausente aparece como "Indisponível" com `SOURCE_INVALID`.
 - **Verificação:**
-  - [ ] `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server tests.test_live_stream -v`
+  - [x] `.venv\Scripts\python.exe -B -m unittest tests.test_ui_server tests.test_live_stream -v`
 - **Visual:** necessária. A barra de uso e a navegação entre modos são julgadas renderizadas: rota `/` em modo Fonte, viewports 1440x900 e 1024x700, com as provas do design para esse modo.
+- **Prova:** `unittest tests.test_ui_server tests.test_live_stream` -> 87 testes OK (21 novos); suíte completa -> 447 testes OK. Stream da fonte conferido por `framemd5` contra a fonte decodificada (T = 0, 10, 17,04, 17,05, 29,9), original em Full e proxy nas frações, só áudio sem vídeo, término ao fechar; uso e seleção na fonte contra `plan validate`; `SOURCE_INVALID` 409 sem abrir FFmpeg; recusas da allowlist. Visual no navegador integrado, modo Fonte em 1440x900 e 1024x700: barra de uso igual ao plano, Full 1920x1080 e 1/2 960x540 com selo Proxy, fonte de áudio tocando sem imagem, seleção parcial/descartada com texto conferido, Ver fonte abrindo no `in_s`, Ir para a montagem no tempo certo, fonte renomeada como "Indisponível" com volta automática, lista em `<select>` a 1024 sem rolagem horizontal, console vazio, rede só local.
+- **API nova:** `GET /api/source/stream`, `GET /api/source/frame`, `GET /api/source/selection` (`source_id`, `t`/`start`/`end`, `res`); `/api/state` ganha em `plan.sources[]` `frame_rate`, `uses`, `used_count`, `available` e `error` (aditivo).
+- **Notas:** a barra de uso de uma trilha de áudio mostra o trecho ouvido (limitado à janela de áudio do segmento), não o `in_s/out_s` declarado; idêntico a `source_intervals` quando a trilha tem a duração da janela (documentado em `ui/usage.py`). Canvas do stream da fonte com teto UHD em Full. Fora do escopo: `.erros-encontrados/2026-10-09-faixa-de-estado-mostra-plan-invalid-quando-uma-fonte-some.md` (faixa global diz `PLAN_INVALID`; linha, player e rotas dizem `SOURCE_INVALID`).
 - **Deps:** T4
 - **Arquivos:** `src/editor/ui/` (servidor, seleção na fonte e estáticos), `src/editor/render/live.py` (stream da fonte), `tests/test_ui_server.py`, `tests/test_live_stream.py`
 
