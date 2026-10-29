@@ -122,6 +122,7 @@ O projeto ainda não possui nome definido. Ele será um editor de vídeo compost
 - `.vibeflow/`: fonte de governança e Documento Vivo de regras.
 - `.vibeflow/mvp/`: entrevista, spec, plan, analyze e implement do MVP.
 - `.vibeflow/phases/`: artefatos de entrevista, especificação, plano, análise, implementação e revisão por fase.
+- `backlog.md`: fonte única das lacunas e dos escopos candidatos (inclusive os antigos escopos das Phases 8 a 15, sem roadmap definido). A ordem e o início de cada item são decisão do usuário; nenhum item substitui interview, spec ou plan nem autoriza implementação.
 - `.gitignore`: proteção mínima para segredos locais e backups gerados.
 - `AGENTS.md`: fonte única editável das regras e do mapa do projeto.
 - `.agents/rules/vibeflow.md`: ponte para `AGENTS.md`; `.vibeflow/old/` preserva os backups verificados das regras legadas.
